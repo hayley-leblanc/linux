@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# UTF-8 normalization
+#
+config HAYLEYFS_RUST
+	tristate "Enable building of HayleyFS"
+	help
+	  Say Y here to build HayleyFS
+	default m

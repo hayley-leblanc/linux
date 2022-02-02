@@ -41,6 +41,8 @@ source "fs/btrfs/Kconfig"
 source "fs/nilfs2/Kconfig"
 source "fs/f2fs/Kconfig"
 source "fs/zonefs/Kconfig"
+source "fs/hayleyfs/Kconfig"
+source "fs/ramfs_rust/Kconfig"
 
 endif # BLOCK
 

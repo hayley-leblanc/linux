@@ -79,7 +79,11 @@ obj-$(CONFIG_EXT2_FS)		+= ext2/
 obj-$(CONFIG_JBD2)		+= jbd2/
 obj-$(CONFIG_CRAMFS)		+= cramfs/
 obj-$(CONFIG_SQUASHFS)		+= squashfs/
+# ifeq ($(CONFIG_RAMFS_RUST),m)
+# obj-y 				+= ramfs_rust/
+# else
 obj-y				+= ramfs/
+# endif
 obj-$(CONFIG_HUGETLBFS)		+= hugetlbfs/
 obj-$(CONFIG_CODA_FS)		+= coda/
 obj-$(CONFIG_MINIX_FS)		+= minix/
@@ -140,3 +144,4 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
 obj-$(CONFIG_EROFS_FS)		+= erofs/
 obj-$(CONFIG_VBOXSF_FS)		+= vboxsf/
 obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
+obj-m	+= hayleyfs/
