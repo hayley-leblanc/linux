@@ -395,14 +395,14 @@ $(obj)/%.ll: $(src)/%.rs FORCE
 # -- this might want to have a config switch behind it, but unsure of the expectation
 # rm -f, necessary because cbindgen does not seem to update .h file in some circumstances
 # - this leads to repeated calls of CBINDGEN as it breaks the call if_changed infrastructure
-quiet_cmd_rustc_h_rs = CBINDGEN $(quiet_modtag) $@
-      cmd_rustc_h_rs = \
-		  rm -f $@ && \
-		  cbindgen --config scripts/cbindgen.toml --output $@ $< 2>&1 | sed '/^WARN/d'; \
-		  echo "$@: $<" > $(depfile)
+#quiet_cmd_rustc_h_rs = CBINDGEN $(quiet_modtag) $@
+#      cmd_rustc_h_rs = \
+#		  rm -f $@ && \
+#		  cbindgen --config scripts/cbindgen.toml --output $@ $< 2>&1 | sed '/^WARN/d'; \
+#		  echo "$@: $<" > $(depfile)
 
-$(obj)/%.h: $(src)/%.rs FORCE
-	$(call if_changed_dep,rustc_h_rs)
+#$(obj)/%.h: $(src)/%.rs FORCE
+#	$(call if_changed_dep,rustc_h_rs)
 
 # Compile assembler sources (.S)
 # ---------------------------------------------------------------------------

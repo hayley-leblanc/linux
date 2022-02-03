@@ -2,11 +2,14 @@
 
 #![allow(non_camel_case_types)]
 
+use core::ptr;
 use kernel::bindings::{
-    dentry, file_system_type, fs_context, kill_block_super, mount_bdev, register_filesystem,
-    super_block, super_operations, umode_t, unregister_filesystem, ENOMEM,
+    d_make_root, dentry, file_system_type, fs_context, get_next_ino, inc_nlink, init_user_ns,
+    inode, inode_init_owner, inode_operations, kill_block_super, mount_bdev, new_inode, ram_aops,
+    register_filesystem, super_block, super_operations, umode_t, unregister_filesystem, ENOMEM,
+    S_IFDIR, S_IFMT,
 };
-use kernel::c_types::{c_char, c_int, c_void};
+use kernel::c_types::{c_char, c_int, c_uint, c_ulong, c_void};
 use kernel::prelude::*;
 use kernel::{c_default_struct, c_str};
 
@@ -33,11 +36,13 @@ mod __anon__ {
 }
 
 #[repr(C)]
+/// cbindgen:ignore
 pub struct hayleyfs_mount_opts {
     init: bool,
 }
 
 #[repr(C)]
+/// cbindgen:ignore
 pub struct hayleyfs_fs_info {
     mount_opts: hayleyfs_mount_opts,
 }
@@ -58,11 +63,58 @@ static mut hayleyfs_super_ops: super_operations = super_operations {
     ..c_default_struct!(super_operations)
 };
 
+static hayleyfs_dir_inode_operations: inode_operations = inode_operations {
+    ..c_default_struct!(inode_operations)
+};
+
+pub fn hayleyfs_get_inode(sb: *mut super_block, dir: *const inode, mode: umode_t) -> *mut inode {
+    // TODO: obviously this does not do enough for most cases but it might
+    // be enough to get it to mount
+    let inode = unsafe { new_inode(sb) };
+    if !ptr::eq(inode, ptr::null_mut()) {
+        let inode = unsafe { inode.as_mut().unwrap() };
+        inode.i_ino = unsafe { get_next_ino() } as c_ulong;
+        unsafe {
+            inode_init_owner(&mut init_user_ns, inode, dir, mode);
+        }
+        // unsafe {
+        //     inode.i_mapping.as_mut().unwrap().a_ops = &ram_aops;
+        // }
+        // unsafe {
+        //     ramfs_mapping_set_gfp_mask(inode.i_mapping, ramfs_get_gfp_highuser());
+        // }
+        // unsafe {
+        //     ramfs_mapping_set_unevictable(inode.i_mapping);
+        // }
+        match mode as c_uint & S_IFMT {
+            S_IFDIR => {
+                inode.i_op = unsafe { &hayleyfs_dir_inode_operations };
+                /* directory inodes start off with i_nlink == 2 (for "." entry) */
+                unsafe {
+                    inc_nlink(inode);
+                }
+            }
+            _ => {} // do nothing for now
+        }
+    }
+    inode
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_context) -> i32 {
     pr_info!("Mounting the file system!\n");
-    unsafe { (*sb).s_op = &hayleyfs_super_ops };
-    0
+    let inode = unsafe { hayleyfs_get_inode(sb, ptr::null_mut(), S_IFDIR as umode_t) };
+
+    unsafe {
+        (*sb).s_op = &hayleyfs_super_ops;
+        (*sb).s_root = d_make_root(inode);
+    }
+    let s_root = unsafe { (*sb).s_root };
+    if ptr::eq(s_root, ptr::null_mut()) {
+        -(ENOMEM as c_int)
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -122,6 +174,7 @@ impl Drop for HayleyFS {
 }
 
 #[repr(C)]
+/// cbindgen:ignore
 struct fs_context_operations {
     /* same thing that bindgen generates for seemingly opaque types */
     _unused: [u8; 0],
