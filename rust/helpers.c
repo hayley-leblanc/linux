@@ -35,6 +35,7 @@
 #include <linux/irqdomain.h>
 #include <linux/amba/bus.h>
 #include <linux/of_device.h>
+#include <linux/dax.h>
 
 __noreturn void rust_helper_BUG(void)
 {
@@ -505,6 +506,12 @@ const struct of_device_id *rust_helper_of_match_device(
 	return of_match_device(matches, dev);
 }
 EXPORT_SYMBOL_GPL(rust_helper_of_match_device);
+
+void rust_helper_fs_put_dax(struct dax_device *dax_dev) 
+{
+	fs_put_dax(dax_dev);
+}
+EXPORT_SYMBOL_GPL(rust_helper_fs_put_dax);
 
 /* We use bindgen's --size_t-is-usize option to bind the C size_t type
  * as the Rust usize type, so we can use it in contexts where Rust
