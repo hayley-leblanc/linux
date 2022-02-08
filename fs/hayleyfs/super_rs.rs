@@ -6,14 +6,15 @@
 
 use core::ptr;
 use kernel::bindings::{
-    d_make_root, dax_device, file_system_type, fs_context, fs_context_operations,
-    fs_dax_get_by_bdev, get_next_ino, get_tree_bdev, inc_nlink, init_user_ns, inode,
-    inode_init_owner, inode_operations, kill_block_super, new_inode, register_filesystem,
-    super_block, super_operations, umode_t, unregister_filesystem, EINVAL, ENOMEM, S_IFDIR, S_IFMT,
+    d_make_root, dax_device, dax_direct_access, file_system_type, fs_context,
+    fs_context_operations, fs_dax_get_by_bdev, get_next_ino, get_tree_bdev, inc_nlink,
+    init_user_ns, inode, inode_init_owner, inode_operations, kill_block_super, new_inode, pfn_t,
+    register_filesystem, super_block, super_operations, umode_t, unregister_filesystem, EINVAL,
+    ENOMEM, PAGE_SHIFT, S_IFDIR, S_IFMT,
 };
 use kernel::c_types::{c_int, c_uint, c_ulong, c_void};
 use kernel::prelude::*;
-use kernel::{c_default_struct, c_str};
+use kernel::{c_default_struct, c_str, PAGE_SIZE};
 
 module! {
     type: HayleyFS,
@@ -23,9 +24,9 @@ module! {
     license: b"GPL v2",
 }
 
-struct HayleyFS {
-    // sbi: hayleyfs_sb_info,
-}
+struct HayleyFS {}
+
+const LONG_MAX: usize = 9223372036854775807;
 
 // try to set it up to do something on mount
 // this is a hacky thing stolen from RamFS. if RfL folks say anything
@@ -46,16 +47,18 @@ pub struct hayleyfs_mount_opts {
 #[repr(C)]
 #[derive(Debug)]
 pub struct hayleyfs_sb_info {
+    sb: *mut super_block, // raw pointer to the VFS super block
     mount_opts: hayleyfs_mount_opts,
-    s_daxdev: *mut dax_device,
-    s_dev_offset: u64,
+    s_daxdev: *mut dax_device, // raw pointer to the dax device we are mounted on
+    s_dev_offset: u64,         // no idea what this is used for but a dax fxn needs it
+    virt_addr: *mut c_void,    // raw pointer virtual address of beginning of FS instance
+    phys_addr: u64,            // physical address of beginning of FS instance
+    pm_size: i64,              // size of the PM device
 }
 
-// TODO: what does no_mangle do?
 #[no_mangle]
 static mut hayleyfs_fs_type: file_system_type = file_system_type {
     name: c_str!("hayleyfs").as_char_ptr(),
-    // mount: Some(hayleyfs_mount),
     init_fs_context: Some(hayleyfs_init_fs_context),
     kill_sb: Some(kill_block_super),
     ..c_default_struct!(file_system_type)
@@ -113,7 +116,43 @@ fn hayleyfs_get_pm_info(
         pr_alert!("Bad DAX device\n");
         Err(EINVAL)
     } else {
-        Ok(())
+        // device: sbi.s_daxdev
+        // page offset: 0
+        // number of pages:
+        // kaddr output
+        // pfn output
+        let mut virt_addr: *mut c_void = ptr::null_mut();
+        let pfn: *mut pfn_t = ptr::null_mut();
+        // TODO: LONG_MAX and PAGE_SIZE are usizes (and we can't change PAGE_SIZE's type)
+        // but we need them to be i64s, so we have to convert. this PROBABLY won't fail,
+        // but it COULD. figure out a way to better way to deal with this
+        let mut size = unsafe {
+            dax_direct_access(
+                sbi.s_daxdev,
+                0,
+                (LONG_MAX / PAGE_SIZE).try_into().unwrap(),
+                &mut virt_addr,
+                pfn,
+            )
+        };
+        if size <= 0 {
+            pr_alert!("direct access failed\n");
+            Err(EINVAL)
+        } else {
+            size = size * (PAGE_SIZE as i64);
+            sbi.pm_size = size;
+            sbi.virt_addr = virt_addr;
+
+            // this calculation taken from NOVA
+            // pfn is an absolute PFN translation of our address
+            // pfn_t_to_pfn translates from a pfn_t type (which is really a struct)
+            // to an unsigned long.
+            // not quite sure what the shift is doing here.
+            // TODO: figure out if this is correct
+            sbi.phys_addr = unsafe { hayleyfs_pfn_t_to_pfn(*pfn) << PAGE_SHIFT };
+
+            Ok(())
+        }
     }
 }
 
@@ -127,6 +166,7 @@ fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> core::result
         Ok(sbi) => {
             let mut sbi = unsafe { sbi.assume_init() };
             sbi.s_dev_offset = 0; // TODO: what should this be?
+            sbi.sb = sb;
             let sbi_ptr = Box::into_raw(sbi) as *mut c_void; // this seems wrong but it works
             unsafe { (*fc).s_fs_info = sbi_ptr };
             unsafe { (*sb).s_fs_info = sbi_ptr };
@@ -228,4 +268,6 @@ impl Drop for HayleyFS {
 extern "C" {
     #[allow(improper_ctypes)]
     fn hayleyfs_fs_put_dax(dax_dev: *mut dax_device);
+    #[allow(improper_ctypes)]
+    fn hayleyfs_pfn_t_to_pfn(pfn: pfn_t) -> u64;
 }

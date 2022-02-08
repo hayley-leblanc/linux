@@ -507,12 +507,6 @@ const struct of_device_id *rust_helper_of_match_device(
 }
 EXPORT_SYMBOL_GPL(rust_helper_of_match_device);
 
-void rust_helper_fs_put_dax(struct dax_device *dax_dev) 
-{
-	fs_put_dax(dax_dev);
-}
-EXPORT_SYMBOL_GPL(rust_helper_fs_put_dax);
-
 /* We use bindgen's --size_t-is-usize option to bind the C size_t type
  * as the Rust usize type, so we can use it in contexts where Rust
  * expects a usize like slice (array) indices. usize is defined to be
