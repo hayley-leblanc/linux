@@ -3,14 +3,23 @@
 #![allow(non_camel_case_types)]
 #![allow(missing_docs)]
 #![allow(non_upper_case_globals)]
+#![feature(new_uninit)]
 
+mod defs;
+mod inode_rs;
+mod pm;
+
+use crate::inode_rs::*;
+use crate::pm::*;
+use core::mem::size_of;
 use core::ptr;
+
 use kernel::bindings::{
     d_make_root, dax_device, dax_direct_access, file_system_type, fs_context,
     fs_context_operations, fs_dax_get_by_bdev, get_next_ino, get_tree_bdev, inc_nlink,
-    init_user_ns, inode, inode_init_owner, inode_operations, kill_block_super, new_inode, pfn_t,
-    register_filesystem, super_block, super_operations, umode_t, unregister_filesystem, EINVAL,
-    ENOMEM, PAGE_SHIFT, S_IFDIR, S_IFMT,
+    init_user_ns, inode, inode_init_owner, kill_block_super, new_inode, pfn_t, register_filesystem,
+    super_block, super_operations, umode_t, unregister_filesystem, EINVAL, ENOMEM, PAGE_SHIFT,
+    S_IFDIR, S_IFMT,
 };
 use kernel::c_types::{c_int, c_uint, c_ulong, c_void};
 use kernel::prelude::*;
@@ -27,6 +36,7 @@ module! {
 struct HayleyFS {}
 
 const LONG_MAX: usize = 9223372036854775807;
+const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;
 
 // try to set it up to do something on mount
 // this is a hacky thing stolen from RamFS. if RfL folks say anything
@@ -48,12 +58,21 @@ pub struct hayleyfs_mount_opts {
 #[derive(Debug)]
 pub struct hayleyfs_sb_info {
     sb: *mut super_block, // raw pointer to the VFS super block
+    hayleyfs_sb: hayleyfs_super_block,
     mount_opts: hayleyfs_mount_opts,
     s_daxdev: *mut dax_device, // raw pointer to the dax device we are mounted on
     s_dev_offset: u64,         // no idea what this is used for but a dax fxn needs it
     virt_addr: *mut c_void,    // raw pointer virtual address of beginning of FS instance
     phys_addr: u64,            // physical address of beginning of FS instance
-    pm_size: i64,              // size of the PM device
+    pm_size: u64,              // size of the PM device (TODO: make unsigned)
+}
+
+// TODO: packed?
+#[derive(Debug)]
+pub struct hayleyfs_super_block {
+    size: u64,
+    blocksize: u32,
+    magic: u32,
 }
 
 #[no_mangle]
@@ -67,10 +86,6 @@ static mut hayleyfs_fs_type: file_system_type = file_system_type {
 static hayleyfs_super_ops: super_operations = super_operations {
     put_super: Some(hayleyfs_put_super),
     ..c_default_struct!(super_operations)
-};
-
-static hayleyfs_dir_inode_operations: inode_operations = inode_operations {
-    ..c_default_struct!(inode_operations)
 };
 
 static hayleyfs_context_ops: fs_context_operations = fs_context_operations {
@@ -116,11 +131,6 @@ fn hayleyfs_get_pm_info(
         pr_alert!("Bad DAX device\n");
         Err(EINVAL)
     } else {
-        // device: sbi.s_daxdev
-        // page offset: 0
-        // number of pages:
-        // kaddr output
-        // pfn output
         let mut virt_addr: *mut c_void = ptr::null_mut();
         let pfn: *mut pfn_t = ptr::null_mut();
         // TODO: LONG_MAX and PAGE_SIZE are usizes (and we can't change PAGE_SIZE's type)
@@ -140,7 +150,7 @@ fn hayleyfs_get_pm_info(
             Err(EINVAL)
         } else {
             size = size * (PAGE_SIZE as i64);
-            sbi.pm_size = size;
+            sbi.pm_size = u64::try_from(size).unwrap(); // should never fail - size is always positive
             sbi.virt_addr = virt_addr;
 
             // this calculation taken from NOVA
@@ -192,6 +202,14 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
         Err(e) => return -(e as c_int),
     }
 
+    // TODO: this should really go somewhere else - it's only right to do it here on initialization
+    let mut hsb = hayleyfs_get_super(&sbi);
+    hsb.size = sbi.pm_size;
+    hsb.blocksize = u32::try_from(PAGE_SIZE).unwrap(); // TODO: this could panic
+    hsb.magic = HAYLEYFS_MAGIC;
+
+    clflush(&hsb, size_of::<hayleyfs_super_block>(), true);
+
     unsafe {
         (*sb).s_op = &hayleyfs_super_ops;
         (*sb).s_root = d_make_root(inode);
@@ -209,6 +227,12 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
 fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut hayleyfs_sb_info {
     let sbi: &mut hayleyfs_sb_info = unsafe { &mut *((*sb).s_fs_info as *mut hayleyfs_sb_info) };
     sbi
+}
+
+fn hayleyfs_get_super(sbi: &hayleyfs_sb_info) -> &'static mut hayleyfs_super_block {
+    let hayleyfs_super: &mut hayleyfs_super_block =
+        unsafe { &mut *(sbi.virt_addr as *mut hayleyfs_super_block) };
+    hayleyfs_super
 }
 
 #[no_mangle]

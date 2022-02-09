@@ -2,4 +2,4 @@
 
 obj-m += hayleyfs.o
 
-hayleyfs-objs += super_rs.o super.o
+hayleyfs-objs += defs.o super_rs.o super.o inode_rs.o pm.o
