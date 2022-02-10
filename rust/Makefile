@@ -1,7 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
 
-obj-$(CONFIG_RUST) += core.o compiler_builtins.o helpers.o
+obj-$(CONFIG_RUST) += core.o compiler_builtins.o
 always-$(CONFIG_RUST) += exports_core_generated.h
+
+# Missing prototypes are expected in the helpers since these are exported
+# for Rust only, thus there is no header nor prototypes.
+obj-$(CONFIG_RUST) += helpers.o
+CFLAGS_REMOVE_helpers.o = -Wmissing-prototypes -Wmissing-declarations
 
 always-$(CONFIG_RUST) += libmacros.so
 no-clean-files += libmacros.so
@@ -49,8 +54,23 @@ quiet_cmd_rustdoc = RUSTDOC $(if $(rustdoc_host),H, ) $<
 		--output $(objtree)/rust/doc --crate-name $(subst rustdoc-,,$@) \
 		@$(objtree)/include/generated/rustc_cfg $<
 
+# The `html_logo_url` and `html_favicon_url` forms of the `doc` attribute
+# can be used to specify a custom logo. However:
+#   - The given value is used as-is, thus it cannot be relative or a local file
+#     (unlike the non-custom case) since the generated docs have subfolders.
+#   - It requires adding it to every crate.
+#   - It requires changing `core` which comes from the sysroot.
+#
+# Using `-Zcrate-attr` would solve the last two points, but not the first.
+# The https://github.com/rust-lang/rfcs/pull/3226 RFC suggests two new
+# command-like flags to solve the issue. Meanwhile, we use the non-custom case
+# and then retouch the generated files.
 rustdoc: rustdoc-core rustdoc-macros rustdoc-compiler_builtins rustdoc-alloc rustdoc-kernel
-	$(Q)cp $(srctree)/Documentation/rust/assets/* $(objtree)/rust/doc
+	$(Q)cp $(srctree)/Documentation/rust/logo.svg $(objtree)/rust/doc
+	$(Q)find $(objtree)/rust/doc -name '*.html' -type f -print0 | xargs -0 sed -Ei \
+		-e 's:rust-logo\.png:logo.svg:g' \
+		-e 's:favicon\.svg:logo.svg:g' \
+		-e 's:<link rel="alternate icon" type="image/png" href="[./]*favicon-(16x16|32x32)\.png">::g'
 
 rustdoc-macros: private rustdoc_host = yes
 rustdoc-macros: private rustc_target_flags = --crate-type proc-macro \
@@ -200,15 +220,13 @@ bindgen_skip_c_flags := -mno-fp-ret-in-387 -mpreferred-stack-boundary=% \
 	-mindirect-branch=thunk-extern -mindirect-branch-register -mrecord-mcount \
 	-mabi=lp64 -mstack-protector-guard% -mtraceback=no \
 	-mno-pointers-to-nested-functions -mno-string -mno-strict-align \
+	-mstrict-align \
 	-fconserve-stack -falign-jumps=% -falign-loops=% \
 	-femit-struct-debug-baseonly -fno-ipa-cp-clone -fno-ipa-sra \
 	-fno-partial-inlining -fplugin-arg-arm_ssp_per_task_plugin-% \
 	-fno-reorder-blocks -fno-allow-store-data-races -fasan-shadow-offset=% \
-	-Wno-packed-not-aligned -Wno-format-truncation -Wno-format-overflow \
-	-Wno-stringop-truncation -Wno-unused-but-set-variable \
-	-Wno-stringop-overflow -Wno-restrict -Wno-maybe-uninitialized \
-	-Werror=designated-init -Wno-zero-length-bounds -Wimplicit-fallthrough=% \
-	-Wno-alloc-size-larger-than -Wcast-function-type \
+	-fzero-call-used-regs=% -fno-stack-clash-protection \
+	-fno-inline-functions-called-once \
 	--param=% --param asan-%
 
 # Derived from `scripts/Makefile.clang`
@@ -219,9 +237,11 @@ BINDGEN_TARGET_riscv	:= riscv64-linux-gnu
 BINDGEN_TARGET_x86	:= x86_64-linux-gnu
 BINDGEN_TARGET		:= $(BINDGEN_TARGET_$(SRCARCH))
 
-bindgen_extra_c_flags = --target=$(BINDGEN_TARGET) \
-	-Wno-address-of-packed-member \
-	-Wno-gnu-variable-sized-type-not-at-end
+# All warnings are inhibited since GCC builds are very experimental,
+# many GCC warnings are not supported by Clang, they may only appear in
+# some configurations, with new GCC versions, etc.
+bindgen_extra_c_flags = -w --target=$(BINDGEN_TARGET)
+
 bindgen_c_flags = $(filter-out $(bindgen_skip_c_flags), $(c_flags)) \
 	$(bindgen_extra_c_flags)
 endif
@@ -232,32 +252,34 @@ else
 bindgen_c_flags_lto = $(bindgen_c_flags)
 endif
 
-# To avoid several recompilations in PowerPC, which inserts `-D_TASK_CPU`
-bindgen_c_flags_final = $(filter-out -D_TASK_CPU=%, $(bindgen_c_flags_lto))
+bindgen_c_flags_final = $(bindgen_c_flags_lto)
 
 quiet_cmd_bindgen = BINDGEN $@
       cmd_bindgen = \
-	$(BINDGEN) $< $(shell grep -v '^\#\|^$$' $(srctree)/rust/bindgen_parameters) \
+	$(BINDGEN) $< $(bindgen_target_flags) \
 		--use-core --with-derive-default --ctypes-prefix c_types \
 		--no-debug '.*' \
-		--size_t-is-usize -o $@ -- $(bindgen_c_flags_final) -DMODULE
+		--size_t-is-usize -o $@ -- $(bindgen_c_flags_final) -DMODULE \
+		$(bindgen_target_cflags) $(bindgen_target_extra)
 
+$(objtree)/rust/bindings_generated.rs: private bindgen_target_flags = \
+    $(shell grep -v '^\#\|^$$' $(srctree)/rust/bindgen_parameters)
 $(objtree)/rust/bindings_generated.rs: $(srctree)/rust/kernel/bindings_helper.h \
-	$(srctree)/rust/bindgen_parameters FORCE
+    $(srctree)/rust/bindgen_parameters FORCE
 	$(call if_changed_dep,bindgen)
 
-quiet_cmd_bindgen_helper = BINDGEN $@
-      cmd_bindgen_helper = \
-	$(BINDGEN) $< --blacklist-type '.*' --whitelist-var '' \
-		--whitelist-function 'rust_helper_.*' \
-		--use-core --with-derive-default --ctypes-prefix c_types \
-		--no-debug '.*' \
-		--size_t-is-usize -o $@ -- $(bindgen_c_flags_final) \
-		-I$(objtree)/rust/ -DMODULE; \
-	sed -Ei 's/pub fn rust_helper_([a-zA-Z0-9_]*)/\#[link_name="rust_helper_\1"]\n    pub fn \1/g' $@
-
+# See `CFLAGS_REMOVE_helpers.o` above. In addition, Clang on C does not warn
+# with `-Wmissing-declarations` (unlike GCC), so it is not strictly needed here
+# given it is `libclang`; but for consistency, future Clang changes and/or
+# a potential future GCC backend for `bindgen`, we disable it too.
+$(objtree)/rust/bindings_helpers_generated.rs: private bindgen_target_flags = \
+    --blacklist-type '.*' --whitelist-var '' --whitelist-function 'rust_helper_.*'
+$(objtree)/rust/bindings_helpers_generated.rs: private bindgen_target_cflags = \
+    -I$(objtree)/rust/ -Wno-missing-prototypes -Wno-missing-declarations
+$(objtree)/rust/bindings_helpers_generated.rs: private bindgen_target_extra = ; \
+    sed -Ei 's/pub fn rust_helper_([a-zA-Z0-9_]*)/#[link_name="rust_helper_\1"]\n    pub fn \1/g' $@
 $(objtree)/rust/bindings_helpers_generated.rs: $(srctree)/rust/helpers.c FORCE
-	$(call if_changed_dep,bindgen_helper)
+	$(call if_changed_dep,bindgen)
 
 quiet_cmd_exports = EXPORTS $@
       cmd_exports = \
