@@ -1,4 +1,11 @@
 //! Test module to mess around with Rust in the kernel
+//! Current FS layout:
+//! 1st page: superblock
+//! 2nd page: inode bitmap
+//! 3rd page: inode block
+//! 4th page: data bitmap
+//! 5th page: data blocks
+//! this is a bad layout but it's fine for now
 
 #![allow(non_camel_case_types)]
 #![allow(missing_docs)]
@@ -8,9 +15,11 @@
 mod defs;
 mod inode_rs;
 mod pm;
+mod super_def;
 
 use crate::inode_rs::*;
 use crate::pm::*;
+use crate::super_def::*;
 use core::mem::size_of;
 use core::ptr;
 
@@ -48,33 +57,6 @@ mod __anon__ {
     struct super_operations;
 }
 
-#[repr(C)]
-#[derive(Debug)]
-pub struct hayleyfs_mount_opts {
-    init: bool,
-}
-
-#[repr(C)]
-#[derive(Debug)]
-pub struct hayleyfs_sb_info {
-    sb: *mut super_block, // raw pointer to the VFS super block
-    hayleyfs_sb: hayleyfs_super_block,
-    mount_opts: hayleyfs_mount_opts,
-    s_daxdev: *mut dax_device, // raw pointer to the dax device we are mounted on
-    s_dev_offset: u64,         // no idea what this is used for but a dax fxn needs it
-    virt_addr: *mut c_void,    // raw pointer virtual address of beginning of FS instance
-    phys_addr: u64,            // physical address of beginning of FS instance
-    pm_size: u64,              // size of the PM device (TODO: make unsigned)
-}
-
-// TODO: packed?
-#[derive(Debug)]
-pub struct hayleyfs_super_block {
-    size: u64,
-    blocksize: u32,
-    magic: u32,
-}
-
 #[no_mangle]
 static mut hayleyfs_fs_type: file_system_type = file_system_type {
     name: c_str!("hayleyfs").as_char_ptr(),
@@ -92,30 +74,6 @@ static hayleyfs_context_ops: fs_context_operations = fs_context_operations {
     get_tree: Some(hayleyfs_get_tree),
     ..c_default_struct!(fs_context_operations)
 };
-
-pub fn hayleyfs_get_inode(sb: *mut super_block, dir: *const inode, mode: umode_t) -> *mut inode {
-    // TODO: obviously this does not do enough for most cases but it might
-    // be enough to get it to mount
-    let inode = unsafe { new_inode(sb) };
-    if !ptr::eq(inode, ptr::null_mut()) {
-        let inode = unsafe { inode.as_mut().unwrap() };
-        inode.i_ino = unsafe { get_next_ino() } as c_ulong;
-        unsafe {
-            inode_init_owner(&mut init_user_ns, inode, dir, mode);
-        }
-        match mode as c_uint & S_IFMT {
-            S_IFDIR => {
-                inode.i_op = &hayleyfs_dir_inode_operations;
-                /* directory inodes start off with i_nlink == 2 (for "." entry) */
-                unsafe {
-                    inc_nlink(inode);
-                }
-            }
-            _ => {} // do nothing for now
-        }
-    }
-    inode
-}
 
 fn hayleyfs_get_pm_info(
     sb: *mut super_block,
@@ -188,40 +146,49 @@ fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> core::result
 
 #[no_mangle]
 pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_context) -> i32 {
-    pr_info!("Mounting the file system!\n");
-    let inode = hayleyfs_get_inode(sb, ptr::null_mut(), S_IFDIR as umode_t);
-
+    pr_info!("mounting the file system!\n");
+    // convert the superblock to a reference
+    // let sb = unsafe { &mut *(sb as *mut super_block) };
+    // TODO: think about how to use the superblock here
     match hayleyfs_alloc_sbi(sb, fc) {
         Ok(_) => {}
         Err(e) => return -(e as c_int),
     }
     let sbi = hayleyfs_get_sbi(sb);
     let res = hayleyfs_get_pm_info(sb, sbi);
-    match res {
-        Ok(()) => {}
-        Err(e) => return -(e as c_int),
-    }
 
     // TODO: this should really go somewhere else - it's only right to do it here on initialization
     let mut hsb = hayleyfs_get_super(&sbi);
     hsb.size = sbi.pm_size;
     hsb.blocksize = u32::try_from(PAGE_SIZE).unwrap(); // TODO: this could panic
     hsb.magic = HAYLEYFS_MAGIC;
-
     clflush(&hsb, size_of::<hayleyfs_super_block>(), true);
 
-    unsafe {
-        (*sb).s_op = &hayleyfs_super_ops;
-        (*sb).s_root = d_make_root(inode);
+    // TODO: don't assume re-set up the file system on each mount
+    // get root hayleyfs_inode
+    let root_pi = hayleyfs_get_inode_by_ino(sbi, HAYLEYFS_ROOT_INO);
+    root_pi.ino = HAYLEYFS_ROOT_INO;
+    root_pi.data0.page = None;
+    root_pi.data1.page = None;
+    root_pi.data2.page = None;
+    root_pi.data3.page = None;
+    root_pi.mode = S_IFDIR;
+    clflush(&root_pi, size_of::<hayleyfs_inode>(), true);
+
+    let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO);
+    match root_i {
+        Ok(root_i) => unsafe {
+            (*root_i).i_mode = S_IFDIR as u16; // TODO: u32 -> u16 is a fishy conversion
+            (*root_i).i_op = &hayleyfs_dir_inode_operations;
+            (*sb).s_op = &hayleyfs_super_ops;
+            (*sb).s_root = d_make_root(root_i);
+        },
+        Err(_) => return -(EINVAL as c_int),
     }
 
-    let s_root = unsafe { (*sb).s_root };
+    // TODO: set up the root dentry
 
-    if ptr::eq(s_root, ptr::null_mut()) {
-        -(ENOMEM as c_int)
-    } else {
-        0
-    }
+    0
 }
 
 fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut hayleyfs_sb_info {

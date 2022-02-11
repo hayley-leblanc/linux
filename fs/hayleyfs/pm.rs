@@ -2,12 +2,8 @@
 #![allow(missing_docs)]
 #![allow(non_upper_case_globals)]
 
-// use crate::defs::*;
+use crate::defs::*;
 use kernel::prelude::*;
-
-// TODO: figure out how to get this from super_rs so
-// you don't have to declare it here
-pub(crate) const __LOG_PREFIX: &[u8] = b"hayleyfs\0";
 
 /// Taken from Corundum
 /// Flushes cache line back to memory
@@ -20,9 +16,9 @@ pub(crate) fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
         start = (start >> 6) << 6; // TODO: i think this properly aligns it
         let end = start + len;
 
-        // #[cfg(feature = "stat_print_flushes")]
-        pr_info!("start {:#X}, end {:#X}\n", start, end);
+        pr_info!("start {:#X}, end {:#X}, len {:?}\n", start, end, len);
 
+        // TODO: properly check architecture and choose correct cache line flush instruction
         while start < end {
             unsafe {
                 // #[cfg(not(any(feature = "use_clflushopt", feature = "use_clwb")))]
