@@ -11,6 +11,7 @@ use core::mem::size_of;
 use kernel::bindings::{dentry, dir_context, file, file_operations, inode, ENOTDIR};
 use kernel::c_types::{c_int, c_void};
 use kernel::prelude::*;
+use kernel::str::CStr;
 use kernel::{c_default_struct, c_str, PAGE_SIZE};
 
 pub(crate) type pm_page = usize;
@@ -141,6 +142,36 @@ fn set_dentry_name(name: &str, dentry: &mut hayleyfs_dentry) {
     let name = name.as_bytes();
     for i in 0..num_bytes {
         dentry.name[i] = name[i];
+    }
+}
+
+// TODO: there's probably a better way to handle the name string here?
+// current way works though. but there is a lot of conversion going on
+pub(crate) fn add_dentry_to_parent(
+    sbi: &hayleyfs_sb_info,
+    parent_dir: &hayleyfs_inode,
+    ino: usize,
+    name: &kernel::str::CStr,
+) -> Result<()> {
+    // find the next open dentry slot
+    match parent_dir.data0 {
+        Some(page_no) => {
+            let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut dir_page) };
+            for i in 0..DENTRIES_PER_PAGE {
+                let mut dentry = &mut dir_page.dentries[i];
+                if !dentry.valid {
+                    set_dentry_name(name.to_str().unwrap(), &mut dentry);
+                    dentry.ino = ino;
+                    dentry.valid = true;
+                    dentry.link_count = 2;
+                    clflush(dentry, size_of::<hayleyfs_dentry>(), true);
+
+                    return Ok(());
+                }
+            }
+            Err(Error::ENOSPC)
+        }
+        None => Err(Error::ENOTDIR),
     }
 }
 

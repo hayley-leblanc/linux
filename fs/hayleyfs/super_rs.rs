@@ -31,8 +31,8 @@ use kernel::bindings::{
     d_make_root, dax_device, dax_direct_access, file_system_type, fs_context,
     fs_context_operations, fs_dax_get_by_bdev, get_next_ino, get_tree_bdev, inc_nlink,
     init_user_ns, inode, inode_init_owner, kill_block_super, new_inode, pfn_t, register_filesystem,
-    super_block, super_operations, umode_t, unregister_filesystem, EINVAL, ENOMEM, PAGE_SHIFT,
-    S_IFDIR, S_IFMT,
+    set_nlink, super_block, super_operations, umode_t, unregister_filesystem, EINVAL, ENOMEM,
+    PAGE_SHIFT, S_IFDIR, S_IFMT,
 };
 use kernel::c_types::{c_int, c_uint, c_ulong, c_void};
 use kernel::prelude::*;
@@ -147,6 +147,8 @@ fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> core::result
     }
 }
 
+// TODO: differentiate between remount and initalization, or at least make sure to wipe old stuff
+// every time the file system is mounted for now
 #[no_mangle]
 pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_context) -> i32 {
     pr_info!("mounting the file system!\n");
@@ -159,6 +161,10 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
     }
     let sbi = hayleyfs_get_sbi(sb);
     let res = hayleyfs_get_pm_info(sb, sbi);
+
+    sbi.mode = 0o755;
+    sbi.uid = unsafe { hayleyfs_current_fsuid() };
+    sbi.gid = unsafe { hayleyfs_current_fsgid() };
 
     // TODO: this should really go somewhere else - it's only right to do it here on initialization
     let mut hsb = hayleyfs_get_super(&sbi);
@@ -179,10 +185,12 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
     set_inode_bitmap_bit(sbi, HAYLEYFS_ROOT_INO).unwrap();
 
     let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO);
+    // TODO: convert into a bindgen inode rather than doing this unsafe stuff
     match root_i {
         Ok(root_i) => unsafe {
             (*root_i).i_mode = S_IFDIR as u16; // TODO: u32 -> u16 is a fishy conversion
             (*root_i).i_op = &hayleyfs_dir_inode_ops;
+            set_nlink(root_i, 2);
             // TODO: what the heck is this bindgen thing? suggested by the compiler,
             // won't compile without it
             (*root_i).__bindgen_anon_3.i_fop = &hayleyfs_file_ops;

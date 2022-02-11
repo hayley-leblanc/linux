@@ -3,6 +3,7 @@
 #include <linux/dax.h>
 #include <linux/pfn_t.h>
 #include <linux/bitops.h>
+#include <linux/cred.h>
 
 void hayleyfs_fs_put_dax(struct dax_device *dax_dev) {
     fs_put_dax(dax_dev);
@@ -26,4 +27,12 @@ bool hayleyfs_dir_emit(struct dir_context* ctx, const char *name, int namelen, u
 
 struct inode* hayleyfs_file_inode(const struct file *f) {
     return file_inode(f);
+}
+
+kuid_t hayleyfs_current_fsuid(void) {
+    return current_fsuid();
+}
+
+kgid_t hayleyfs_current_fsgid(void) {
+    return current_fsgid();
 }

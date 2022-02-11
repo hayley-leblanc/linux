@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use kernel::bindings::{dax_device, dir_context, file, inode, pfn_t};
+use kernel::bindings::{dax_device, dir_context, file, inode, kgid_t, kuid_t, pfn_t};
 use kernel::c_types::{c_char, c_ulong, c_void};
 
 pub(crate) const __LOG_PREFIX: &[u8] = b"hayleyfs\0";
@@ -41,4 +41,8 @@ extern "C" {
     ) -> bool;
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_file_inode(f: *const file) -> *mut inode;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_current_fsuid() -> kuid_t;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_current_fsgid() -> kgid_t;
 }
