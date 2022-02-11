@@ -11,12 +11,16 @@
 #![allow(missing_docs)]
 #![allow(non_upper_case_globals)]
 #![feature(new_uninit)]
+#![allow(unused)]
 
+mod data;
 mod defs;
 mod inode_rs;
 mod pm;
 mod super_def;
 
+use crate::data::*;
+use crate::defs::*;
 use crate::inode_rs::*;
 use crate::pm::*;
 use crate::super_def::*;
@@ -44,9 +48,6 @@ module! {
 
 struct HayleyFS {}
 
-const LONG_MAX: usize = 9223372036854775807;
-const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;
-
 // try to set it up to do something on mount
 // this is a hacky thing stolen from RamFS. if RfL folks say anything
 // about that, you should also implement any changes
@@ -65,11 +66,13 @@ static mut hayleyfs_fs_type: file_system_type = file_system_type {
     ..c_default_struct!(file_system_type)
 };
 
+#[no_mangle]
 static hayleyfs_super_ops: super_operations = super_operations {
     put_super: Some(hayleyfs_put_super),
     ..c_default_struct!(super_operations)
 };
 
+#[no_mangle]
 static hayleyfs_context_ops: fs_context_operations = fs_context_operations {
     get_tree: Some(hayleyfs_get_tree),
     ..c_default_struct!(fs_context_operations)
@@ -166,34 +169,34 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
 
     // TODO: don't assume re-set up the file system on each mount
     // get root hayleyfs_inode
-    let root_pi = hayleyfs_get_inode_by_ino(sbi, HAYLEYFS_ROOT_INO);
+    let root_pi = hayleyfs_get_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO);
     root_pi.ino = HAYLEYFS_ROOT_INO;
-    root_pi.data0.page = None;
-    root_pi.data1.page = None;
-    root_pi.data2.page = None;
-    root_pi.data3.page = None;
+    root_pi.data0 = None;
     root_pi.mode = S_IFDIR;
+    root_pi.link_count = 2;
     clflush(&root_pi, size_of::<hayleyfs_inode>(), true);
+
+    set_inode_bitmap_bit(sbi, HAYLEYFS_ROOT_INO).unwrap();
 
     let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO);
     match root_i {
         Ok(root_i) => unsafe {
             (*root_i).i_mode = S_IFDIR as u16; // TODO: u32 -> u16 is a fishy conversion
-            (*root_i).i_op = &hayleyfs_dir_inode_operations;
+            (*root_i).i_op = &hayleyfs_dir_inode_ops;
+            // TODO: what the heck is this bindgen thing? suggested by the compiler,
+            // won't compile without it
+            (*root_i).__bindgen_anon_3.i_fop = &hayleyfs_file_ops;
             (*sb).s_op = &hayleyfs_super_ops;
             (*sb).s_root = d_make_root(root_i);
         },
         Err(_) => return -(EINVAL as c_int),
     }
 
-    // TODO: set up the root dentry
+    // TODO: set up the root dentry stuff
+    // TODO: make this a function
+    initialize_dir(&sbi, root_pi, HAYLEYFS_ROOT_INO, HAYLEYFS_ROOT_INO).unwrap();
 
     0
-}
-
-fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut hayleyfs_sb_info {
-    let sbi: &mut hayleyfs_sb_info = unsafe { &mut *((*sb).s_fs_info as *mut hayleyfs_sb_info) };
-    sbi
 }
 
 fn hayleyfs_get_super(sbi: &hayleyfs_sb_info) -> &'static mut hayleyfs_super_block {
@@ -254,11 +257,4 @@ impl Drop for HayleyFS {
         unsafe { unregister_filesystem(&mut hayleyfs_fs_type) };
         pr_info!("Module is unloading. Goodbye!\n");
     }
-}
-
-extern "C" {
-    #[allow(improper_ctypes)]
-    fn hayleyfs_fs_put_dax(dax_dev: *mut dax_device);
-    #[allow(improper_ctypes)]
-    fn hayleyfs_pfn_t_to_pfn(pfn: pfn_t) -> u64;
 }

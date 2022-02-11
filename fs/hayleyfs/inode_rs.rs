@@ -1,7 +1,11 @@
 #![allow(non_camel_case_types)]
 #![allow(missing_docs)]
 #![allow(non_upper_case_globals)]
+#![allow(unused)]
 
+use crate::data::*;
+use crate::defs::*;
+use crate::pm::*;
 use crate::super_def::hayleyfs_sb_info;
 use core::mem::size_of;
 use core::ptr;
@@ -16,43 +20,33 @@ use kernel::{c_default_struct, PAGE_SIZE};
 // reserved inode nums
 pub(crate) const HAYLEYFS_ROOT_INO: usize = 1;
 
-// TODO: figure out how to get this from super_rs so
-// you don't have to declare it here
-pub(crate) const __LOG_PREFIX: &[u8] = b"hayleyfs\0";
-
 // pub(crate) makes it visible to the whole crate
 // not sure why it is not already visible with in the crate...?
-pub(crate) static hayleyfs_dir_inode_operations: inode_operations = inode_operations {
+pub(crate) static hayleyfs_dir_inode_ops: inode_operations = inode_operations {
     create: Some(hayleyfs_create),
     lookup: Some(hayleyfs_lookup),
     ..c_default_struct!(inode_operations)
 };
 
-// inode that lives in
+// inode that lives in PM
 // TODO: should this actually be packed?
+// TODO: what are these enums going to look like on PM?
+// need to be careful about that
 #[repr(packed)]
 pub(crate) struct hayleyfs_inode {
-    pub(crate) data0: pm_page,
-    pub(crate) data1: pm_page,
-    pub(crate) data2: pm_page,
-    pub(crate) data3: pm_page,
+    pub(crate) data0: Option<pm_page>,
     pub(crate) ino: usize,
-    pub(crate) mode: u32, // should be smaller, but whatever
-}
-
-pub(crate) struct pm_page {
-    pub(crate) page: Option<*const c_void>,
+    pub(crate) mode: u32,
+    pub(crate) link_count: u16,
 }
 
 pub(crate) fn hayleyfs_get_inode_by_ino(sbi: &hayleyfs_sb_info, ino: usize) -> &mut hayleyfs_inode {
     let addr = (PAGE_SIZE * 2) + (ino * size_of::<hayleyfs_inode>());
     pr_info!("addr: {:#X}\n", addr);
     // TODO: check that this address does not exceed the inode page
-    pr_info!("sbi virt addr: {:#X}", sbi.virt_addr as usize);
+    // TODO: handle possible panic on converting usize to isize here
     let addr = sbi.virt_addr as usize + addr;
     unsafe { &mut *(addr as *mut hayleyfs_inode) }
-    // TODO: handle possible panic on converting usize to isize here
-    // unsafe { &mut *((sbi.virt_addr as usize + addr) as *mut hayleyfs_inode) }
 }
 
 // TODO: this probably should not be the static lifetime
@@ -66,6 +60,17 @@ pub(crate) fn hayleyfs_iget(sb: *mut super_block, ino: usize) -> Result<&'static
     unsafe { unlock_new_inode(inode) };
 
     Ok(inode)
+}
+
+// TODO: to try for the soft updates thing the bitmap will need a better
+// representation in Rust
+pub(crate) fn set_inode_bitmap_bit(sbi: &hayleyfs_sb_info, ino: usize) -> Result<()> {
+    let addr = sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE);
+    // TODO: should check that the provided ino is valid and return an error if not
+    unsafe { hayleyfs_set_bit(ino.try_into().unwrap(), addr as *mut c_void) };
+    // TODO: only flush the updated cache line, not the whole bitmap
+    clflush(addr as *const c_void, PAGE_SIZE, true);
+    Ok(())
 }
 
 unsafe extern "C" fn hayleyfs_create(
@@ -94,7 +99,6 @@ fn _hayleyfs_create(
     excl: bool,
 ) -> i32 {
     pr_info!("creating a new file!\n");
-    // pr_info!("")
     0
 }
 

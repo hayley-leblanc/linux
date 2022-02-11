@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types)]
 #![allow(missing_docs)]
 #![allow(non_upper_case_globals)]
+#![allow(unused_imports)]
 
 use crate::defs::*;
 use kernel::prelude::*;
