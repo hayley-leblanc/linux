@@ -8,7 +8,7 @@
 use crate::{clk::Clk, error::from_kernel_err_ptr};
 
 use crate::{
-    bindings, c_str, c_types,
+    bindings,
     revocable::{Revocable, RevocableGuard},
     str::CStr,
     sync::{NeedsLockClass, RevocableMutex, RevocableMutexGuard, UniqueRef},
@@ -19,6 +19,9 @@ use core::{
     ops::{Deref, DerefMut},
     pin::Pin,
 };
+
+#[cfg(CONFIG_PRINTK)]
+use crate::{c_str, c_types};
 
 /// A raw device.
 ///
@@ -58,11 +61,11 @@ pub unsafe trait RawDevice {
             None => core::ptr::null(),
         };
 
-        // SAFETY: id_ptr is optional and may be either a valid pointer
+        // SAFETY: `id_ptr` is optional and may be either a valid pointer
         // from the type invariant or NULL otherwise.
         let clk_ptr = unsafe { from_kernel_err_ptr(bindings::clk_get(self.raw_device(), id_ptr)) }?;
 
-        // SAFETY: clock is initialized with valid pointer returned from `bindings::clk_get` call.
+        // SAFETY: Clock is initialized with valid pointer returned from `bindings::clk_get` call.
         unsafe { Ok(Clk::new(clk_ptr)) }
     }
 
@@ -138,10 +141,12 @@ pub unsafe trait RawDevice {
     ///
     /// Callers must ensure that `klevel` is null-terminated; in particular, one of the
     /// `KERN_*`constants, for example, `KERN_CRIT`, `KERN_ALERT`, etc.
+    #[cfg_attr(not(CONFIG_PRINTK), allow(unused_variables))]
     unsafe fn printk(&self, klevel: &[u8], msg: fmt::Arguments<'_>) {
         // SAFETY: `klevel` is null-terminated and one of the kernel constants. `self.raw_device`
         // is valid because `self` is valid. The "%pA" format string expects a pointer to
         // `fmt::Arguments`, which is what we're passing as the last argument.
+        #[cfg(CONFIG_PRINTK)]
         unsafe {
             bindings::_dev_printk(
                 klevel as *const _ as *const c_types::c_char,
@@ -217,10 +222,10 @@ impl Drop for Device {
 /// some device state must be freed and not used anymore, while others must remain accessible.
 ///
 /// This struct separates the device data into three categories:
-/// 1. Registrations: are destroyed when the device is removed, but before the io resources
-///    become inaccessible.
-/// 2. Io resources: are available until the device is removed.
-/// 3. General data: remain available as long as the ref count is nonzero.
+///   1. Registrations: are destroyed when the device is removed, but before the io resources
+///      become inaccessible.
+///   2. Io resources: are available until the device is removed.
+///   3. General data: remain available as long as the ref count is nonzero.
 ///
 /// This struct implements the `DeviceRemoval` trait so that it can clean resources up even if not
 /// explicitly called by the device drivers.

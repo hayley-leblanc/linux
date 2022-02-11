@@ -51,7 +51,9 @@ the one at:
 
 	https://commonmark.org/help/
 
-This is how a well-documented Rust function may look like::
+This is how a well-documented Rust function may look like:
+
+.. code-block:: rust
 
 	/// Returns the contained [`Some`] value, consuming the `self` value,
 	/// without checking that the value is not [`None`].
@@ -72,7 +74,7 @@ This is how a well-documented Rust function may look like::
 		match self {
 			Some(val) => val,
 
-			// SAFETY: the safety contract must be upheld by the caller.
+			// SAFETY: The safety contract must be upheld by the caller.
 			None => unsafe { hint::unreachable_unchecked() },
 		}
 	}
