@@ -200,6 +200,8 @@ fn hayleyfs_new_vfs_inode(
         }
     }
 
+    unsafe { insert_inode_locked(inode) };
+
     inode
 }
 
