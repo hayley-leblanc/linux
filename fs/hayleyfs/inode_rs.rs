@@ -10,9 +10,9 @@ use crate::super_def::*;
 use core::mem::size_of;
 use core::ptr;
 use kernel::bindings::{
-    dentry, iget_failed, iget_locked, inc_nlink, inode, inode_init_owner, inode_operations,
-    new_inode, set_nlink, simple_lookup, super_block, umode_t, unlock_new_inode, user_namespace,
-    ENAMETOOLONG, S_IFDIR,
+    d_instantiate, d_splice_alias, dentry, iget_failed, iget_locked, inc_nlink, inode,
+    inode_init_owner, inode_operations, insert_inode_locked, new_inode, set_nlink, simple_lookup,
+    super_block, umode_t, unlock_new_inode, user_namespace, ENAMETOOLONG, S_IFDIR,
 };
 use kernel::c_types::{c_char, c_int, c_void};
 use kernel::prelude::*;
@@ -61,11 +61,12 @@ fn get_inode_bitmap_addr(sbi: &hayleyfs_sb_info) -> *mut c_void {
 fn hayleyfs_allocate_inode(sbi: &hayleyfs_sb_info) -> Result<usize> {
     let bitmap_addr = get_inode_bitmap_addr(&sbi);
 
+    // starts at bit 1 to ignore bit 0 since we don't use inode 0
     let ino = unsafe {
         hayleyfs_find_next_zero_bit(
             bitmap_addr as *mut u64,
-            0,
             (PAGE_SIZE * 8).try_into().unwrap(),
+            2,
         )
     };
 
@@ -92,7 +93,7 @@ pub(crate) fn hayleyfs_iget(sb: *mut super_block, ino: usize) -> Result<&'static
 // TODO: to try for the soft updates thing the bitmap will need a better
 // representation in Rust
 pub(crate) fn set_inode_bitmap_bit(sbi: &hayleyfs_sb_info, ino: usize) -> Result<()> {
-    let addr = sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE);
+    let addr = get_inode_bitmap_addr(&sbi);
     // TODO: should check that the provided ino is valid and return an error if not
     unsafe { hayleyfs_set_bit(ino.try_into().unwrap(), addr as *mut c_void) };
     // TODO: only flush the updated cache line, not the whole bitmap
@@ -100,6 +101,7 @@ pub(crate) fn set_inode_bitmap_bit(sbi: &hayleyfs_sb_info, ino: usize) -> Result
     Ok(())
 }
 
+#[no_mangle]
 unsafe extern "C" fn hayleyfs_mkdir(
     mnt_userns_raw: *mut user_namespace,
     dir_raw: *mut inode,
@@ -141,9 +143,11 @@ fn _hayleyfs_mkdir(
 
     // TODO: handle out of inodes case
     let ino = hayleyfs_allocate_inode(&sbi).unwrap();
+    set_inode_bitmap_bit(sbi, ino).unwrap();
 
     // the inode actually probably shouldn't be flushed until later
     let mut pi = hayleyfs_get_inode_by_ino(&sbi, ino);
+
     pi.ino = ino;
     pi.data0 = None;
     pi.mode = S_IFDIR;
@@ -159,9 +163,11 @@ fn _hayleyfs_mkdir(
 
     // set up vfs inode
     let inode = hayleyfs_new_vfs_inode(sb, dir, ino, mnt_userns, mode, new_inode_type::TYPE_MKDIR);
-
-    // increment parent vfs inode's link count
-    unsafe { inc_nlink(dir as *mut inode) };
+    unsafe {
+        d_instantiate(dentry, inode);
+        inc_nlink(dir as *mut inode);
+        unlock_new_inode(inode);
+    };
 
     0
 }
@@ -197,18 +203,48 @@ fn hayleyfs_new_vfs_inode(
     inode
 }
 
+#[no_mangle]
 unsafe extern "C" fn hayleyfs_lookup(
     dir: *mut inode,
     dentry: *mut dentry,
     flags: u32,
 ) -> *mut dentry {
-    pr_info!("lookup\n");
-    // let dentry_name = unsafe { &*((*dentry).d_name.name as *[u8] as *[i8])};
-
     let dentry_name = unsafe { (*dentry).d_name.name } as *const c_char;
     let dentry_name = unsafe { CStr::from_char_ptr(dentry_name) };
 
-    unsafe { pr_info!("inode num: {}", (*dir).i_ino) };
-    unsafe { pr_info!("dentry name: {:?}", dentry_name) };
-    unsafe { simple_lookup(dir, dentry, flags) }
+    let dir = unsafe { &mut *(dir as *mut inode) };
+
+    let sb = dir.i_sb;
+    let sbi = hayleyfs_get_sbi(sb);
+
+    // look up the parent's inode so that we can look at its directory entries
+    let parent_pi = hayleyfs_get_inode_by_ino(sbi, dir.i_ino.try_into().unwrap());
+    // TODO: check that this is actually a directory
+
+    match parent_pi.data0 {
+        Some(page_no) => {
+            // TODO: you do this same code a lot - might make more sense to have a function
+            // that takes a closure describing what to do in the loop
+            let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut dir_page) };
+            for i in 0..DENTRIES_PER_PAGE {
+                let mut p_dentry = &mut dir_page.dentries[i];
+                if !p_dentry.valid {
+                    // TODO: you need to return not found somewhere here
+                    break;
+                } else {
+                    if compare_dentry_name(&p_dentry.name, dentry_name.as_bytes_with_nul()) {
+                        let inode = hayleyfs_iget(sb, p_dentry.ino).unwrap();
+                        // TODO: handle errors on the returned inode
+                        return unsafe { d_splice_alias(inode, dentry) };
+                    }
+                }
+            }
+            return unsafe { simple_lookup(dir, dentry, flags) };
+        }
+        None => {
+            // TODO: figure out how to return the correct error type here
+            // for now just fall back to making the kernel do that for us
+            return unsafe { simple_lookup(dir, dentry, flags) };
+        }
+    }
 }

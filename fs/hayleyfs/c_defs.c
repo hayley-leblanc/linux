@@ -14,11 +14,11 @@ unsigned long hayleyfs_pfn_t_to_pfn(pfn_t pfn) {
 }
 
 void hayleyfs_set_bit(int nr, void* addr) {
-    set_bit(nr, addr);
+    __test_and_set_bit_le(nr, addr);
 }
 
 unsigned long hayleyfs_find_next_zero_bit(const unsigned long *addr, unsigned long size, unsigned long offset) {
-    return find_next_zero_bit(addr, size, offset);
+    return find_next_zero_bit_le(addr, size, offset);
 }
 
 bool hayleyfs_dir_emit(struct dir_context* ctx, const char *name, int namelen, u64 ino, unsigned type) {

@@ -23,7 +23,7 @@ pub(crate) struct data_page {
 
 // TODO: do you want to use an array? or something else?
 pub(crate) struct dir_page {
-    dentries: [hayleyfs_dentry; DENTRIES_PER_PAGE],
+    pub(crate) dentries: [hayleyfs_dentry; DENTRIES_PER_PAGE],
 }
 
 #[no_mangle]
@@ -48,7 +48,7 @@ fn get_data_bitmap_addr(sbi: &hayleyfs_sb_info) -> *mut c_void {
     (sbi.virt_addr as usize + (DATA_BITMAP_PAGE * PAGE_SIZE)) as *mut c_void
 }
 
-fn get_data_page_addr(sbi: &hayleyfs_sb_info, page_no: usize) -> *mut c_void {
+pub(crate) fn get_data_page_addr(sbi: &hayleyfs_sb_info, page_no: usize) -> *mut c_void {
     (sbi.virt_addr as usize + ((DATA_START + page_no) * PAGE_SIZE)) as *mut c_void
 }
 
@@ -143,6 +143,27 @@ fn set_dentry_name(name: &str, dentry: &mut hayleyfs_dentry) {
     for i in 0..num_bytes {
         dentry.name[i] = name[i];
     }
+}
+
+// TODO: use a better way to handle these slices so things don't get weird
+// when there are different lengths
+// there has to be a nicer way to handle these strings in general
+pub(crate) fn compare_dentry_name(name1: &[u8], name2: &[u8]) -> bool {
+    let (min_len, longer_name) = if name1.len() > name2.len() {
+        (name2.len(), name1)
+    } else {
+        (name1.len(), name2)
+    };
+    for i in 0..MAX_FILENAME_LEN {
+        if (i < min_len) {
+            if name1[i] != name2[i] {
+                return false;
+            }
+        } else if longer_name[i] != 0 {
+            return false;
+        }
+    }
+    true
 }
 
 // TODO: there's probably a better way to handle the name string here?
