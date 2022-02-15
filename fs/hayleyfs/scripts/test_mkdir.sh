@@ -13,4 +13,8 @@ sudo stat /mnt/pmem/bar
 sudo mkdir /mnt/pmem/foo/baz
 sudo stat /mnt/pmem/foo/baz
 
+sudo stat /mnt/pmem/foo
+
+sudo stat /mnt/pmem
+
 $cwd/unload.sh

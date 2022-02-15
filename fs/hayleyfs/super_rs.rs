@@ -12,6 +12,8 @@
 #![allow(non_upper_case_globals)]
 #![feature(new_uninit)]
 #![allow(unused)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::missing_safety_doc)] // TODO: remove
 
 mod data;
 mod defs;
@@ -59,7 +61,7 @@ mod __anon__ {
 }
 
 #[no_mangle]
-static mut hayleyfs_fs_type: file_system_type = file_system_type {
+static mut HayleyfsFsType: file_system_type = file_system_type {
     name: c_str!("hayleyfs").as_char_ptr(),
     init_fs_context: Some(hayleyfs_init_fs_context),
     kill_sb: Some(kill_block_super),
@@ -67,21 +69,18 @@ static mut hayleyfs_fs_type: file_system_type = file_system_type {
 };
 
 #[no_mangle]
-static hayleyfs_super_ops: super_operations = super_operations {
+static HayleyfsSuperOps: super_operations = super_operations {
     put_super: Some(hayleyfs_put_super),
     ..c_default_struct!(super_operations)
 };
 
 #[no_mangle]
-static hayleyfs_context_ops: fs_context_operations = fs_context_operations {
+static HayleyfsContextOps: fs_context_operations = fs_context_operations {
     get_tree: Some(hayleyfs_get_tree),
     ..c_default_struct!(fs_context_operations)
 };
 
-fn hayleyfs_get_pm_info(
-    sb: *mut super_block,
-    sbi: &mut hayleyfs_sb_info,
-) -> core::result::Result<(), u32> {
+fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> core::result::Result<(), u32> {
     // TODO: what happens if this isn't a dax dev?
 
     sbi.s_daxdev = unsafe { fs_dax_get_by_bdev((*sb).s_bdev, &mut sbi.s_dev_offset as *mut u64) };
@@ -110,7 +109,7 @@ fn hayleyfs_get_pm_info(
             pr_alert!("direct access failed\n");
             Err(EINVAL)
         } else {
-            size = size * (PAGE_SIZE as i64);
+            size *= (PAGE_SIZE as i64);
             sbi.pm_size = u64::try_from(size).unwrap(); // should never fail - size is always positive
             sbi.virt_addr = virt_addr;
 
@@ -130,7 +129,7 @@ fn hayleyfs_get_pm_info(
 fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> core::result::Result<(), u32> {
     // according to ramfs port, this is allocated the same as if we
     // used kzalloc with GFP_KERNEL
-    let sbi = Box::<hayleyfs_sb_info>::try_new_zeroed();
+    let sbi = Box::<SbInfo>::try_new_zeroed();
 
     // TODO: need to set stuff here or this won't get mounted
     match sbi {
@@ -174,13 +173,13 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
     clflush(&hsb, size_of::<hayleyfs_super_block>(), true);
 
     // TODO: don't assume re-set up the file system on each mount
-    // get root hayleyfs_inode
+    // get root HayleyfsInode
     let root_pi = hayleyfs_get_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO);
-    root_pi.ino = HAYLEYFS_ROOT_INO;
-    root_pi.data0 = None;
-    root_pi.mode = S_IFDIR;
-    root_pi.link_count = 2;
-    clflush(&root_pi, size_of::<hayleyfs_inode>(), true);
+    // TODO: fix safety
+    unsafe {
+        root_pi.set_up_inode(HAYLEYFS_ROOT_INO, None, S_IFDIR, 2);
+    }
+    clflush(&root_pi, size_of::<HayleyfsInode>(), true);
 
     set_inode_bitmap_bit(sbi, HAYLEYFS_ROOT_INO).unwrap();
 
@@ -189,12 +188,12 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
     match root_i {
         Ok(root_i) => unsafe {
             (*root_i).i_mode = S_IFDIR as u16; // TODO: u32 -> u16 is a fishy conversion
-            (*root_i).i_op = &hayleyfs_dir_inode_ops;
+            (*root_i).i_op = &HayleyfsDirInodeOps;
             set_nlink(root_i, 2);
             // TODO: what the heck is this bindgen thing? suggested by the compiler,
             // won't compile without it
-            (*root_i).__bindgen_anon_3.i_fop = &hayleyfs_file_ops;
-            (*sb).s_op = &hayleyfs_super_ops;
+            (*root_i).__bindgen_anon_3.i_fop = &HayleyfsFileOps;
+            (*sb).s_op = &HayleyfsSuperOps;
             (*sb).s_root = d_make_root(root_i);
         },
         Err(_) => return -(EINVAL as c_int),
@@ -207,7 +206,7 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
     0
 }
 
-fn hayleyfs_get_super(sbi: &hayleyfs_sb_info) -> &'static mut hayleyfs_super_block {
+fn hayleyfs_get_super(sbi: &SbInfo) -> &'static mut hayleyfs_super_block {
     let hayleyfs_super: &mut hayleyfs_super_block =
         unsafe { &mut *(sbi.virt_addr as *mut hayleyfs_super_block) };
     hayleyfs_super
@@ -218,15 +217,15 @@ pub unsafe extern "C" fn hayleyfs_put_super(sb: *mut super_block) {
     pr_info!("Unmounting the file system! Goodbye!\n");
     unsafe {
         // TODO: is this correct? it's from stack overflow
-        // need to cast a c_void into hayleyfs_sb_info
-        // let sbi: &mut hayleyfs_sb_info = &mut *((*sb).s_fs_info as *mut hayleyfs_sb_info);
+        // need to cast a c_void into SbInfo
+        // let sbi: &mut SbInfo = &mut *((*sb).s_fs_info as *mut SbInfo);
         let sbi = hayleyfs_get_sbi(sb);
         hayleyfs_fs_put_dax(sbi.s_daxdev);
     }
 }
 
 #[no_mangle]
-pub extern "C" fn hayleyfs_get_tree(fc: *mut fs_context) -> i32 {
+pub unsafe extern "C" fn hayleyfs_get_tree(fc: *mut fs_context) -> i32 {
     unsafe { get_tree_bdev(fc, Some(hayleyfs_fill_super)) }
 }
 
@@ -235,7 +234,7 @@ pub unsafe extern "C" fn hayleyfs_init_fs_context(fc: *mut fs_context) -> c_int 
     // TODO: handle parameters
 
     unsafe {
-        (*fc).ops = &hayleyfs_context_ops;
+        (*fc).ops = &HayleyfsContextOps;
     }
     0
 }
@@ -246,7 +245,7 @@ pub unsafe extern "C" fn hayleyfs_init_fs_context(fc: *mut fs_context) -> c_int 
 #[link_section = ".init.text"]
 #[cold]
 pub extern "C" fn init_hayleyfs() -> c_int {
-    unsafe { register_filesystem(&mut hayleyfs_fs_type) }
+    unsafe { register_filesystem(&mut HayleyfsFsType) }
 }
 
 impl KernelModule for HayleyFS {
@@ -262,7 +261,7 @@ impl KernelModule for HayleyFS {
 impl Drop for HayleyFS {
     fn drop(&mut self) {
         // pr_info!("My message is {}\n", self.message);
-        unsafe { unregister_filesystem(&mut hayleyfs_fs_type) };
+        unsafe { unregister_filesystem(&mut HayleyfsFsType) };
         pr_info!("Module is unloading. Goodbye!\n");
     }
 }

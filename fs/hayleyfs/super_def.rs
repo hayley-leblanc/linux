@@ -10,7 +10,7 @@ pub(crate) struct hayleyfs_super_block {
 }
 
 #[repr(C)]
-pub(crate) struct hayleyfs_sb_info {
+pub(crate) struct SbInfo {
     pub(crate) sb: *mut super_block, // raw pointer to the VFS super block
     pub(crate) hayleyfs_sb: hayleyfs_super_block,
     pub(crate) s_daxdev: *mut dax_device, // raw pointer to the dax device we are mounted on
@@ -24,7 +24,7 @@ pub(crate) struct hayleyfs_sb_info {
 }
 
 // probably shouldn't return with a static lifetime
-pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut hayleyfs_sb_info {
-    let sbi: &mut hayleyfs_sb_info = unsafe { &mut *((*sb).s_fs_info as *mut hayleyfs_sb_info) };
+pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {
+    let sbi: &mut SbInfo = unsafe { &mut *((*sb).s_fs_info as *mut SbInfo) };
     sbi
 }
