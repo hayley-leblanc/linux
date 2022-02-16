@@ -128,13 +128,23 @@ impl Drop for InodeAllocToken {
     }
 }
 
-struct InodeInitToken<'a> {
+pub(crate) struct InodeInitToken<'a> {
     inode: &'a mut HayleyfsInode,
 }
 
 impl<'a> InodeInitToken<'a> {
     pub(crate) unsafe fn new(inode: &'a mut HayleyfsInode) -> Self {
         Self { inode }
+    }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.inode.ino
+    }
+
+    // this is NOT unsafe because the fact that we have the token right now
+    // means it will be correctly flushed in the future
+    pub(crate) fn add_data_page(&mut self, page: PmPage) {
+        unsafe { self.inode.set_data_page_no(Some(page)) };
     }
 }
 
@@ -145,24 +155,22 @@ impl Drop for InodeInitToken<'_> {
     }
 }
 
-// TODO: this should require a token (or be unsafe)
-// // there can be an immutable version that doesn't require one
-// // TODO: think about ownership here
-// // TODO: be careful with lifetimes here - the inode will live longer than
-// // the alloc token, but shorter than sbi... so it should have the alloc token's lifetime?
-// #[allow(clippy::mut_from_ref)]
-// pub(crate) fn hayleyfs_get_inode_by_ino_actual<'a>(
-//     sbi: &SbInfo,
-//     token: &'a InodeAllocToken,
-// ) -> &'a mut HayleyfsInode {
-//     let ino = token.ino();
-//     let addr = (PAGE_SIZE * 2) + (ino * size_of::<HayleyfsInode>());
-//     // TODO: check that this address does not exceed the inode page
-//     // TODO: handle possible panic on converting usize to isize here
-//     let addr = sbi.virt_addr as usize + addr;
-//     // unsafe { &mut *(addr as *mut HayleyfsInode) }
-//     unsafe { &mut *(addr as *mut HayleyfsInode) }
-// }
+struct ParentLinkToken<'a> {
+    inode: &'a mut HayleyfsInode,
+}
+
+impl<'a> ParentLinkToken<'a> {
+    pub(crate) unsafe fn new(inode: &'a mut HayleyfsInode) -> Self {
+        Self { inode }
+    }
+}
+
+impl<'a> Drop for ParentLinkToken<'a> {
+    fn drop(&mut self) {
+        pr_info!("Dropping parent link token\n");
+        clflush(self.inode, size_of::<HayleyfsInode>(), true);
+    }
+}
 
 // TODO: figure out if you actually need this
 pub(crate) unsafe fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut HayleyfsInode {
@@ -250,6 +258,17 @@ fn hayleyfs_initialize_inode<'a>(
     Ok(init_token)
 }
 
+fn inc_parent_links(sbi: &SbInfo, parent_ino: InodeNum) -> ParentLinkToken<'_> {
+    // 1. obtain the parent inode
+    // 2. increment link count
+    // 3. return it in a parent link token
+    let mut parent_dir = unsafe { hayleyfs_get_inode_by_ino(&sbi, parent_ino) };
+    unsafe { parent_dir.inc_links() };
+
+    let link_token = unsafe { ParentLinkToken::new(parent_dir) };
+    link_token
+}
+
 // TODO: this probably should not be the static lifetime
 pub(crate) fn hayleyfs_iget(sb: *mut super_block, ino: usize) -> Result<&'static mut inode> {
     let inode = unsafe { &mut *(iget_locked(sb, ino as u64) as *mut inode) };
@@ -306,11 +325,39 @@ fn _hayleyfs_mkdir(
 
     // TODO: add an init_inode function that uses the ino_token to
     // initialize the new inode
-    let inode_init_token = hayleyfs_initialize_inode(&sbi, &ino_token).unwrap();
+    let mut inode_init_token = hayleyfs_initialize_inode(&sbi, &ino_token).unwrap();
 
-    // allocate a data page and set up its dentries
+    // allocate a data page
     let data_token = hayleyfs_alloc_page(&sbi).unwrap();
-    let dir_token = initialize_dir(&sbi, ino_token, dir.i_ino.try_into().unwrap(), data_token);
+    // set up the data page with dentries for the new directory
+    let dir_token = initialize_dir(
+        &sbi,
+        &mut inode_init_token,
+        dir.i_ino.try_into().unwrap(),
+        &data_token,
+    );
+
+    // setting link count does not require any tokens BUT it produces
+    // a token that is required to add a dentry to the parent
+    // TODO: right?
+    let parent_link_token = inc_parent_links(&sbi, dir.i_ino.try_into().unwrap());
+
+    // then after setting link count, we have to add the dentry to the parent
+    // this might require roll back/roll forward, BUT i think it is simple enough
+    // that you don't have to do anything too fancy with that yet. this should
+    // require the dir init token (which takes care of inode and data page
+    // dependencies) and the link count token (which takes care of the parent
+    // inode link count dependency)
+    // the KEY ISSUE HERE is that setting the dentry in the parent is NOT going
+    // to be an atomic operation. so if you crash partway through, you need
+    // to be able to roll back.
+    // there is a dependency WITHIN the dentry - whatever information we use to
+    // decide if a dentry is completely well formed or not will need to be ordered
+    // with respect to everything else
+    // unfortunately, it doesn't seem like you can do that with the drops
+    // but you could make it inherent in how the dentry is set up
+    // TODO: think about how you could do this with drop anyway. might require
+    // a different dentry structure
 
     // // add a dentry to the parent
     // let mut parent_dir = hayleyfs_get_inode_by_ino(&sbi, dir.i_ino.try_into().unwrap());

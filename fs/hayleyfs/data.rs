@@ -193,14 +193,14 @@ pub(crate) fn hayleyfs_alloc_page(sbi: &SbInfo) -> Result<DataAllocToken> {
 
 /// this lives here for now because it deals with allocating and managing
 /// data pages
-pub(crate) fn initialize_dir(
+pub(crate) fn initialize_dir<'a>(
     sbi: &SbInfo,
     // pi: &mut HayleyfsInode,
-    ino_token: InodeAllocToken,
+    ino_token: &mut InodeInitToken<'_>,
     // self_ino: InodeNum,
     parent_ino: InodeNum,
-    alloc_token: DataAllocToken,
-) -> Result<DirInitToken<'_>> {
+    alloc_token: &'a DataAllocToken,
+) -> Result<DirInitToken<'a>> {
     let dir_page = unsafe { &mut *(get_data_page_addr(sbi, alloc_token.page_no) as *mut DirPage) };
 
     // TODO: confirm that split_at_mut is just an ownership/mutability thing
@@ -209,7 +209,7 @@ pub(crate) fn initialize_dir(
 
     let mut self_dentry = &mut d1[0];
 
-    self_dentry.set_up(ino_token.ino(), ".", 1);
+    self_dentry.set_up(ino_token.get_ino(), ".", 1);
 
     let mut parent_dentry = &mut d2[0];
 
@@ -220,55 +220,19 @@ pub(crate) fn initialize_dir(
         parent_dentry,
     };
 
+    // add the data page we have just set up to the inode
+    // TODO: i don't THINK doing this here will cause issues with dependencies,
+    // but do some testing to be sure
+    ino_token.add_data_page(alloc_token.page_no);
+
     Ok(init_token)
-
-    // set_dentry_name(".", dentry);
-    // dentry.ino = self_ino;
-    // dentry.valid = true;
-    // dentry.link_count = 1;
-
-    // clflush(dentry, size_of::<HayleyfsDentry>(), false);
-
-    // let mut dentry = &mut dir_page.dentries[1];
-    // set_dentry_name("..", dentry);
-    // dentry.ino = parent_ino;
-    // dentry.valid = true;
-    // dentry.link_count = 2;
-
-    // clflush(dentry, size_of::<HayleyfsDentry>(), false);
-
-    // // TODO: don't do this unsafely right here. or at least manage the
-    // // dependencies properly
-    // unsafe { pi.set_data_page_no(Some(page_no)) };
-
-    // clflush(pi, size_of::<HayleyfsInode>(), true);
-
-    // let data_bitmap_addr = get_data_bitmap_addr(sbi);
-    // unsafe { hayleyfs_set_bit(page_no, data_bitmap_addr) };
-
-    // clflush(data_bitmap_addr, PAGE_SIZE, true);
-
-    // Ok(())
 }
 
-// fn set_dentry_name(name: &str, dentry: &mut HayleyfsDentry) {
-//     // initialize the name array with zeroes, then set the name
-//     dentry.name = [0; MAX_FILENAME_LEN];
-//     // ensure it's null terminated by only copying at most MAX_FILENAME_LEN-1 bytes
-//     let num_bytes = if name.len() < MAX_FILENAME_LEN - 1 {
-//         name.len()
-//     } else {
-//         MAX_FILENAME_LEN - 1
-//     };
-//     dentry.name_len = num_bytes + 1;
-//     // TODO: this will not work with non-ascii characters
-//     // TODO: might be able to simplify this with a built in strcpy function
-//     let name = name.as_bytes();
-//     // TODO: this is suggested by the compiler, does it work properly?
-//     dentry.name[..num_bytes].clone_from_slice(&name[..num_bytes]);
-//     // for i in 0..num_bytes {
-//     //     dentry.name[i] = name[i];
-//     // }
+// // TODO: where should the lifetime come from here
+// pub(crate) fn add_data_page_to_inode<'a>(
+//     inode_token: &'a mut InodeInitToken<'_>,
+//     data_token: &DataAllocToken,
+// ) -> Result<InodeDoneToken<'a>> {
 // }
 
 // TODO: use a better way to handle these slices so things don't get weird

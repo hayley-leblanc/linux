@@ -148,8 +148,8 @@ fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> core::result
 
 // TODO: differentiate between remount and initalization, or at least make sure to wipe old stuff
 // every time the file system is mounted for now
-// TODO: right now there is a lot of unsafe stuff in here while I test soft updates
-// elsewhere. This part also needs to use soft updates!
+// TODO: this is not going to work correctly until you get the soft updates
+// stuff working here as well
 #[no_mangle]
 pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_context) -> i32 {
     pr_info!("mounting the file system!\n");
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
     let inode_token =
         unsafe { InodeAllocToken::new(HAYLEYFS_ROOT_INO, sbi.virt_addr as *mut CacheLine) };
     let dir_token = hayleyfs_alloc_page(&sbi).unwrap();
-    initialize_dir(&sbi, inode_token, HAYLEYFS_ROOT_INO, dir_token);
+    // initialize_dir(&sbi, inode_token, HAYLEYFS_ROOT_INO, &dir_token);
     // initialize_dir(&sbi, root_pi, HAYLEYFS_ROOT_INO, HAYLEYFS_ROOT_INO).unwrap();
 
     0
