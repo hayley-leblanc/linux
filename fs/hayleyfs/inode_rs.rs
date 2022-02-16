@@ -3,6 +3,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(unused)]
 #![allow(clippy::needless_borrow)]
+#![allow(clippy::mut_from_ref)]
 
 use crate::data::*;
 use crate::defs::*;
@@ -21,6 +22,7 @@ use kernel::str::CStr;
 use kernel::{c_default_struct, PAGE_SIZE};
 
 pub(crate) type InodeNum = usize;
+// impl BitmapIndex for InodeNum {}
 
 // reserved inode nums
 pub(crate) const HAYLEYFS_ROOT_INO: InodeNum = 1;
@@ -40,10 +42,10 @@ enum NewInodeType {
 
 // inode that lives in PM
 // TODO: should this actually be packed?
-#[repr(packed)]
+// #[repr(packed)]
 pub(crate) struct HayleyfsInode {
-    data0: Option<PmPage>,
     ino: InodeNum,
+    data0: Option<PmPage>,
     mode: u32,
     link_count: u16,
 }
@@ -77,26 +79,40 @@ impl HayleyfsInode {
     }
 
     /// TODO: document safety
+    /// or make it require a token
     pub(crate) unsafe fn set_data_page_no(&mut self, page_no: Option<PmPage>) {
         self.data0 = page_no;
     }
 
     /// TODO: document safety
+    /// or make it require a token
     pub(crate) unsafe fn inc_links(&mut self) {
         self.link_count += 1;
     }
 }
 
-struct InodeAllocToken {
+// impl Drop for HayleyfsInode {
+//     fn drop(&mut self) {
+//         pr_info!("dropping inode {:}\n", self.ino);
+//         // this seems to never run (which does make sense)
+//     }
+// }
+
+pub(crate) struct InodeAllocToken {
     ino: InodeNum,
+    cache_line: *mut CacheLine,
+    // cache_line: *mut c_void, // TODO: I would rather this be a CacheLine but there are ownership issues
 }
 
 impl InodeAllocToken {
     /// this constructor should only be called when getting a new
     /// inode number using the inode bitmap. it is unsafe to call
     /// anywhere else
-    pub(crate) unsafe fn new(i: InodeNum) -> Self {
-        Self { ino: i }
+    pub(crate) unsafe fn new(i: InodeNum, line: *mut CacheLine) -> Self {
+        Self {
+            ino: i,
+            cache_line: line,
+        }
     }
 
     /// return the inode number associated with this token
@@ -105,13 +121,52 @@ impl InodeAllocToken {
     }
 }
 
-// TODO: this should require a token
-// there can be an immutable version that doesn't require one
-// TODO: think about ownership here
-#[allow(clippy::mut_from_ref)]
-pub(crate) fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut HayleyfsInode {
+impl Drop for InodeAllocToken {
+    fn drop(&mut self) {
+        pr_info!("dropping inode alloc token\n");
+        clflush(self.cache_line, CACHELINE_SIZE, false);
+    }
+}
+
+struct InodeInitToken<'a> {
+    inode: &'a mut HayleyfsInode,
+}
+
+impl<'a> InodeInitToken<'a> {
+    pub(crate) unsafe fn new(inode: &'a mut HayleyfsInode) -> Self {
+        Self { inode }
+    }
+}
+
+impl Drop for InodeInitToken<'_> {
+    fn drop(&mut self) {
+        pr_info!("dropping inode init token!\n");
+        clflush(self.inode, size_of::<HayleyfsInode>(), false);
+    }
+}
+
+// TODO: this should require a token (or be unsafe)
+// // there can be an immutable version that doesn't require one
+// // TODO: think about ownership here
+// // TODO: be careful with lifetimes here - the inode will live longer than
+// // the alloc token, but shorter than sbi... so it should have the alloc token's lifetime?
+// #[allow(clippy::mut_from_ref)]
+// pub(crate) fn hayleyfs_get_inode_by_ino_actual<'a>(
+//     sbi: &SbInfo,
+//     token: &'a InodeAllocToken,
+// ) -> &'a mut HayleyfsInode {
+//     let ino = token.ino();
+//     let addr = (PAGE_SIZE * 2) + (ino * size_of::<HayleyfsInode>());
+//     // TODO: check that this address does not exceed the inode page
+//     // TODO: handle possible panic on converting usize to isize here
+//     let addr = sbi.virt_addr as usize + addr;
+//     // unsafe { &mut *(addr as *mut HayleyfsInode) }
+//     unsafe { &mut *(addr as *mut HayleyfsInode) }
+// }
+
+// TODO: figure out if you actually need this
+pub(crate) unsafe fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut HayleyfsInode {
     let addr = (PAGE_SIZE * 2) + (ino * size_of::<HayleyfsInode>());
-    pr_info!("addr: {:#X}\n", addr);
     // TODO: check that this address does not exceed the inode page
     // TODO: handle possible panic on converting usize to isize here
     let addr = sbi.virt_addr as usize + addr;
@@ -119,15 +174,20 @@ pub(crate) fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut Hay
     unsafe { &mut *(addr as *mut HayleyfsInode) }
 }
 
+// TODO: can you replace this with the get inode bitmap and get cacheline functions
 fn get_inode_bitmap_addr(sbi: &SbInfo) -> *mut c_void {
     (sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE)) as *mut c_void
 }
 
-// TODO: this might need to be unsafe? any function that modifies PM directly
-// should probably be unsafe and wrapped in a safe abstraction. this should
-// only be called by hayleyfs_alloc_inode and when setting up reserved inodes
-// at initialization
-pub(crate) fn set_inode_bitmap_bit(sbi: &SbInfo, ino: InodeNum) -> Result<()> {
+fn get_inode_bitmap(sbi: &SbInfo) -> &mut PersistentBitmap {
+    unsafe {
+        &mut *((sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE)) as *mut PersistentBitmap)
+    }
+}
+
+// TODO: phase this out or make it unsafe or something. it doesn't really work the way i want
+// with the tokens
+pub(crate) unsafe fn set_inode_bitmap_bit(sbi: &SbInfo, ino: InodeNum) -> Result<()> {
     let addr = get_inode_bitmap_addr(&sbi);
     // TODO: should check that the provided ino is valid and return an error if not
     unsafe { hayleyfs_set_bit(ino, addr as *mut c_void) };
@@ -152,13 +212,42 @@ fn hayleyfs_allocate_inode(sbi: &SbInfo) -> Result<InodeAllocToken> {
         return Err(Error::ENOSPC);
     }
 
-    set_inode_bitmap_bit(sbi, ino)?;
+    // TODO: this is redundant since we obtained the bitmap addr earlier
+    // but I want to phase that out so I'm putting this here for now anyway
+    let mut bitmap = get_inode_bitmap(&sbi);
+    // TODO: this doesn't work without the double cast - why though?
+    unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
+    let cacheline = get_bitmap_cacheline(&mut bitmap, ino);
 
-    // unsafely generate an inode alloc token and use it to return
-    // the inode number
-    let token = unsafe { InodeAllocToken::new(ino) };
+    let token = unsafe { InodeAllocToken::new(ino, cacheline) };
 
     Ok(token)
+}
+
+// TODO: should lifetime come from sbi or token?
+fn hayleyfs_initialize_inode<'a>(
+    sbi: &'a SbInfo,
+    token: &InodeAllocToken,
+) -> Result<InodeInitToken<'a>> {
+    // TODO: ideally these next few lines where we get the inode would be in a function that
+    // is passed a token, but that runs into issues where Rust thinks we are returning a
+    // reference to a function parameter because it can't tell that the init token doesn't
+    // actually borrow anything from the alloc token (I think)
+    let ino = token.ino();
+    let addr = (PAGE_SIZE * 2) + (ino * size_of::<HayleyfsInode>());
+    // TODO: check that this address does not exceed the inode page
+    // TODO: handle possible panic on converting usize to isize here
+    let addr = sbi.virt_addr as usize + addr;
+    // unsafe { &mut *(addr as *mut HayleyfsInode) }
+    let inode = unsafe { &mut *(addr as *mut HayleyfsInode) };
+
+    // this is a set up function, not a constructor, because the inodes already exist
+    // on PM and we just need to set their values
+    unsafe { inode.set_up_inode(token.ino(), None, S_IFDIR, 2) };
+
+    let init_token = InodeInitToken { inode };
+
+    Ok(init_token)
 }
 
 // TODO: this probably should not be the static lifetime
@@ -213,20 +302,15 @@ fn _hayleyfs_mkdir(
     let sbi = hayleyfs_get_sbi(sb);
 
     // TODO: handle out of inodes case
-    let ino = hayleyfs_allocate_inode(&sbi).unwrap();
-    // // set_inode_bitmap_bit(sbi, ino).unwrap();
+    let ino_token = hayleyfs_allocate_inode(&sbi).unwrap();
 
-    // // the inode actually probably shouldn't be flushed until later
-    // let mut pi = hayleyfs_get_inode_by_ino(&sbi, ino);
+    // TODO: add an init_inode function that uses the ino_token to
+    // initialize the new inode
+    let inode_init_token = hayleyfs_initialize_inode(&sbi, &ino_token).unwrap();
 
-    // pi.ino = ino;
-    // pi.data0 = None;
-    // pi.mode = S_IFDIR;
-    // pi.link_count = 2;
-    // clflush(&pi, size_of::<HayleyfsInode>(), true);
-
-    // // allocate a data page and set up its dentries
-    // initialize_dir(&sbi, &mut pi, ino, dir.i_ino.try_into().unwrap()).unwrap();
+    // allocate a data page and set up its dentries
+    let data_token = hayleyfs_alloc_page(&sbi).unwrap();
+    let dir_token = initialize_dir(&sbi, ino_token, dir.i_ino.try_into().unwrap(), data_token);
 
     // // add a dentry to the parent
     // let mut parent_dir = hayleyfs_get_inode_by_ino(&sbi, dir.i_ino.try_into().unwrap());
@@ -276,6 +360,7 @@ fn hayleyfs_new_vfs_inode(
     inode
 }
 
+// TODO: deal with soft updates
 #[no_mangle]
 unsafe extern "C" fn hayleyfs_lookup(
     dir: *mut inode,
@@ -291,7 +376,7 @@ unsafe extern "C" fn hayleyfs_lookup(
     let sbi = hayleyfs_get_sbi(sb);
 
     // look up the parent's inode so that we can look at its directory entries
-    let parent_pi = hayleyfs_get_inode_by_ino(sbi, dir.i_ino.try_into().unwrap());
+    let parent_pi = unsafe { hayleyfs_get_inode_by_ino(sbi, dir.i_ino.try_into().unwrap()) };
     // TODO: check that this is actually a directory
 
     match parent_pi.get_data_page_no() {
@@ -301,11 +386,12 @@ unsafe extern "C" fn hayleyfs_lookup(
             let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
             for i in 0..DENTRIES_PER_PAGE {
                 let mut p_dentry = &mut dir_page.dentries[i];
-                if !p_dentry.valid {
+                if !p_dentry.is_valid() {
                     // TODO: you need to return not found somewhere here
                     break;
-                } else if compare_dentry_name(&p_dentry.name, dentry_name.as_bytes_with_nul()) {
-                    let inode = hayleyfs_iget(sb, p_dentry.ino).unwrap();
+                } else if compare_dentry_name(&p_dentry.get_name(), dentry_name.as_bytes_with_nul())
+                {
+                    let inode = hayleyfs_iget(sb, p_dentry.get_ino()).unwrap();
                     // TODO: handle errors on the returned inode
                     return unsafe { d_splice_alias(inode, dentry) };
                 }

@@ -1,5 +1,9 @@
 use kernel::bindings::{dax_device, kgid_t, kuid_t, super_block, umode_t};
 use kernel::c_types::c_void;
+use kernel::PAGE_SIZE;
+
+use crate::defs::*;
+use crate::inode_rs::*;
 
 // TODO: packed?
 #[repr(packed)]
@@ -21,6 +25,22 @@ pub(crate) struct SbInfo {
     pub(crate) uid: kuid_t,
     pub(crate) gid: kgid_t,
     pub(crate) mode: umode_t,
+}
+
+// TODO: do CacheLine and PersistentBitmap have to be packed?
+// p sure Rust makes arrays contiguous so they shouldn't need to be
+// compiler warning indicates making them packed could have weird consequences
+pub(crate) struct CacheLine {
+    pub(crate) bits: [u64; 8],
+}
+
+pub(crate) struct PersistentBitmap {
+    pub(crate) bits: [CacheLine; PAGE_SIZE / CACHELINE_SIZE],
+}
+
+pub(crate) fn get_bitmap_cacheline(bitmap: &mut PersistentBitmap, index: usize) -> *mut CacheLine {
+    let cacheline_num = index >> 6;
+    &mut bitmap.bits[cacheline_num] as *mut _ as *mut CacheLine
 }
 
 // probably shouldn't return with a static lifetime
