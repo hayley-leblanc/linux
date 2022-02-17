@@ -205,12 +205,12 @@ pub(crate) unsafe fn set_inode_bitmap_bit(sbi: &SbInfo, ino: InodeNum) -> Result
 }
 
 fn hayleyfs_allocate_inode(sbi: &SbInfo) -> Result<InodeAllocToken> {
-    let bitmap_addr = get_inode_bitmap_addr(&sbi);
+    let mut bitmap = get_inode_bitmap(&sbi);
 
     // starts at bit 1 to ignore bit 0 since we don't use inode 0
     let ino = unsafe {
         hayleyfs_find_next_zero_bit(
-            bitmap_addr as *mut u64,
+            bitmap as *mut _ as *mut u64,
             (PAGE_SIZE * 8).try_into().unwrap(),
             2,
         )
@@ -220,9 +220,6 @@ fn hayleyfs_allocate_inode(sbi: &SbInfo) -> Result<InodeAllocToken> {
         return Err(Error::ENOSPC);
     }
 
-    // TODO: this is redundant since we obtained the bitmap addr earlier
-    // but I want to phase that out so I'm putting this here for now anyway
-    let mut bitmap = get_inode_bitmap(&sbi);
     // TODO: this doesn't work without the double cast - why though?
     unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
     let cacheline = get_bitmap_cacheline(&mut bitmap, ino);
@@ -232,8 +229,35 @@ fn hayleyfs_allocate_inode(sbi: &SbInfo) -> Result<InodeAllocToken> {
     Ok(token)
 }
 
+/// this requires a super init token not because it really needs it but primarily to make sure
+/// it is only used to set up reserved inodes
+pub(crate) fn hayleyfs_allocate_inode_by_ino(
+    sbi: &SbInfo,
+    ino: InodeNum,
+    super_token: &SuperInitToken<'_>,
+) -> Result<InodeAllocToken> {
+    let mut bitmap = get_inode_bitmap(&sbi);
+
+    if ino == (PAGE_SIZE * 8) {
+        return Err(Error::ENOSPC);
+    }
+
+    // test and set the requested bit in the bitmap
+    // return an error if it is already in use
+    let bit_test = unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
+    if bit_test != 0 {
+        return Err(Error::EEXIST);
+    }
+
+    let cacheline = get_bitmap_cacheline(&mut bitmap, ino);
+
+    let token = unsafe { InodeAllocToken::new(ino, cacheline) };
+
+    Ok(token)
+}
+
 // TODO: should lifetime come from sbi or token?
-fn hayleyfs_initialize_inode<'a>(
+pub(crate) fn hayleyfs_initialize_inode<'a>(
     sbi: &'a SbInfo,
     token: &InodeAllocToken,
 ) -> Result<InodeInitToken<'a>> {

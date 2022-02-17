@@ -146,10 +146,20 @@ fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> core::result
     }
 }
 
+fn hayleyfs_set_up_super(sbi: &SbInfo) -> Result<SuperInitToken<'_>> {
+    let mut hsb = hayleyfs_get_super(&sbi);
+
+    hsb.size = sbi.pm_size;
+    hsb.blocksize = u32::try_from(PAGE_SIZE).unwrap(); // TODO: handle this better
+    hsb.magic = HAYLEYFS_MAGIC;
+
+    let token = unsafe { SuperInitToken::new(hsb) };
+
+    Ok(token)
+}
+
 // TODO: differentiate between remount and initalization, or at least make sure to wipe old stuff
 // every time the file system is mounted for now
-// TODO: this is not going to work correctly until you get the soft updates
-// stuff working here as well
 #[no_mangle]
 pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_context) -> i32 {
     pr_info!("mounting the file system!\n");
@@ -164,23 +174,15 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
     sbi.uid = unsafe { hayleyfs_current_fsuid() };
     sbi.gid = unsafe { hayleyfs_current_fsgid() };
 
-    // TODO: this should really go somewhere else - it's only right to do it here on initialization
-    // TODO: make this nicer for soft updates
-    let mut hsb = hayleyfs_get_super(&sbi);
-    hsb.size = sbi.pm_size;
-    hsb.blocksize = u32::try_from(PAGE_SIZE).unwrap(); // TODO: this could panic
-    hsb.magic = HAYLEYFS_MAGIC;
-    clflush(&hsb, size_of::<hayleyfs_super_block>(), true);
+    let super_token = hayleyfs_set_up_super(&sbi).unwrap();
 
-    // TODO: don't assume re-set up the file system on each mount
-    // TODO: make nicer for soft updates
-    unsafe {
-        let root_pi = hayleyfs_get_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO);
-        root_pi.set_up_inode(HAYLEYFS_ROOT_INO, None, S_IFDIR, 2);
-        clflush(&root_pi, size_of::<HayleyfsInode>(), true);
-        set_inode_bitmap_bit(sbi, HAYLEYFS_ROOT_INO).unwrap();
-    }
+    let inode_alloc_token =
+        hayleyfs_allocate_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO, &super_token).unwrap();
 
+    let mut inode_init_token = hayleyfs_initialize_inode(&sbi, &inode_alloc_token).unwrap();
+
+    // this all happens in userspace and does not require tokens
+    // TODO: although might need to be careful dealing with visibility?
     let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO);
     // TODO: convert into a bindgen inode rather than doing this unsafe stuff
     match root_i {
@@ -197,22 +199,17 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
         Err(_) => return -(EINVAL as c_int),
     }
 
-    // right now i am unsafely creating the tokens we need to initialize the directory
-    // with pointers that PROBABLY will not break anything. obviously this is
-    // really bad. don't do this
-    // TODO: fix all this stuff for soft updates
-    let inode_token =
-        unsafe { InodeAllocToken::new(HAYLEYFS_ROOT_INO, sbi.virt_addr as *mut CacheLine) };
-    let dir_token = hayleyfs_alloc_page(&sbi).unwrap();
-    // initialize_dir(&sbi, inode_token, HAYLEYFS_ROOT_INO, &dir_token);
-    // initialize_dir(&sbi, root_pi, HAYLEYFS_ROOT_INO, HAYLEYFS_ROOT_INO).unwrap();
+    // allocate a data page
+    let data_token = hayleyfs_alloc_page(&sbi).unwrap();
+
+    initialize_dir(&sbi, &mut inode_init_token, HAYLEYFS_ROOT_INO, &data_token).unwrap();
 
     0
 }
 
-fn hayleyfs_get_super(sbi: &SbInfo) -> &'static mut hayleyfs_super_block {
-    let hayleyfs_super: &mut hayleyfs_super_block =
-        unsafe { &mut *(sbi.virt_addr as *mut hayleyfs_super_block) };
+fn hayleyfs_get_super(sbi: &SbInfo) -> &'static mut HayleyfsSuperBlock {
+    let hayleyfs_super: &mut HayleyfsSuperBlock =
+        unsafe { &mut *(sbi.virt_addr as *mut HayleyfsSuperBlock) };
     hayleyfs_super
 }
 

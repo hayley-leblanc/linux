@@ -1,22 +1,42 @@
 use kernel::bindings::{dax_device, kgid_t, kuid_t, super_block, umode_t};
 use kernel::c_types::c_void;
+use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
 use crate::defs::*;
 use crate::inode_rs::*;
+use crate::pm::*;
+use core::mem::size_of;
 
 // TODO: packed?
 #[repr(packed)]
-pub(crate) struct hayleyfs_super_block {
+pub(crate) struct HayleyfsSuperBlock {
     pub(crate) size: u64,
     pub(crate) blocksize: u32,
     pub(crate) magic: u32,
 }
 
+pub(crate) struct SuperInitToken<'a> {
+    hsb: &'a mut HayleyfsSuperBlock,
+}
+
+impl<'a> SuperInitToken<'a> {
+    pub(crate) unsafe fn new(hsb: &'a mut HayleyfsSuperBlock) -> Self {
+        Self { hsb }
+    }
+}
+
+impl Drop for SuperInitToken<'_> {
+    fn drop(&mut self) {
+        pr_info!("Dropping super init token!\n");
+        clflush(self.hsb, size_of::<HayleyfsSuperBlock>(), false);
+    }
+}
+
 #[repr(C)]
 pub(crate) struct SbInfo {
     pub(crate) sb: *mut super_block, // raw pointer to the VFS super block
-    pub(crate) hayleyfs_sb: hayleyfs_super_block,
+    pub(crate) hayleyfs_sb: HayleyfsSuperBlock,
     pub(crate) s_daxdev: *mut dax_device, // raw pointer to the dax device we are mounted on
     pub(crate) s_dev_offset: u64,         // no idea what this is used for but a dax fxn needs it
     pub(crate) virt_addr: *mut c_void,    // raw pointer virtual address of beginning of FS instance

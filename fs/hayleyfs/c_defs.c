@@ -13,8 +13,8 @@ unsigned long hayleyfs_pfn_t_to_pfn(pfn_t pfn) {
     return pfn_t_to_pfn(pfn);
 }
 
-void hayleyfs_set_bit(int nr, void* addr) {
-    __test_and_set_bit_le(nr, addr);
+int hayleyfs_set_bit(int nr, void* addr) {
+   return __test_and_set_bit_le(nr, addr);
 }
 
 unsigned long hayleyfs_find_next_zero_bit(const unsigned long *addr, unsigned long size, unsigned long offset) {
