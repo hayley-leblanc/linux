@@ -151,11 +151,11 @@ impl<'a> InodeInitToken<'a> {
 impl Drop for InodeInitToken<'_> {
     fn drop(&mut self) {
         pr_info!("dropping inode init token!\n");
-        clflush(self.inode, size_of::<HayleyfsInode>(), false);
+        clflush(self.inode, size_of::<HayleyfsInode>(), true);
     }
 }
 
-struct ParentLinkToken<'a> {
+pub(crate) struct ParentLinkToken<'a> {
     inode: &'a mut HayleyfsInode,
 }
 
@@ -359,41 +359,39 @@ fn _hayleyfs_mkdir(
         &mut inode_init_token,
         dir.i_ino.try_into().unwrap(),
         &data_token,
-    );
+    )
+    .unwrap();
 
     // setting link count does not require any tokens BUT it produces
     // a token that is required to add a dentry to the parent
     // TODO: right?
     let parent_link_token = inc_parent_links(&sbi, dir.i_ino.try_into().unwrap());
 
-    // then after setting link count, we have to add the dentry to the parent
-    // this might require roll back/roll forward, BUT i think it is simple enough
-    // that you don't have to do anything too fancy with that yet. this should
-    // require the dir init token (which takes care of inode and data page
-    // dependencies) and the link count token (which takes care of the parent
-    // inode link count dependency)
-    // the KEY ISSUE HERE is that setting the dentry in the parent is NOT going
-    // to be an atomic operation. so if you crash partway through, you need
-    // to be able to roll back.
-    // there is a dependency WITHIN the dentry - whatever information we use to
-    // decide if a dentry is completely well formed or not will need to be ordered
-    // with respect to everything else
-    // unfortunately, it doesn't seem like you can do that with the drops
-    // but you could make it inherent in how the dentry is set up
-    // TODO: think about how you could do this with drop anyway. might require
-    // a different dentry structure
+    // set up vfs inode
+    // TODO: when should this happen?
+    let inode = hayleyfs_new_vfs_inode(
+        sb,
+        dir,
+        &inode_init_token,
+        mnt_userns,
+        mode,
+        NewInodeType::Mkdir,
+    );
+    unsafe {
+        d_instantiate(dentry, inode);
+        inc_nlink(dir as *mut inode);
+        unlock_new_inode(inode);
+    };
 
-    // // add a dentry to the parent
-    // let mut parent_dir = hayleyfs_get_inode_by_ino(&sbi, dir.i_ino.try_into().unwrap());
-    // add_dentry_to_parent(&sbi, &mut parent_dir, ino, dentry_name).unwrap();
-
-    // // set up vfs inode
-    // let inode = hayleyfs_new_vfs_inode(sb, dir, ino, mnt_userns, mode, NewInodeType::Mkdir);
-    // unsafe {
-    //     d_instantiate(dentry, inode);
-    //     inc_nlink(dir as *mut inode);
-    //     unlock_new_inode(inode);
-    // };
+    add_dentry_to_parent(
+        &sbi,
+        dir.i_ino.try_into().unwrap(),
+        inode_init_token,
+        dir_token,
+        parent_link_token,
+        dentry_name,
+    )
+    .unwrap();
 
     0
 }
@@ -401,13 +399,14 @@ fn _hayleyfs_mkdir(
 fn hayleyfs_new_vfs_inode(
     sb: *mut super_block,
     dir: &inode,
-    ino: usize,
+    ino: &InodeInitToken<'_>,
     mnt_userns: &mut user_namespace,
     mode: umode_t,
     new_type: NewInodeType,
 ) -> *mut inode {
     // TODO: handle errors in here
     let inode = unsafe { new_inode(sb) };
+    let ino = ino.get_ino();
 
     unsafe {
         inode_init_owner(mnt_userns as *mut user_namespace, inode, dir, mode);

@@ -79,6 +79,28 @@ impl Drop for DirInitToken<'_> {
     }
 }
 
+pub(crate) struct DentryAddToken<'a> {
+    dentry: &'a mut HayleyfsDentry,
+}
+
+impl<'a> DentryAddToken<'a> {
+    pub(crate) unsafe fn new(d: &'a mut HayleyfsDentry) -> Self {
+        Self { dentry: d }
+    }
+}
+
+impl Drop for DentryAddToken<'_> {
+    fn drop(&mut self) {
+        // flush and fence the dentry
+        pr_info!("dropping dentry add token\n");
+        clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
+        // then make it valid
+        self.dentry.valid = true;
+        // then flush and fence again
+        clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
+    }
+}
+
 #[no_mangle]
 pub(crate) static mut HayleyfsFileOps: file_operations = file_operations {
     iterate: Some(hayleyfs_readdir),
@@ -93,17 +115,15 @@ pub(crate) struct HayleyfsDentry {
     // is this going to live in the correct place?
     // TODO: what's the best way to handle file names here? they need to live
     // IN this struct, not be pointed to by something else
-    link_count: u16,
     name_len: usize,
 }
 
 impl HayleyfsDentry {
     // TODO: why does link count live in dentries?
-    fn set_up(&mut self, ino: InodeNum, name: &str, link_count: u16) {
+    fn set_up(&mut self, ino: InodeNum, name: &str) {
         self.ino = ino;
-        self.link_count = link_count;
         self.set_dentry_name(name);
-        self.valid = true; // TODO: might not actually want to do this here
+        self.valid = false;
     }
 
     fn set_dentry_name(&mut self, name: &str) {
@@ -123,6 +143,10 @@ impl HayleyfsDentry {
 
     pub(crate) fn is_valid(&self) -> bool {
         self.valid
+    }
+
+    pub(crate) fn set_valid(&mut self, v: bool) {
+        self.valid = v;
     }
 
     pub(crate) fn get_ino(&self) -> InodeNum {
@@ -209,11 +233,13 @@ pub(crate) fn initialize_dir<'a>(
 
     let mut self_dentry = &mut d1[0];
 
-    self_dentry.set_up(ino_token.get_ino(), ".", 1);
+    self_dentry.set_up(ino_token.get_ino(), ".");
+    self_dentry.set_valid(true);
 
     let mut parent_dentry = &mut d2[0];
 
-    parent_dentry.set_up(parent_ino, "..", 2);
+    parent_dentry.set_up(parent_ino, "..");
+    self_dentry.set_valid(true);
 
     let init_token = DirInitToken {
         self_dentry,
@@ -227,13 +253,6 @@ pub(crate) fn initialize_dir<'a>(
 
     Ok(init_token)
 }
-
-// // TODO: where should the lifetime come from here
-// pub(crate) fn add_data_page_to_inode<'a>(
-//     inode_token: &'a mut InodeInitToken<'_>,
-//     data_token: &DataAllocToken,
-// ) -> Result<InodeDoneToken<'a>> {
-// }
 
 // TODO: use a better way to handle these slices so things don't get weird
 // when there are different lengths
@@ -256,42 +275,43 @@ pub(crate) fn compare_dentry_name(name1: &[u8], name2: &[u8]) -> bool {
     true
 }
 
-// // TODO: there's probably a better way to handle the name string here?
-// // current way works though. but there is a lot of conversion going on
-// pub(crate) fn add_dentry_to_parent(
-//     sbi: &SbInfo,
-//     parent_dir: &mut HayleyfsInode,
-//     ino: usize,
-//     name: &kernel::str::CStr,
-// ) -> Result<()> {
-//     // find the next open dentry slot
-//     match parent_dir.get_data_page_no() {
-//         Some(page_no) => {
-//             let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
-//             for i in 0..DENTRIES_PER_PAGE {
-//                 let mut dentry = &mut dir_page.dentries[i];
-//                 if !dentry.valid {
-//                     // we can't actually take ownership of this dentry since it lives in PM
-//                     // can you?? i have no clue
-//                     // TODO: is that going to be a problem...
-//                     set_dentry_name(name.to_str().unwrap(), &mut dentry);
-//                     dentry.ino = ino;
-//                     dentry.valid = true;
-//                     dentry.link_count = 2;
-//                     clflush(dentry, size_of::<HayleyfsDentry>(), true);
+pub(crate) fn add_dentry_to_parent<'a>(
+    sbi: &SbInfo,
+    parent_ino: InodeNum,
+    inode_token: InodeInitToken<'_>,
+    dir_token: DirInitToken<'_>,
+    link_token: ParentLinkToken<'_>,
+    name: &kernel::str::CStr,
+) -> Result<DentryAddToken<'a>> {
+    // TODO: you should set it up so that obtaining the dentry (and the inode?)
+    // automatically give you guards that ensure things are dropped at the end.
+    // the only safe way to interact with inodes and dentries and anything else
+    // stored on PM should be via a token/guard
 
-//                     // TODO: fix safety
-//                     unsafe { parent_dir.inc_links() };
-//                     clflush(parent_dir, size_of::<HayleyfsInode>(), true);
+    // first, unsafely obtain the parent's inode
+    let mut parent_dir = unsafe { hayleyfs_get_inode_by_ino(&sbi, parent_ino) };
 
-//                     return Ok(());
-//                 }
-//             }
-//             Err(Error::ENOSPC)
-//         }
-//         None => Err(Error::ENOTDIR),
-//     }
-// }
+    // then, obtain its data page and scan it for the first unused dentry slot
+    match parent_dir.get_data_page_no() {
+        Some(page_no) => {
+            let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
+            // TODO: should try to obtain the token earlier maybe? make it harder to
+            // modify a dentry directly without obtaining a token. have to balance this
+            // with the fact that we don't want a true token for all of the dentries since
+            // we are only interested in modifying one.
+            for dentry in dir_page.dentries.iter_mut() {
+                if !dentry.valid {
+                    dentry.set_dentry_name(name.to_str().unwrap());
+                    dentry.ino = inode_token.get_ino();
+                    let dentry_token = unsafe { DentryAddToken::new(dentry) };
+                    return Ok(dentry_token);
+                }
+            }
+            Err(Error::ENOSPC)
+        }
+        None => Err(Error::ENOTDIR),
+    }
+}
 
 // deal with soft updates
 #[no_mangle]
