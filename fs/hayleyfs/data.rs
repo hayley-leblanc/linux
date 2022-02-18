@@ -27,7 +27,31 @@ pub(crate) struct DataPage {
 
 // TODO: do you want to use an array? or something else?
 pub(crate) struct DirPage {
-    pub(crate) dentries: [HayleyfsDentry; DENTRIES_PER_PAGE],
+    dentries: [HayleyfsDentry; DENTRIES_PER_PAGE],
+}
+
+impl DirPage {
+    fn get_next_invalid_dentry(&mut self) -> Result<DentryAddToken<'_>> {
+        for dentry in self.dentries.iter_mut() {
+            if !dentry.valid {
+                let dentry_token = unsafe { DentryAddToken::new(dentry) };
+                return Ok(dentry_token);
+            }
+        }
+        Err(Error::ENOSPC)
+    }
+
+    pub(crate) fn lookup_name(&self, name: &[u8]) -> Result<DentryReadToken<'_>> {
+        for dentry in self.dentries.iter() {
+            if !dentry.is_valid() {
+                return Err(Error::ENOENT);
+            } else if compare_dentry_name(dentry.get_name(), name) {
+                let token = unsafe { DentryReadToken::new(dentry) };
+                return Ok(token);
+            }
+        }
+        Err(Error::ENOENT)
+    }
 }
 
 pub(crate) struct DataAllocToken {
@@ -87,6 +111,14 @@ impl<'a> DentryAddToken<'a> {
     pub(crate) unsafe fn new(d: &'a mut HayleyfsDentry) -> Self {
         Self { dentry: d }
     }
+
+    pub(crate) fn set_ino(&mut self, i: InodeNum) {
+        unsafe { self.dentry.set_ino(i) };
+    }
+
+    pub(crate) fn set_dentry_name(&mut self, name: &str) {
+        unsafe { self.dentry.set_dentry_name(name) };
+    }
 }
 
 impl Drop for DentryAddToken<'_> {
@@ -95,9 +127,25 @@ impl Drop for DentryAddToken<'_> {
         pr_info!("dropping dentry add token\n");
         clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
         // then make it valid
-        self.dentry.valid = true;
+        unsafe { self.dentry.valid = true };
         // then flush and fence again
         clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
+    }
+}
+
+// differs from dentry add token because this only provides an immutable
+// reference to the dentry and does not flush on drop
+pub(crate) struct DentryReadToken<'a> {
+    dentry: &'a HayleyfsDentry,
+}
+
+impl<'a> DentryReadToken<'a> {
+    pub(crate) unsafe fn new(d: &'a HayleyfsDentry) -> Self {
+        Self { dentry: d }
+    }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.dentry.get_ino()
     }
 }
 
@@ -122,11 +170,11 @@ impl HayleyfsDentry {
     // TODO: why does link count live in dentries?
     fn set_up(&mut self, ino: InodeNum, name: &str) {
         self.ino = ino;
-        self.set_dentry_name(name);
+        unsafe { self.set_dentry_name(name) };
         self.valid = false;
     }
 
-    fn set_dentry_name(&mut self, name: &str) {
+    unsafe fn set_dentry_name(&mut self, name: &str) {
         // initialize the name array with zeroes, then set the name
         self.name = [0; MAX_FILENAME_LEN];
         // ensure it's null terminated by only copying at most MAX_FILENAME_LEN-1 bytes
@@ -145,12 +193,16 @@ impl HayleyfsDentry {
         self.valid
     }
 
-    pub(crate) fn set_valid(&mut self, v: bool) {
+    pub(crate) unsafe fn set_valid(&mut self, v: bool) {
         self.valid = v;
     }
 
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.ino
+    }
+
+    unsafe fn set_ino(&mut self, i: InodeNum) {
+        self.ino = i;
     }
 
     pub(crate) fn get_name(&self) -> &[u8] {
@@ -229,17 +281,20 @@ pub(crate) fn initialize_dir<'a>(
 
     // TODO: confirm that split_at_mut is just an ownership/mutability thing
     // and doesn't make copies
+    // TODO: use dentry tokens here (or at least have a nicer abstraction to
+    // eliminate the unsafe calls to set_valid). we shouldn't really be accessing
+    // the dentry list directly
     let (d1, d2) = dir_page.dentries.split_at_mut(1);
 
     let mut self_dentry = &mut d1[0];
 
     self_dentry.set_up(ino_token.get_ino(), ".");
-    self_dentry.set_valid(true);
+    unsafe { self_dentry.set_valid(true) };
 
     let mut parent_dentry = &mut d2[0];
 
     parent_dentry.set_up(parent_ino, "..");
-    self_dentry.set_valid(true);
+    unsafe { self_dentry.set_valid(true) };
 
     let init_token = DirInitToken {
         self_dentry,
@@ -294,20 +349,12 @@ pub(crate) fn add_dentry_to_parent<'a>(
     // then, obtain its data page and scan it for the first unused dentry slot
     match parent_dir.get_data_page_no() {
         Some(page_no) => {
+            // TODO: safe abstraction for this
             let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
-            // TODO: should try to obtain the token earlier maybe? make it harder to
-            // modify a dentry directly without obtaining a token. have to balance this
-            // with the fact that we don't want a true token for all of the dentries since
-            // we are only interested in modifying one.
-            for dentry in dir_page.dentries.iter_mut() {
-                if !dentry.valid {
-                    dentry.set_dentry_name(name.to_str().unwrap());
-                    dentry.ino = inode_token.get_ino();
-                    let dentry_token = unsafe { DentryAddToken::new(dentry) };
-                    return Ok(dentry_token);
-                }
-            }
-            Err(Error::ENOSPC)
+            let mut dentry_token = dir_page.get_next_invalid_dentry().unwrap(); // TODO: handle error
+            dentry_token.set_ino(inode_token.get_ino());
+            dentry_token.set_dentry_name(name.to_str().unwrap());
+            Ok(dentry_token)
         }
         None => Err(Error::ENOTDIR),
     }
@@ -335,7 +382,8 @@ unsafe extern "C" fn hayleyfs_readdir(file: *mut file, ctx_raw: *mut dir_context
             // iterate over the dentries in the file and feed them to dir_emit
             // right now there can only be one page of directory entries
             let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page) as *mut DirPage) };
-
+            // TODO: none of this should work but since it does i'm not going to touch it for now
+            // but it should be adjusted to use the safe interface to dentries
             for i in 0..DENTRIES_PER_PAGE {
                 let dentry = &dir_page.dentries[i];
                 if !dentry.valid {

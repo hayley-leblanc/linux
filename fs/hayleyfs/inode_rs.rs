@@ -454,19 +454,15 @@ unsafe extern "C" fn hayleyfs_lookup(
             // TODO: you do this same code a lot - might make more sense to have a function
             // that takes a closure describing what to do in the loop
             let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
-            for i in 0..DENTRIES_PER_PAGE {
-                let mut p_dentry = &mut dir_page.dentries[i];
-                if !p_dentry.is_valid() {
-                    // TODO: you need to return not found somewhere here
-                    break;
-                } else if compare_dentry_name(&p_dentry.get_name(), dentry_name.as_bytes_with_nul())
-                {
-                    let inode = hayleyfs_iget(sb, p_dentry.get_ino()).unwrap();
-                    // TODO: handle errors on the returned inode
-                    return unsafe { d_splice_alias(inode, dentry) };
+            let read_token = dir_page.lookup_name(dentry_name.as_bytes_with_nul());
+            // TODO: figure out how to handle errors here
+            match read_token {
+                Ok(token) => {
+                    let inode = hayleyfs_iget(sb, token.get_ino()).unwrap();
+                    unsafe { d_splice_alias(inode, dentry) }
                 }
+                Err(_) => unsafe { simple_lookup(dir, dentry, flags) },
             }
-            unsafe { simple_lookup(dir, dentry, flags) }
         }
         None => {
             // TODO: figure out how to return the correct error type here
