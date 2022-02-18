@@ -14,7 +14,7 @@ use core::ptr;
 use kernel::bindings::{
     d_instantiate, d_splice_alias, dentry, iget_failed, iget_locked, inc_nlink, inode,
     inode_init_owner, inode_operations, insert_inode_locked, new_inode, set_nlink, simple_lookup,
-    super_block, umode_t, unlock_new_inode, user_namespace, ENAMETOOLONG, S_IFDIR,
+    super_block, umode_t, unlock_new_inode, user_namespace, ENAMETOOLONG, I_NEW, S_IFDIR,
 };
 use kernel::c_types::{c_char, c_int, c_void};
 use kernel::prelude::*;
@@ -322,9 +322,21 @@ pub(crate) fn hayleyfs_iget(sb: *mut super_block, ino: usize) -> Result<&'static
     let inode = unsafe { &mut *(iget_locked(sb, ino as u64) as *mut inode) };
     if ptr::eq(inode, ptr::null_mut()) {
         unsafe { iget_failed(inode) };
-        return Err(Error::EINVAL); // TODO: what error type should this actually return?
+        return Err(Error::ENOMEM);
+    }
+    if (inode.i_state & I_NEW as u64) == 0 {
+        return Ok(inode);
     }
     inode.i_ino = ino as u64;
+    // TODO: right now this is hardcoded for directories because
+    // that's all we have. but it should be read from the persistent inode
+    // and set depending on the type of inode
+    inode.i_mode = S_IFDIR as u16;
+    inode.i_op = &HayleyfsDirInodeOps;
+    unsafe {
+        inode.__bindgen_anon_3.i_fop = &HayleyfsFileOps; // fileOps has to be mutable so this has to be unsafe. Why does it have to be mutable???
+        set_nlink(inode, 2);
+    }
     unsafe { unlock_new_inode(inode) };
 
     Ok(inode)
