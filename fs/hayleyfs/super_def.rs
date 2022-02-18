@@ -3,6 +3,7 @@ use kernel::c_types::c_void;
 use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
+use crate::data::*;
 use crate::defs::*;
 use crate::inode_rs::*;
 use crate::pm::*;
@@ -30,6 +31,32 @@ impl Drop for SuperInitToken<'_> {
     fn drop(&mut self) {
         pr_info!("Dropping super init token!\n");
         clflush(self.hsb, size_of::<HayleyfsSuperBlock>(), false);
+    }
+}
+
+pub(crate) struct MountInitToken<'a> {
+    super_token: SuperInitToken<'a>,
+    inode_alloc_token: InodeAllocToken,
+    inode_init_token: InodeInitToken<'a>,
+    data_alloc_token: DataAllocToken,
+    dir_init_token: DirInitToken<'a>,
+}
+
+impl<'a> MountInitToken<'a> {
+    pub(crate) fn new(
+        super_token: SuperInitToken<'a>,
+        inode_alloc_token: InodeAllocToken,
+        inode_init_token: InodeInitToken<'a>,
+        data_alloc_token: DataAllocToken,
+        dir_init_token: DirInitToken<'a>,
+    ) -> Self {
+        Self {
+            super_token,
+            inode_alloc_token,
+            inode_init_token,
+            data_alloc_token,
+            dir_init_token,
+        }
     }
 }
 

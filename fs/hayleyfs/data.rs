@@ -239,6 +239,7 @@ fn set_data_bitmap_bit(sbi: &mut SbInfo, page_no: PmPage) -> Result<()> {
     Ok(())
 }
 
+#[no_mangle]
 pub(crate) fn hayleyfs_alloc_page(sbi: &SbInfo) -> Result<DataAllocToken> {
     let bitmap_addr = get_data_bitmap_addr(sbi);
     // we are initializing a directory, so allocate a data page for its dentries
@@ -269,15 +270,17 @@ pub(crate) fn hayleyfs_alloc_page(sbi: &SbInfo) -> Result<DataAllocToken> {
 
 /// this lives here for now because it deals with allocating and managing
 /// data pages
+#[no_mangle]
 pub(crate) fn initialize_dir<'a>(
     sbi: &SbInfo,
     // pi: &mut HayleyfsInode,
     ino_token: &mut InodeInitToken<'_>,
     // self_ino: InodeNum,
     parent_ino: InodeNum,
-    alloc_token: &'a DataAllocToken,
+    // alloc_token: &'a DataAllocToken,
+    page_no: PmPage,
 ) -> Result<DirInitToken<'a>> {
-    let dir_page = unsafe { &mut *(get_data_page_addr(sbi, alloc_token.page_no) as *mut DirPage) };
+    let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
 
     // TODO: confirm that split_at_mut is just an ownership/mutability thing
     // and doesn't make copies
@@ -304,7 +307,7 @@ pub(crate) fn initialize_dir<'a>(
     // add the data page we have just set up to the inode
     // TODO: i don't THINK doing this here will cause issues with dependencies,
     // but do some testing to be sure
-    ino_token.add_data_page(alloc_token.page_no);
+    ino_token.add_data_page(page_no);
 
     Ok(init_token)
 }
@@ -333,9 +336,9 @@ pub(crate) fn compare_dentry_name(name1: &[u8], name2: &[u8]) -> bool {
 pub(crate) fn add_dentry_to_parent<'a>(
     sbi: &SbInfo,
     parent_ino: InodeNum,
-    inode_token: InodeInitToken<'_>,
-    dir_token: DirInitToken<'_>,
-    link_token: ParentLinkToken<'_>,
+    inode_token: &InodeInitToken<'_>,
+    dir_token: &DirInitToken<'_>,
+    link_token: &ParentLinkToken<'_>,
     name: &kernel::str::CStr,
 ) -> Result<DentryAddToken<'a>> {
     // TODO: you should set it up so that obtaining the dentry (and the inode?)

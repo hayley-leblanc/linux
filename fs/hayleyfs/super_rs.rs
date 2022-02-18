@@ -202,7 +202,21 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
     // allocate a data page
     let data_token = hayleyfs_alloc_page(&sbi).unwrap();
 
-    initialize_dir(&sbi, &mut inode_init_token, HAYLEYFS_ROOT_INO, &data_token).unwrap();
+    let dir_init_token = initialize_dir(
+        &sbi,
+        &mut inode_init_token,
+        HAYLEYFS_ROOT_INO,
+        data_token.page_no(),
+    )
+    .unwrap();
+
+    let mount_tokens = MountInitToken::new(
+        super_token,
+        inode_alloc_token,
+        inode_init_token,
+        data_token,
+        dir_init_token,
+    );
 
     0
 }

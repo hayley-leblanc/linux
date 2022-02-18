@@ -91,12 +91,34 @@ impl HayleyfsInode {
     }
 }
 
-// impl Drop for HayleyfsInode {
-//     fn drop(&mut self) {
-//         pr_info!("dropping inode {:}\n", self.ino);
-//         // this seems to never run (which does make sense)
-//     }
-// }
+struct MkdirTokens<'a> {
+    inode_alloc_token: InodeAllocToken,
+    data_alloc_token: DataAllocToken,
+    inode_init_token: InodeInitToken<'a>,
+    parent_link_token: ParentLinkToken<'a>,
+    dir_init_token: DirInitToken<'a>,
+    dentry_add_token: DentryAddToken<'a>,
+}
+
+impl<'a> MkdirTokens<'a> {
+    fn new(
+        inode_alloc_token: InodeAllocToken,
+        data_alloc_token: DataAllocToken,
+        inode_init_token: InodeInitToken<'a>,
+        parent_link_token: ParentLinkToken<'a>,
+        dir_init_token: DirInitToken<'a>,
+        dentry_add_token: DentryAddToken<'a>,
+    ) -> Self {
+        Self {
+            inode_alloc_token,
+            data_alloc_token,
+            inode_init_token,
+            parent_link_token,
+            dir_init_token,
+            dentry_add_token,
+        }
+    }
+}
 
 pub(crate) struct InodeAllocToken {
     ino: InodeNum,
@@ -204,6 +226,7 @@ pub(crate) unsafe fn set_inode_bitmap_bit(sbi: &SbInfo, ino: InodeNum) -> Result
     Ok(())
 }
 
+#[no_mangle]
 fn hayleyfs_allocate_inode(sbi: &SbInfo) -> Result<InodeAllocToken> {
     let mut bitmap = get_inode_bitmap(&sbi);
 
@@ -257,6 +280,7 @@ pub(crate) fn hayleyfs_allocate_inode_by_ino(
 }
 
 // TODO: should lifetime come from sbi or token?
+#[no_mangle]
 pub(crate) fn hayleyfs_initialize_inode<'a>(
     sbi: &'a SbInfo,
     token: &InodeAllocToken,
@@ -325,6 +349,7 @@ unsafe extern "C" fn hayleyfs_mkdir(
 }
 
 // TODO: actual error handling
+#[no_mangle]
 fn _hayleyfs_mkdir(
     mnt_userns: &mut user_namespace,
     dir: &mut inode,
@@ -332,6 +357,9 @@ fn _hayleyfs_mkdir(
     mode: umode_t,
 ) -> i32 {
     pr_info!("creating a new directory!\n");
+
+    let sb = dir.i_sb;
+    let sbi = hayleyfs_get_sbi(sb);
 
     let dentry_name = unsafe { (*dentry).d_name.name } as *const c_char;
     let dentry_name = unsafe { CStr::from_char_ptr(dentry_name) };
@@ -341,9 +369,6 @@ fn _hayleyfs_mkdir(
     }
     unsafe { pr_info!("dentry name in mkdir: {:?}", dentry_name) };
 
-    let sb = dir.i_sb;
-    let sbi = hayleyfs_get_sbi(sb);
-
     // TODO: handle out of inodes case
     let ino_token = hayleyfs_allocate_inode(&sbi).unwrap();
 
@@ -352,13 +377,13 @@ fn _hayleyfs_mkdir(
     let mut inode_init_token = hayleyfs_initialize_inode(&sbi, &ino_token).unwrap();
 
     // allocate a data page
-    let data_token = hayleyfs_alloc_page(&sbi).unwrap();
+    let data_alloc_token = hayleyfs_alloc_page(&sbi).unwrap();
     // set up the data page with dentries for the new directory
-    let dir_token = initialize_dir(
+    let dir_init_token = initialize_dir(
         &sbi,
         &mut inode_init_token,
         dir.i_ino.try_into().unwrap(),
-        &data_token,
+        data_alloc_token.page_no(),
     )
     .unwrap();
 
@@ -368,7 +393,6 @@ fn _hayleyfs_mkdir(
     let parent_link_token = inc_parent_links(&sbi, dir.i_ino.try_into().unwrap());
 
     // set up vfs inode
-    // TODO: when should this happen?
     let inode = hayleyfs_new_vfs_inode(
         sb,
         dir,
@@ -383,15 +407,24 @@ fn _hayleyfs_mkdir(
         unlock_new_inode(inode);
     };
 
-    add_dentry_to_parent(
+    let dentry_add_token = add_dentry_to_parent(
         &sbi,
         dir.i_ino.try_into().unwrap(),
-        inode_init_token,
-        dir_token,
-        parent_link_token,
+        &inode_init_token,
+        &dir_init_token,
+        &parent_link_token,
         dentry_name,
     )
     .unwrap();
+
+    let mkdir_tokens = MkdirTokens::new(
+        ino_token,
+        data_alloc_token,
+        inode_init_token,
+        parent_link_token,
+        dir_init_token,
+        dentry_add_token,
+    );
 
     0
 }
