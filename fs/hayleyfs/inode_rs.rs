@@ -91,34 +91,34 @@ impl HayleyfsInode {
     }
 }
 
-struct MkdirTokens<'a> {
-    inode_alloc_token: InodeAllocToken,
-    data_alloc_token: DataAllocToken,
-    inode_init_token: InodeInitToken<'a>,
-    parent_link_token: ParentLinkToken<'a>,
-    dir_init_token: DirInitToken<'a>,
-    dentry_add_token: DentryAddToken<'a>,
-}
+// struct MkdirTokens<'a> {
+//     inode_alloc_token: InodeAllocToken,
+//     data_alloc_token: DataAllocToken,
+//     inode_init_token: InodeInitToken<'a>,
+//     parent_link_token: ParentLinkToken<'a>,
+//     dir_init_token: DirInitToken<'a>,
+//     dentry_add_token: DentryAddToken<'a>,
+// }
 
-impl<'a> MkdirTokens<'a> {
-    fn new(
-        inode_alloc_token: InodeAllocToken,
-        data_alloc_token: DataAllocToken,
-        inode_init_token: InodeInitToken<'a>,
-        parent_link_token: ParentLinkToken<'a>,
-        dir_init_token: DirInitToken<'a>,
-        dentry_add_token: DentryAddToken<'a>,
-    ) -> Self {
-        Self {
-            inode_alloc_token,
-            data_alloc_token,
-            inode_init_token,
-            parent_link_token,
-            dir_init_token,
-            dentry_add_token,
-        }
-    }
-}
+// impl<'a> MkdirTokens<'a> {
+//     fn new(
+//         inode_alloc_token: InodeAllocToken,
+//         data_alloc_token: DataAllocToken,
+//         inode_init_token: InodeInitToken<'a>,
+//         parent_link_token: ParentLinkToken<'a>,
+//         dir_init_token: DirInitToken<'a>,
+//         dentry_add_token: DentryAddToken<'a>,
+//     ) -> Self {
+//         Self {
+//             inode_alloc_token,
+//             data_alloc_token,
+//             inode_init_token,
+//             parent_link_token,
+//             dir_init_token,
+//             dentry_add_token,
+//         }
+//     }
+// }
 
 pub(crate) struct InodeAllocToken {
     ino: InodeNum,
@@ -131,6 +131,9 @@ impl InodeAllocToken {
     /// inode number using the inode bitmap. it is unsafe to call
     /// anywhere else
     pub(crate) unsafe fn new(i: InodeNum, line: *mut CacheLine) -> Self {
+        // TODO: fencing
+        pr_info!("flushing inode alloc token\n");
+        clflush(line, CACHELINE_SIZE, false);
         Self {
             ino: i,
             cache_line: line,
@@ -143,12 +146,12 @@ impl InodeAllocToken {
     }
 }
 
-impl Drop for InodeAllocToken {
-    fn drop(&mut self) {
-        pr_info!("dropping inode alloc token\n");
-        clflush(self.cache_line, CACHELINE_SIZE, false);
-    }
-}
+// impl Drop for InodeAllocToken {
+//     fn drop(&mut self) {
+//         pr_info!("dropping inode alloc token\n");
+//         clflush(self.cache_line, CACHELINE_SIZE, false);
+//     }
+// }
 
 pub(crate) struct InodeInitToken<'a> {
     inode: &'a mut HayleyfsInode,
@@ -156,6 +159,8 @@ pub(crate) struct InodeInitToken<'a> {
 
 impl<'a> InodeInitToken<'a> {
     pub(crate) unsafe fn new(inode: &'a mut HayleyfsInode) -> Self {
+        pr_info!("flushing inode init token!\n");
+        clflush(inode, size_of::<HayleyfsInode>(), true);
         Self { inode }
     }
 
@@ -170,12 +175,12 @@ impl<'a> InodeInitToken<'a> {
     }
 }
 
-impl Drop for InodeInitToken<'_> {
-    fn drop(&mut self) {
-        pr_info!("dropping inode init token!\n");
-        clflush(self.inode, size_of::<HayleyfsInode>(), true);
-    }
-}
+// impl Drop for InodeInitToken<'_> {
+//     fn drop(&mut self) {
+//         pr_info!("dropping inode init token!\n");
+//         clflush(self.inode, size_of::<HayleyfsInode>(), true);
+//     }
+// }
 
 pub(crate) struct ParentLinkToken<'a> {
     inode: &'a mut HayleyfsInode,
@@ -183,16 +188,18 @@ pub(crate) struct ParentLinkToken<'a> {
 
 impl<'a> ParentLinkToken<'a> {
     pub(crate) unsafe fn new(inode: &'a mut HayleyfsInode) -> Self {
+        pr_info!("flushing parent link token\n");
+        clflush(inode, size_of::<HayleyfsInode>(), true);
         Self { inode }
     }
 }
 
-impl<'a> Drop for ParentLinkToken<'a> {
-    fn drop(&mut self) {
-        pr_info!("Dropping parent link token\n");
-        clflush(self.inode, size_of::<HayleyfsInode>(), true);
-    }
-}
+// impl<'a> Drop for ParentLinkToken<'a> {
+//     fn drop(&mut self) {
+//         pr_info!("Dropping parent link token\n");
+//         clflush(self.inode, size_of::<HayleyfsInode>(), true);
+//     }
+// }
 
 // TODO: figure out if you actually need this
 pub(crate) unsafe fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut HayleyfsInode {
@@ -429,14 +436,14 @@ fn _hayleyfs_mkdir(
     )
     .unwrap();
 
-    let mkdir_tokens = MkdirTokens::new(
-        ino_token,
-        data_alloc_token,
-        inode_init_token,
-        parent_link_token,
-        dir_init_token,
-        dentry_add_token,
-    );
+    // let mkdir_tokens = MkdirTokens::new(
+    //     ino_token,
+    //     data_alloc_token,
+    //     inode_init_token,
+    //     parent_link_token,
+    //     dir_init_token,
+    //     dentry_add_token,
+    // );
 
     0
 }

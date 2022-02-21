@@ -61,6 +61,9 @@ pub(crate) struct DataAllocToken {
 
 impl DataAllocToken {
     pub(crate) unsafe fn new(p: PmPage, line: *mut CacheLine) -> Self {
+        // TODO: fencing
+        pr_info!("flushing alloc token for page {:?}\n", p);
+        clflush(line, CACHELINE_SIZE, false);
         Self {
             page_no: p,
             cache_line: line,
@@ -72,12 +75,12 @@ impl DataAllocToken {
     }
 }
 
-impl Drop for DataAllocToken {
-    fn drop(&mut self) {
-        pr_info!("dropping alloc token for page {:?}\n", self.page_no);
-        clflush(self.cache_line, CACHELINE_SIZE, false);
-    }
-}
+// impl Drop for DataAllocToken {
+//     fn drop(&mut self) {
+//         pr_info!("dropping alloc token for page {:?}\n", self.page_no);
+//         clflush(self.cache_line, CACHELINE_SIZE, false);
+//     }
+// }
 
 pub(crate) struct DirInitToken<'a> {
     self_dentry: &'a HayleyfsDentry,
@@ -86,6 +89,12 @@ pub(crate) struct DirInitToken<'a> {
 
 impl<'a> DirInitToken<'a> {
     pub(crate) unsafe fn new(s: &'a mut HayleyfsDentry, p: &'a mut HayleyfsDentry) -> Self {
+        // TODO: fencing
+        pr_info!("flushing dir init token!\n");
+        // flush them separately in case there is some unexpected padding
+        // this could cause redundant flushes
+        clflush(s, size_of::<HayleyfsDentry>(), false);
+        clflush(p, size_of::<HayleyfsDentry>(), false);
         Self {
             self_dentry: s,
             parent_dentry: p,
@@ -93,15 +102,15 @@ impl<'a> DirInitToken<'a> {
     }
 }
 
-impl Drop for DirInitToken<'_> {
-    fn drop(&mut self) {
-        pr_info!("dropping dir init token!\n");
-        // flush them separately in case there is some unexpected padding
-        // this could cause redundant flushes
-        clflush(self.self_dentry, size_of::<HayleyfsDentry>(), false);
-        clflush(self.parent_dentry, size_of::<HayleyfsDentry>(), false);
-    }
-}
+// impl Drop for DirInitToken<'_> {
+//     fn drop(&mut self) {
+//         pr_info!("dropping dir init token!\n");
+//         // flush them separately in case there is some unexpected padding
+//         // this could cause redundant flushes
+//         clflush(self.self_dentry, size_of::<HayleyfsDentry>(), false);
+//         clflush(self.parent_dentry, size_of::<HayleyfsDentry>(), false);
+//     }
+// }
 
 pub(crate) struct DentryAddToken<'a> {
     dentry: &'a mut HayleyfsDentry,
@@ -109,6 +118,14 @@ pub(crate) struct DentryAddToken<'a> {
 
 impl<'a> DentryAddToken<'a> {
     pub(crate) unsafe fn new(d: &'a mut HayleyfsDentry) -> Self {
+        // TODO: fencing, and does this still have to be done in two flushes?
+        // flush and fence the dentry
+        pr_info!("flushing dentry add token\n");
+        clflush(d, size_of::<HayleyfsDentry>(), true);
+        // then make it valid
+        unsafe { d.valid = true };
+        // then flush and fence again
+        clflush(d, size_of::<HayleyfsDentry>(), true);
         Self { dentry: d }
     }
 
@@ -121,17 +138,17 @@ impl<'a> DentryAddToken<'a> {
     }
 }
 
-impl Drop for DentryAddToken<'_> {
-    fn drop(&mut self) {
-        // flush and fence the dentry
-        pr_info!("dropping dentry add token\n");
-        clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
-        // then make it valid
-        unsafe { self.dentry.valid = true };
-        // then flush and fence again
-        clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
-    }
-}
+// impl Drop for DentryAddToken<'_> {
+//     fn drop(&mut self) {
+//         // flush and fence the dentry
+//         pr_info!("dropping dentry add token\n");
+//         clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
+//         // then make it valid
+//         unsafe { self.dentry.valid = true };
+//         // then flush and fence again
+//         clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
+//     }
+// }
 
 // differs from dentry add token because this only provides an immutable
 // reference to the dentry and does not flush on drop
@@ -248,8 +265,8 @@ pub(crate) fn hayleyfs_alloc_page(sbi: &SbInfo) -> Result<DataAllocToken> {
     let page_no = unsafe {
         hayleyfs_find_next_zero_bit(
             bitmap_addr as *mut u64,
-            0,
             (PAGE_SIZE * 8).try_into().unwrap(),
+            0,
         )
     };
 
