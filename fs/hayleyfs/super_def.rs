@@ -33,33 +33,6 @@ impl Drop for SuperInitToken<'_> {
         clflush(self.hsb, size_of::<HayleyfsSuperBlock>(), false);
     }
 }
-
-pub(crate) struct MountInitToken<'a> {
-    super_token: SuperInitToken<'a>,
-    inode_alloc_token: InodeAllocToken,
-    inode_init_token: InodeInitToken<'a>,
-    data_alloc_token: DataAllocToken,
-    dir_init_token: DirInitToken<'a>,
-}
-
-impl<'a> MountInitToken<'a> {
-    pub(crate) fn new(
-        super_token: SuperInitToken<'a>,
-        inode_alloc_token: InodeAllocToken,
-        inode_init_token: InodeInitToken<'a>,
-        data_alloc_token: DataAllocToken,
-        dir_init_token: DirInitToken<'a>,
-    ) -> Self {
-        Self {
-            super_token,
-            inode_alloc_token,
-            inode_init_token,
-            data_alloc_token,
-            dir_init_token,
-        }
-    }
-}
-
 #[repr(C)]
 pub(crate) struct SbInfo {
     pub(crate) sb: *mut super_block, // raw pointer to the VFS super block

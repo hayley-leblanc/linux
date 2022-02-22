@@ -44,6 +44,7 @@ pub(crate) fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
         }
     }
     if fence {
+        pr_info!("fence\n");
         sfence();
     }
 }

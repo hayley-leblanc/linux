@@ -20,12 +20,14 @@ mod defs;
 mod inode_rs;
 mod pm;
 mod super_def;
+mod tokens;
 
 use crate::data::*;
 use crate::defs::*;
 use crate::inode_rs::*;
 use crate::pm::*;
 use crate::super_def::*;
+use crate::tokens::*;
 use core::mem::size_of;
 use core::ptr;
 
@@ -202,21 +204,13 @@ pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_c
     // allocate a data page
     let data_token = hayleyfs_alloc_page(&sbi).unwrap();
 
-    let dir_init_token = initialize_dir(
+    let (dir_init_token, page_add_token) = initialize_dir(
         &sbi,
-        &mut inode_init_token,
+        inode_init_token,
         HAYLEYFS_ROOT_INO,
         data_token.page_no(),
     )
     .unwrap();
-
-    let mount_tokens = MountInitToken::new(
-        super_token,
-        inode_alloc_token,
-        inode_init_token,
-        data_token,
-        dir_init_token,
-    );
 
     0
 }

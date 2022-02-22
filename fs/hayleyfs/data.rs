@@ -9,6 +9,7 @@ use crate::defs::*;
 use crate::inode_rs::*;
 use crate::pm::*;
 use crate::super_def::*;
+use crate::tokens::*;
 use core::mem::size_of;
 use kernel::bindings::{dentry, dir_context, file, file_operations, inode, ENOTDIR};
 use kernel::c_types::{c_int, c_void};
@@ -18,24 +19,21 @@ use kernel::{c_default_struct, c_str, PAGE_SIZE};
 
 pub(crate) type PmPage = usize;
 
-// impl BitmapIndex for PmPage {}
-
-// TODO: probably a better way to manage this
+// TODO: better way to manage this
 pub(crate) struct DataPage {
     data: *const c_void,
 }
 
-// TODO: do you want to use an array? or something else?
+// TODO: what structure would be best here?
 pub(crate) struct DirPage {
     dentries: [HayleyfsDentry; DENTRIES_PER_PAGE],
 }
 
 impl DirPage {
-    fn get_next_invalid_dentry(&mut self) -> Result<DentryAddToken<'_>> {
+    fn get_next_invalid_dentry(&mut self) -> Result<&mut HayleyfsDentry> {
         for dentry in self.dentries.iter_mut() {
             if !dentry.valid {
-                let dentry_token = unsafe { DentryAddToken::new(dentry) };
-                return Ok(dentry_token);
+                return Ok(dentry);
             }
         }
         Err(Error::ENOSPC)
@@ -51,118 +49,6 @@ impl DirPage {
             }
         }
         Err(Error::ENOENT)
-    }
-}
-
-pub(crate) struct DataAllocToken {
-    page_no: PmPage,
-    cache_line: *mut CacheLine,
-}
-
-impl DataAllocToken {
-    pub(crate) unsafe fn new(p: PmPage, line: *mut CacheLine) -> Self {
-        // TODO: fencing
-        pr_info!("flushing alloc token for page {:?}\n", p);
-        clflush(line, CACHELINE_SIZE, false);
-        Self {
-            page_no: p,
-            cache_line: line,
-        }
-    }
-
-    pub(crate) fn page_no(&self) -> PmPage {
-        self.page_no
-    }
-}
-
-// impl Drop for DataAllocToken {
-//     fn drop(&mut self) {
-//         pr_info!("dropping alloc token for page {:?}\n", self.page_no);
-//         clflush(self.cache_line, CACHELINE_SIZE, false);
-//     }
-// }
-
-pub(crate) struct DirInitToken<'a> {
-    self_dentry: &'a HayleyfsDentry,
-    parent_dentry: &'a HayleyfsDentry,
-}
-
-impl<'a> DirInitToken<'a> {
-    pub(crate) unsafe fn new(s: &'a mut HayleyfsDentry, p: &'a mut HayleyfsDentry) -> Self {
-        // TODO: fencing
-        pr_info!("flushing dir init token!\n");
-        // flush them separately in case there is some unexpected padding
-        // this could cause redundant flushes
-        clflush(s, size_of::<HayleyfsDentry>(), false);
-        clflush(p, size_of::<HayleyfsDentry>(), false);
-        Self {
-            self_dentry: s,
-            parent_dentry: p,
-        }
-    }
-}
-
-// impl Drop for DirInitToken<'_> {
-//     fn drop(&mut self) {
-//         pr_info!("dropping dir init token!\n");
-//         // flush them separately in case there is some unexpected padding
-//         // this could cause redundant flushes
-//         clflush(self.self_dentry, size_of::<HayleyfsDentry>(), false);
-//         clflush(self.parent_dentry, size_of::<HayleyfsDentry>(), false);
-//     }
-// }
-
-pub(crate) struct DentryAddToken<'a> {
-    dentry: &'a mut HayleyfsDentry,
-}
-
-impl<'a> DentryAddToken<'a> {
-    pub(crate) unsafe fn new(d: &'a mut HayleyfsDentry) -> Self {
-        // TODO: fencing, and does this still have to be done in two flushes?
-        // flush and fence the dentry
-        pr_info!("flushing dentry add token\n");
-        clflush(d, size_of::<HayleyfsDentry>(), true);
-        // then make it valid
-        unsafe { d.valid = true };
-        // then flush and fence again
-        clflush(d, size_of::<HayleyfsDentry>(), true);
-        Self { dentry: d }
-    }
-
-    pub(crate) fn set_ino(&mut self, i: InodeNum) {
-        unsafe { self.dentry.set_ino(i) };
-    }
-
-    pub(crate) fn set_dentry_name(&mut self, name: &str) {
-        unsafe { self.dentry.set_dentry_name(name) };
-    }
-}
-
-// impl Drop for DentryAddToken<'_> {
-//     fn drop(&mut self) {
-//         // flush and fence the dentry
-//         pr_info!("dropping dentry add token\n");
-//         clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
-//         // then make it valid
-//         unsafe { self.dentry.valid = true };
-//         // then flush and fence again
-//         clflush(self.dentry, size_of::<HayleyfsDentry>(), true);
-//     }
-// }
-
-// differs from dentry add token because this only provides an immutable
-// reference to the dentry and does not flush on drop
-pub(crate) struct DentryReadToken<'a> {
-    dentry: &'a HayleyfsDentry,
-}
-
-impl<'a> DentryReadToken<'a> {
-    pub(crate) unsafe fn new(d: &'a HayleyfsDentry) -> Self {
-        Self { dentry: d }
-    }
-
-    pub(crate) fn get_ino(&self) -> InodeNum {
-        self.dentry.get_ino()
     }
 }
 
@@ -184,14 +70,13 @@ pub(crate) struct HayleyfsDentry {
 }
 
 impl HayleyfsDentry {
-    // TODO: why does link count live in dentries?
     fn set_up(&mut self, ino: InodeNum, name: &str) {
         self.ino = ino;
-        unsafe { self.set_dentry_name(name) };
+        self.set_dentry_name(name);
         self.valid = false;
     }
 
-    unsafe fn set_dentry_name(&mut self, name: &str) {
+    fn set_dentry_name(&mut self, name: &str) {
         // initialize the name array with zeroes, then set the name
         self.name = [0; MAX_FILENAME_LEN];
         // ensure it's null terminated by only copying at most MAX_FILENAME_LEN-1 bytes
@@ -210,6 +95,8 @@ impl HayleyfsDentry {
         self.valid
     }
 
+    /// can't be safe because the valid bit should only be set after
+    /// the structure has initially been set up and flushed properly
     pub(crate) unsafe fn set_valid(&mut self, v: bool) {
         self.valid = v;
     }
@@ -218,7 +105,7 @@ impl HayleyfsDentry {
         self.ino
     }
 
-    unsafe fn set_ino(&mut self, i: InodeNum) {
+    fn set_ino(&mut self, i: InodeNum) {
         self.ino = i;
     }
 
@@ -242,7 +129,7 @@ pub(crate) fn get_data_page_addr(sbi: &SbInfo, page_no: PmPage) -> *mut c_void {
     (sbi.virt_addr as usize + ((DATA_START + page_no) * PAGE_SIZE)) as *mut c_void
 }
 
-/// page_no should be a relative page number, NOT absolute.
+/// page_no is a relative page number, NOT absolute.
 /// so the first valid data page number is 0, but it's actually
 /// the 5th page (since the first four pages are reserved)
 /// this will make it easier to manage the bitmap
@@ -280,7 +167,7 @@ pub(crate) fn hayleyfs_alloc_page(sbi: &SbInfo) -> Result<DataAllocToken> {
     unsafe { hayleyfs_set_bit(page_no, bitmap as *mut _ as *mut c_void) };
     let cacheline = get_bitmap_cacheline(&mut bitmap, page_no);
 
-    let token = unsafe { DataAllocToken::new(page_no, cacheline) };
+    let token = DataAllocToken::new(page_no, cacheline);
 
     Ok(token)
 }
@@ -290,25 +177,21 @@ pub(crate) fn hayleyfs_alloc_page(sbi: &SbInfo) -> Result<DataAllocToken> {
 #[no_mangle]
 pub(crate) fn initialize_dir<'a>(
     sbi: &SbInfo,
-    // pi: &mut HayleyfsInode,
-    ino_token: &mut InodeInitToken<'_>,
-    // self_ino: InodeNum,
+    ino_token: InodeInitToken<'a>,
     parent_ino: InodeNum,
-    // alloc_token: &'a DataAllocToken,
     page_no: PmPage,
-) -> Result<DirInitToken<'a>> {
+) -> Result<(DirInitToken<'a>, DirPageAddToken<'a>)> {
     let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
 
     // TODO: confirm that split_at_mut is just an ownership/mutability thing
     // and doesn't make copies
-    // TODO: use dentry tokens here (or at least have a nicer abstraction to
-    // eliminate the unsafe calls to set_valid). we shouldn't really be accessing
-    // the dentry list directly
     let (d1, d2) = dir_page.dentries.split_at_mut(1);
 
     let mut self_dentry = &mut d1[0];
 
     self_dentry.set_up(ino_token.get_ino(), ".");
+    // TODO: the valid bit should probably be set later when we flush
+    // at token initialization
     unsafe { self_dentry.set_valid(true) };
 
     let mut parent_dentry = &mut d2[0];
@@ -316,17 +199,11 @@ pub(crate) fn initialize_dir<'a>(
     parent_dentry.set_up(parent_ino, "..");
     unsafe { self_dentry.set_valid(true) };
 
-    let init_token = DirInitToken {
-        self_dentry,
-        parent_dentry,
-    };
+    let init_token = DirInitToken::new(self_dentry, parent_dentry);
 
-    // add the data page we have just set up to the inode
-    // TODO: i don't THINK doing this here will cause issues with dependencies,
-    // but do some testing to be sure
-    ino_token.add_data_page(page_no);
+    let page_token = ino_token.add_data_page(page_no, &init_token);
 
-    Ok(init_token)
+    Ok((init_token, page_token))
 }
 
 // TODO: use a better way to handle these slices so things don't get weird
@@ -353,17 +230,13 @@ pub(crate) fn compare_dentry_name(name1: &[u8], name2: &[u8]) -> bool {
 pub(crate) fn add_dentry_to_parent<'a>(
     sbi: &SbInfo,
     parent_ino: InodeNum,
-    inode_token: &InodeInitToken<'_>,
+    inode_token: &DirPageAddToken<'_>,
     dir_token: &DirInitToken<'_>,
     link_token: &ParentLinkToken<'_>,
     name: &kernel::str::CStr,
 ) -> Result<DentryAddToken<'a>> {
-    // TODO: you should set it up so that obtaining the dentry (and the inode?)
-    // automatically give you guards that ensure things are dropped at the end.
-    // the only safe way to interact with inodes and dentries and anything else
-    // stored on PM should be via a token/guard
-
-    // first, unsafely obtain the parent's inode
+    // unsafely obtain the parent's inode
+    // TODO: safe abstraction
     let mut parent_dir = unsafe { hayleyfs_get_inode_by_ino(&sbi, parent_ino) };
 
     // then, obtain its data page and scan it for the first unused dentry slot
@@ -371,9 +244,11 @@ pub(crate) fn add_dentry_to_parent<'a>(
         Some(page_no) => {
             // TODO: safe abstraction for this
             let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
-            let mut dentry_token = dir_page.get_next_invalid_dentry().unwrap(); // TODO: handle error
-            dentry_token.set_ino(inode_token.get_ino());
-            dentry_token.set_dentry_name(name.to_str().unwrap());
+
+            let dentry = dir_page.get_next_invalid_dentry().unwrap();
+            dentry.set_ino(inode_token.get_ino());
+            dentry.set_dentry_name(name.to_str().unwrap());
+            let dentry_token = DentryAddToken::new(dentry);
             Ok(dentry_token)
         }
         None => Err(Error::ENOTDIR),

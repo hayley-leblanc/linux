@@ -9,6 +9,7 @@ use crate::data::*;
 use crate::defs::*;
 use crate::pm::*;
 use crate::super_def::*;
+use crate::tokens::*;
 use core::mem::size_of;
 use core::ptr;
 use kernel::bindings::{
@@ -61,6 +62,7 @@ impl HayleyfsInode {
         data: Option<PmPage>,
         mode: u32,
         link_count: u16,
+        _: &InodeAllocToken,
     ) {
         self.ino = ino;
         self.data0 = data;
@@ -78,128 +80,14 @@ impl HayleyfsInode {
         self.data0
     }
 
-    /// TODO: document safety
-    /// or make it require a token
-    pub(crate) unsafe fn set_data_page_no(&mut self, page_no: Option<PmPage>) {
+    pub(crate) fn set_data_page_no(&mut self, page_no: Option<PmPage>) {
         self.data0 = page_no;
     }
 
-    /// TODO: document safety
-    /// or make it require a token
-    pub(crate) unsafe fn inc_links(&mut self) {
+    pub(crate) fn inc_links(&mut self) {
         self.link_count += 1;
     }
 }
-
-// struct MkdirTokens<'a> {
-//     inode_alloc_token: InodeAllocToken,
-//     data_alloc_token: DataAllocToken,
-//     inode_init_token: InodeInitToken<'a>,
-//     parent_link_token: ParentLinkToken<'a>,
-//     dir_init_token: DirInitToken<'a>,
-//     dentry_add_token: DentryAddToken<'a>,
-// }
-
-// impl<'a> MkdirTokens<'a> {
-//     fn new(
-//         inode_alloc_token: InodeAllocToken,
-//         data_alloc_token: DataAllocToken,
-//         inode_init_token: InodeInitToken<'a>,
-//         parent_link_token: ParentLinkToken<'a>,
-//         dir_init_token: DirInitToken<'a>,
-//         dentry_add_token: DentryAddToken<'a>,
-//     ) -> Self {
-//         Self {
-//             inode_alloc_token,
-//             data_alloc_token,
-//             inode_init_token,
-//             parent_link_token,
-//             dir_init_token,
-//             dentry_add_token,
-//         }
-//     }
-// }
-
-pub(crate) struct InodeAllocToken {
-    ino: InodeNum,
-    cache_line: *mut CacheLine,
-    // cache_line: *mut c_void, // TODO: I would rather this be a CacheLine but there are ownership issues
-}
-
-impl InodeAllocToken {
-    /// this constructor should only be called when getting a new
-    /// inode number using the inode bitmap. it is unsafe to call
-    /// anywhere else
-    pub(crate) unsafe fn new(i: InodeNum, line: *mut CacheLine) -> Self {
-        // TODO: fencing
-        pr_info!("flushing inode alloc token\n");
-        clflush(line, CACHELINE_SIZE, false);
-        Self {
-            ino: i,
-            cache_line: line,
-        }
-    }
-
-    /// return the inode number associated with this token
-    pub(crate) fn ino(&self) -> InodeNum {
-        self.ino
-    }
-}
-
-// impl Drop for InodeAllocToken {
-//     fn drop(&mut self) {
-//         pr_info!("dropping inode alloc token\n");
-//         clflush(self.cache_line, CACHELINE_SIZE, false);
-//     }
-// }
-
-pub(crate) struct InodeInitToken<'a> {
-    inode: &'a mut HayleyfsInode,
-}
-
-impl<'a> InodeInitToken<'a> {
-    pub(crate) unsafe fn new(inode: &'a mut HayleyfsInode) -> Self {
-        pr_info!("flushing inode init token!\n");
-        clflush(inode, size_of::<HayleyfsInode>(), true);
-        Self { inode }
-    }
-
-    pub(crate) fn get_ino(&self) -> InodeNum {
-        self.inode.ino
-    }
-
-    // this is NOT unsafe because the fact that we have the token right now
-    // means it will be correctly flushed in the future
-    pub(crate) fn add_data_page(&mut self, page: PmPage) {
-        unsafe { self.inode.set_data_page_no(Some(page)) };
-    }
-}
-
-// impl Drop for InodeInitToken<'_> {
-//     fn drop(&mut self) {
-//         pr_info!("dropping inode init token!\n");
-//         clflush(self.inode, size_of::<HayleyfsInode>(), true);
-//     }
-// }
-
-pub(crate) struct ParentLinkToken<'a> {
-    inode: &'a mut HayleyfsInode,
-}
-
-impl<'a> ParentLinkToken<'a> {
-    pub(crate) unsafe fn new(inode: &'a mut HayleyfsInode) -> Self {
-        pr_info!("flushing parent link token\n");
-        clflush(inode, size_of::<HayleyfsInode>(), true);
-        Self { inode }
-    }
-}
-
-// impl<'a> Drop for ParentLinkToken<'a> {
-//     fn drop(&mut self) {
-//         pr_info!("Dropping parent link token\n");
-//         clflush(self.inode, size_of::<HayleyfsInode>(), true);
-//     }
-// }
 
 // TODO: figure out if you actually need this
 pub(crate) unsafe fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut HayleyfsInode {
@@ -251,10 +139,11 @@ fn hayleyfs_allocate_inode(sbi: &SbInfo) -> Result<InodeAllocToken> {
     }
 
     // TODO: this doesn't work without the double cast - why though?
+    // TODO: safe abstraction around this - maybe one that produces the inode alloc token for you
     unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
     let cacheline = get_bitmap_cacheline(&mut bitmap, ino);
 
-    let token = unsafe { InodeAllocToken::new(ino, cacheline) };
+    let token = InodeAllocToken::new(ino, cacheline);
 
     Ok(token)
 }
@@ -306,9 +195,9 @@ pub(crate) fn hayleyfs_initialize_inode<'a>(
 
     // this is a set up function, not a constructor, because the inodes already exist
     // on PM and we just need to set their values
-    unsafe { inode.set_up_inode(token.ino(), None, S_IFDIR, 2) };
+    unsafe { inode.set_up_inode(token.ino(), None, S_IFDIR, 2, &token) };
 
-    let init_token = InodeInitToken { inode };
+    let init_token = InodeInitToken::new(inode);
 
     Ok(init_token)
 }
@@ -324,7 +213,7 @@ fn inc_parent_links(sbi: &SbInfo, parent_ino: InodeNum) -> ParentLinkToken<'_> {
     link_token
 }
 
-// TODO: this probably should not be the static lifetime
+// TODO: this probably should not be the static lifetime?
 pub(crate) fn hayleyfs_iget(sb: *mut super_block, ino: usize) -> Result<&'static mut inode> {
     let inode = unsafe { &mut *(iget_locked(sb, ino as u64) as *mut inode) };
     if ptr::eq(inode, ptr::null_mut()) {
@@ -362,19 +251,23 @@ unsafe extern "C" fn hayleyfs_mkdir(
     let dir = unsafe { &mut *(dir_raw as *mut inode) };
     let dentry = unsafe { &mut *(dentry_raw as *mut dentry) };
 
-    // TODO: have this function use nicer Rust errors and convert to something
-    // C can understand when it's done
-    _hayleyfs_mkdir(mnt_userns, dir, dentry, mode)
+    let result = _hayleyfs_mkdir(mnt_userns, dir, dentry, mode);
+    match result {
+        Ok(_) => 0,
+        Err(e) => e.to_kernel_errno(),
+    }
 }
 
 // TODO: actual error handling
+// TODO: what does the dentry add token actually borrow from?
 #[no_mangle]
-fn _hayleyfs_mkdir(
+fn _hayleyfs_mkdir<'a>(
     mnt_userns: &mut user_namespace,
     dir: &mut inode,
-    dentry: &mut dentry,
+    dentry: &'a mut dentry,
     mode: umode_t,
-) -> i32 {
+) -> Result<DentryAddToken<'a>> {
+    pr_info!("---------------------------------------\n");
     pr_info!("creating a new directory!\n");
 
     let sb = dir.i_sb;
@@ -384,38 +277,35 @@ fn _hayleyfs_mkdir(
     let dentry_name = unsafe { CStr::from_char_ptr(dentry_name) };
     if dentry_name.len() > MAX_FILENAME_LEN {
         pr_info!("dentry name {:?} is too long", dentry_name);
-        return -(ENAMETOOLONG as c_int);
+        return Err(Error::ENAMETOOLONG);
     }
     unsafe { pr_info!("dentry name in mkdir: {:?}", dentry_name) };
 
     // TODO: handle out of inodes case
     let ino_token = hayleyfs_allocate_inode(&sbi).unwrap();
 
-    // TODO: add an init_inode function that uses the ino_token to
-    // initialize the new inode
-    let mut inode_init_token = hayleyfs_initialize_inode(&sbi, &ino_token).unwrap();
+    let mut inode_init_token = hayleyfs_initialize_inode(&sbi, &ino_token)?;
 
     // allocate a data page
     let data_alloc_token = hayleyfs_alloc_page(&sbi).unwrap();
     // set up the data page with dentries for the new directory
-    let dir_init_token = initialize_dir(
+    let (dir_init_token, page_add_token) = initialize_dir(
         &sbi,
-        &mut inode_init_token,
+        inode_init_token,
         dir.i_ino.try_into().unwrap(),
         data_alloc_token.page_no(),
-    )
-    .unwrap();
+    )?;
 
     // setting link count does not require any tokens BUT it produces
     // a token that is required to add a dentry to the parent
-    // TODO: right?
     let parent_link_token = inc_parent_links(&sbi, dir.i_ino.try_into().unwrap());
 
     // set up vfs inode
+    // TODO: what if this fails?
     let inode = hayleyfs_new_vfs_inode(
         sb,
         dir,
-        &inode_init_token,
+        &page_add_token,
         mnt_userns,
         mode,
         NewInodeType::Mkdir,
@@ -429,29 +319,19 @@ fn _hayleyfs_mkdir(
     let dentry_add_token = add_dentry_to_parent(
         &sbi,
         dir.i_ino.try_into().unwrap(),
-        &inode_init_token,
+        &page_add_token,
         &dir_init_token,
         &parent_link_token,
         dentry_name,
-    )
-    .unwrap();
+    )?;
 
-    // let mkdir_tokens = MkdirTokens::new(
-    //     ino_token,
-    //     data_alloc_token,
-    //     inode_init_token,
-    //     parent_link_token,
-    //     dir_init_token,
-    //     dentry_add_token,
-    // );
-
-    0
+    Ok(dentry_add_token)
 }
 
 fn hayleyfs_new_vfs_inode(
     sb: *mut super_block,
     dir: &inode,
-    ino: &InodeInitToken<'_>,
+    ino: &DirPageAddToken<'_>,
     mnt_userns: &mut user_namespace,
     mode: umode_t,
     new_type: NewInodeType,
