@@ -35,8 +35,8 @@ use kernel::bindings::{
     d_make_root, dax_device, dax_direct_access, file_system_type, fs_context,
     fs_context_operations, fs_dax_get_by_bdev, get_next_ino, get_tree_bdev, inc_nlink,
     init_user_ns, inode, inode_init_owner, kill_block_super, new_inode, pfn_t, register_filesystem,
-    set_nlink, super_block, super_operations, umode_t, unregister_filesystem, EINVAL, ENOMEM,
-    PAGE_SHIFT, S_IFDIR, S_IFMT,
+    set_nlink, super_block, super_operations, umode_t, unregister_filesystem, PAGE_SHIFT, S_IFDIR,
+    S_IFMT,
 };
 use kernel::c_types::{c_int, c_uint, c_ulong, c_void};
 use kernel::prelude::*;
@@ -82,7 +82,7 @@ static HayleyfsContextOps: fs_context_operations = fs_context_operations {
     ..c_default_struct!(fs_context_operations)
 };
 
-fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> core::result::Result<(), u32> {
+fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> Result<()> {
     // TODO: what happens if this isn't a dax dev?
 
     sbi.s_daxdev = unsafe { fs_dax_get_by_bdev((*sb).s_bdev, &mut sbi.s_dev_offset as *mut u64) };
@@ -91,7 +91,7 @@ fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> core::result:
     // TODO: what else do you have to check?
     if ptr::eq(sbi.s_daxdev, ptr::null_mut()) {
         pr_alert!("Bad DAX device\n");
-        Err(EINVAL)
+        Err(Error::EINVAL)
     } else {
         let mut virt_addr: *mut c_void = ptr::null_mut();
         let pfn: *mut pfn_t = ptr::null_mut();
@@ -109,7 +109,7 @@ fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> core::result:
         };
         if size <= 0 {
             pr_alert!("direct access failed\n");
-            Err(EINVAL)
+            Err(Error::EINVAL)
         } else {
             size *= (PAGE_SIZE as i64);
             sbi.pm_size = u64::try_from(size).unwrap(); // should never fail - size is always positive
@@ -128,7 +128,7 @@ fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> core::result:
     }
 }
 
-fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> core::result::Result<(), u32> {
+fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> Result<()> {
     // according to ramfs port, this is allocated the same as if we
     // used kzalloc with GFP_KERNEL
     let sbi = Box::<SbInfo>::try_new_zeroed();
@@ -144,7 +144,7 @@ fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> core::result
             unsafe { (*sb).s_fs_info = sbi_ptr };
             Ok(())
         }
-        Err(_) => Err(ENOMEM),
+        Err(_) => Err(Error::ENOMEM),
     }
 }
 
@@ -155,7 +155,7 @@ fn hayleyfs_set_up_super(sbi: &SbInfo) -> Result<SuperInitToken<'_>> {
     hsb.blocksize = u32::try_from(PAGE_SIZE).unwrap(); // TODO: handle this better
     hsb.magic = HAYLEYFS_MAGIC;
 
-    let token = unsafe { SuperInitToken::new(hsb) };
+    let token = SuperInitToken::new(hsb);
 
     Ok(token)
 }
@@ -163,56 +163,70 @@ fn hayleyfs_set_up_super(sbi: &SbInfo) -> Result<SuperInitToken<'_>> {
 // TODO: differentiate between remount and initalization, or at least make sure to wipe old stuff
 // every time the file system is mounted for now
 #[no_mangle]
-pub unsafe extern "C" fn hayleyfs_fill_super(sb: *mut super_block, fc: *mut fs_context) -> i32 {
-    pr_info!("mounting the file system!\n");
-    match hayleyfs_alloc_sbi(sb, fc) {
-        Ok(_) => {}
-        Err(e) => return -(e as c_int),
+pub unsafe extern "C" fn hayleyfs_fill_super(
+    sb_raw: *mut super_block,
+    fc_raw: *mut fs_context,
+) -> i32 {
+    let sb = unsafe { &mut *(sb_raw as *mut super_block) };
+    let fc = unsafe { &mut *(fc_raw as *mut fs_context) };
+
+    let result = _hayleyfs_fill_super(sb, fc);
+    match result {
+        Ok(_) => 0,
+        Err(e) => e.to_kernel_errno(),
     }
-    let sbi = hayleyfs_get_sbi(sb);
-    let res = hayleyfs_get_pm_info(sb, sbi);
+}
+
+#[no_mangle]
+fn _hayleyfs_fill_super<'a>(
+    sb: &'a mut super_block,
+    fc: &mut fs_context,
+) -> Result<(DirInitToken<'a>, DirPageAddToken<'a>)> {
+    pr_info!("mounting the file system!\n");
+    hayleyfs_alloc_sbi(sb, fc)?; // TODO: does this need to produce a token?
+                                 // what the heck is this function for
+
+    let mut sbi = hayleyfs_get_sbi(sb);
+    hayleyfs_get_pm_info(sb, sbi)?;
 
     sbi.mode = 0o755;
     sbi.uid = unsafe { hayleyfs_current_fsuid() };
     sbi.gid = unsafe { hayleyfs_current_fsgid() };
 
-    let super_token = hayleyfs_set_up_super(&sbi).unwrap();
+    let super_token = hayleyfs_set_up_super(&sbi)?;
 
-    let inode_alloc_token =
-        hayleyfs_allocate_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO, &super_token).unwrap();
+    let inode_alloc_token = hayleyfs_allocate_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO, &super_token)?;
 
-    let mut inode_init_token = hayleyfs_initialize_inode(&sbi, &inode_alloc_token).unwrap();
+    let mut inode_init_token = hayleyfs_initialize_inode(*sbi, &inode_alloc_token)?;
 
-    // this all happens in userspace and does not require tokens
+    // this all happens in volatile memory and does not require tokens
     // TODO: although might need to be careful dealing with visibility?
-    let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO);
+    let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO)?;
+    let mut root_i = unsafe { &mut *(root_i as *mut inode) };
     // TODO: convert into a bindgen inode rather than doing this unsafe stuff
-    match root_i {
-        Ok(root_i) => unsafe {
-            (*root_i).i_mode = S_IFDIR as u16; // TODO: u32 -> u16 is a fishy conversion
-            (*root_i).i_op = &HayleyfsDirInodeOps;
-            set_nlink(root_i, 2);
-            // TODO: what the heck is this bindgen thing? suggested by the compiler,
-            // won't compile without it
-            (*root_i).__bindgen_anon_3.i_fop = &HayleyfsFileOps;
-            (*sb).s_op = &HayleyfsSuperOps;
-            (*sb).s_root = d_make_root(root_i);
-        },
-        Err(_) => return -(EINVAL as c_int),
+
+    root_i.i_mode = S_IFDIR as u16;
+    root_i.i_op = &HayleyfsDirInodeOps;
+    set_nlink_safe(root_i, 2);
+
+    // TODO: hide in a function
+    unsafe {
+        root_i.__bindgen_anon_3.i_fop = &HayleyfsFileOps;
+        sb.s_op = &HayleyfsSuperOps;
+        sb.s_root = d_make_root(root_i);
     }
 
     // allocate a data page
-    let data_token = hayleyfs_alloc_page(&sbi).unwrap();
+    let data_token = hayleyfs_alloc_page(&sbi)?;
 
     let (dir_init_token, page_add_token) = initialize_dir(
         &sbi,
         inode_init_token,
         HAYLEYFS_ROOT_INO,
         data_token.page_no(),
-    )
-    .unwrap();
+    )?;
 
-    0
+    Ok((dir_init_token, page_add_token))
 }
 
 fn hayleyfs_get_super(sbi: &SbInfo) -> &'static mut HayleyfsSuperBlock {

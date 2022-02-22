@@ -170,7 +170,7 @@ pub(crate) fn hayleyfs_allocate_inode_by_ino(
 
     let cacheline = get_bitmap_cacheline(&mut bitmap, ino);
 
-    let token = unsafe { InodeAllocToken::new(ino, cacheline) };
+    let token = InodeAllocToken::new(ino, cacheline);
 
     Ok(token)
 }
@@ -178,7 +178,7 @@ pub(crate) fn hayleyfs_allocate_inode_by_ino(
 // TODO: should lifetime come from sbi or token?
 #[no_mangle]
 pub(crate) fn hayleyfs_initialize_inode<'a>(
-    sbi: &'a SbInfo,
+    sbi: SbInfo,
     token: &InodeAllocToken,
 ) -> Result<InodeInitToken<'a>> {
     // TODO: ideally these next few lines where we get the inode would be in a function that
@@ -284,7 +284,7 @@ fn _hayleyfs_mkdir<'a>(
     // TODO: handle out of inodes case
     let ino_token = hayleyfs_allocate_inode(&sbi).unwrap();
 
-    let mut inode_init_token = hayleyfs_initialize_inode(&sbi, &ino_token)?;
+    let mut inode_init_token = hayleyfs_initialize_inode(*sbi, &ino_token)?;
 
     // allocate a data page
     let data_alloc_token = hayleyfs_alloc_page(&sbi).unwrap();

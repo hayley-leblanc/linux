@@ -14,6 +14,19 @@ use kernel::prelude::*;
 // that store cache lines, tokens that store inodes, etc.) I don't THINK
 // we would get anything useful out of that right now, but it could be
 // useful in the future
+
+pub(crate) struct SuperInitToken<'a> {
+    hsb: &'a mut HayleyfsSuperBlock,
+}
+
+impl<'a> SuperInitToken<'a> {
+    pub(crate) fn new(hsb: &'a mut HayleyfsSuperBlock) -> Self {
+        pr_info!("Flushing super init token!\n");
+        clflush(hsb, size_of::<HayleyfsSuperBlock>(), false);
+        Self { hsb }
+    }
+}
+
 pub(crate) struct InodeAllocToken {
     ino: InodeNum,
     cache_line: *const CacheLine,
