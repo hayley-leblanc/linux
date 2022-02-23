@@ -4,6 +4,7 @@
 #include <linux/pfn_t.h>
 #include <linux/bitops.h>
 #include <linux/cred.h>
+#include <linux/fs_parser.h>
 
 void hayleyfs_fs_put_dax(struct dax_device *dax_dev) {
     fs_put_dax(dax_dev);
@@ -35,4 +36,12 @@ kuid_t hayleyfs_current_fsuid(void) {
 
 kgid_t hayleyfs_current_fsgid(void) {
     return current_fsgid();
+}
+
+int hayleyfs_fs_parse(struct fs_context *fc,
+		  const struct fs_parameter_spec *desc,
+		  struct fs_parameter *param,
+		  struct fs_parse_result *result)
+{
+	return fs_parse(fc, desc, param, result);
 }

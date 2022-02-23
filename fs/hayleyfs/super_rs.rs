@@ -33,12 +33,13 @@ use core::ptr;
 
 use kernel::bindings::{
     d_make_root, dax_device, dax_direct_access, file_system_type, fs_context,
-    fs_context_operations, fs_dax_get_by_bdev, get_next_ino, get_tree_bdev, inc_nlink,
+    fs_context_operations, fs_dax_get_by_bdev, fs_parameter, fs_parameter__bindgen_ty_1,
+    fs_parse_result, fs_parse_result__bindgen_ty_1, get_next_ino, get_tree_bdev, inc_nlink,
     init_user_ns, inode, inode_init_owner, kill_block_super, new_inode, pfn_t, register_filesystem,
-    set_nlink, super_block, super_operations, umode_t, unregister_filesystem, PAGE_SHIFT, S_IFDIR,
-    S_IFMT,
+    set_nlink, super_block, super_operations, umode_t, unregister_filesystem,
+    vfs_parse_fs_param_source, ENOPARAM, PAGE_SHIFT, S_IFDIR, S_IFMT,
 };
-use kernel::c_types::{c_int, c_uint, c_ulong, c_void};
+use kernel::c_types::{c_char, c_int, c_uint, c_ulong, c_void};
 use kernel::prelude::*;
 use kernel::{c_default_struct, c_str, PAGE_SIZE};
 
@@ -66,6 +67,7 @@ mod __anon__ {
 static mut HayleyfsFsType: file_system_type = file_system_type {
     name: c_str!("hayleyfs").as_char_ptr(),
     init_fs_context: Some(hayleyfs_init_fs_context),
+    parameters: hayleyfs_fs_parameters.as_ptr(),
     kill_sb: Some(kill_block_super),
     ..c_default_struct!(file_system_type)
 };
@@ -79,6 +81,7 @@ static HayleyfsSuperOps: super_operations = super_operations {
 #[no_mangle]
 static HayleyfsContextOps: fs_context_operations = fs_context_operations {
     get_tree: Some(hayleyfs_get_tree),
+    parse_param: Some(hayleyfs_parse_params),
     ..c_default_struct!(fs_context_operations)
 };
 
@@ -233,6 +236,45 @@ fn hayleyfs_get_super(sbi: &SbInfo) -> &'static mut HayleyfsSuperBlock {
     let hayleyfs_super: &mut HayleyfsSuperBlock =
         unsafe { &mut *(sbi.virt_addr as *mut HayleyfsSuperBlock) };
     hayleyfs_super
+}
+
+// TODO: lots of unsafe code here; make it nicer
+#[no_mangle]
+pub unsafe extern "C" fn hayleyfs_parse_params(
+    fc: *mut fs_context,
+    param: *mut fs_parameter,
+) -> i32 {
+    pr_info!("running hayleyfs parse params\n");
+    let sbi = hayleyfs_get_sbi_from_fc(fc);
+    // TODO: put this in a function
+    // this is using the bindgen version of fs_parse_result which is why
+    // it looks weird
+    let mut result = fs_parse_result {
+        negated: false,
+        __bindgen_anon_1: fs_parse_result__bindgen_ty_1 { uint_64: 0 },
+    };
+
+    let opt = unsafe { hayleyfs_fs_parse(fc, hayleyfs_fs_parameters.as_ptr(), param, &mut result) };
+
+    // TODO: opt is an i32. might be nice to convert things to rust enum, although it might
+    // fail on unrecognized opts
+    let opt_init = hayleyfs_param::Opt_init as c_int;
+    let opt_source = hayleyfs_param::Opt_source as c_int;
+    let enoparam = -(ENOPARAM as c_int);
+    match opt {
+        opt if opt == opt_init => {
+            pr_info!("OPT: init\n");
+        }
+        opt if opt == opt_source => {
+            pr_info!("OPT: source\n");
+            // TODO: handle errors
+            unsafe { vfs_parse_fs_param_source(fc, param) };
+        }
+        opt if opt == enoparam => pr_info!("enoparam\n"),
+        _ => pr_info!("Unrecognized opt\n"),
+    }
+
+    0
 }
 
 #[no_mangle]

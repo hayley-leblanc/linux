@@ -1,7 +1,10 @@
-use kernel::bindings::{dax_device, inode, kgid_t, kuid_t, set_nlink, super_block, umode_t};
+use kernel::bindings::{
+    dax_device, fs_context, fs_context_operations, fs_parameter, fs_parameter_spec, inode, kgid_t,
+    kuid_t, set_nlink, super_block, umode_t,
+};
 use kernel::c_types::c_void;
 use kernel::prelude::*;
-use kernel::PAGE_SIZE;
+use kernel::{c_default_struct, fsparam_flag, fsparam_string, PAGE_SIZE};
 
 use crate::data::*;
 use crate::defs::*;
@@ -9,12 +12,26 @@ use crate::inode_rs::*;
 use crate::pm::*;
 use core::mem::size_of;
 
+#[repr(C)]
+pub(crate) enum hayleyfs_param {
+    Opt_init,
+    Opt_source,
+}
+
+#[no_mangle]
+pub(crate) static hayleyfs_fs_parameters: [fs_parameter_spec; 3] = [
+    fsparam_string!("source", hayleyfs_param::Opt_source),
+    fsparam_flag!("init", hayleyfs_param::Opt_init),
+    c_default_struct!(fs_parameter_spec),
+];
+
 // TODO: packed?
+// TODO: order structs low to high
 #[repr(packed)]
 pub(crate) struct HayleyfsSuperBlock {
-    pub(crate) size: u64,
     pub(crate) blocksize: u32,
     pub(crate) magic: u32,
+    pub(crate) size: u64,
 }
 
 #[repr(C)]
@@ -49,6 +66,11 @@ pub(crate) fn get_bitmap_cacheline(bitmap: &mut PersistentBitmap, index: usize) 
 
 pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {
     let sbi: &mut SbInfo = unsafe { &mut *((*sb).s_fs_info as *mut SbInfo) };
+    sbi
+}
+
+pub(crate) fn hayleyfs_get_sbi_from_fc(fc: *mut fs_context) -> &'static mut SbInfo {
+    let sbi: &mut SbInfo = unsafe { &mut *((*fc).s_fs_info as *mut SbInfo) };
     sbi
 }
 
