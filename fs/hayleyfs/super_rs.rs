@@ -19,6 +19,7 @@ mod data;
 mod defs;
 mod inode_rs;
 mod pm;
+mod recovery;
 mod super_def;
 mod tokens;
 
@@ -26,6 +27,7 @@ use crate::data::*;
 use crate::defs::*;
 use crate::inode_rs::*;
 use crate::pm::*;
+use crate::recovery::*;
 use crate::super_def::*;
 use crate::tokens::*;
 use core::mem::size_of;
@@ -37,7 +39,7 @@ use kernel::bindings::{
     fs_parse_result, fs_parse_result__bindgen_ty_1, get_next_ino, get_tree_bdev, inc_nlink,
     init_user_ns, inode, inode_init_owner, kill_block_super, new_inode, pfn_t, register_filesystem,
     set_nlink, super_block, super_operations, umode_t, unregister_filesystem,
-    vfs_parse_fs_param_source, ENOPARAM, PAGE_SHIFT, S_IFDIR, S_IFMT,
+    vfs_parse_fs_param_source, ENOMEM, ENOPARAM, PAGE_SHIFT, S_IFDIR, S_IFMT,
 };
 use kernel::c_types::{c_char, c_int, c_uint, c_ulong, c_void};
 use kernel::prelude::*;
@@ -131,21 +133,21 @@ fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> Result<()> {
     }
 }
 
-fn hayleyfs_alloc_sbi(sb: *mut super_block, fc: *mut fs_context) -> Result<()> {
+fn hayleyfs_alloc_sbi(fc: *mut fs_context, sb: *mut super_block) -> Result<*mut c_void> {
     // according to ramfs port, this is allocated the same as if we
     // used kzalloc with GFP_KERNEL
     let sbi = Box::<SbInfo>::try_new_zeroed();
 
-    // TODO: need to set stuff here or this won't get mounted
     match sbi {
         Ok(sbi) => {
             let mut sbi = unsafe { sbi.assume_init() };
             sbi.s_dev_offset = 0; // TODO: what should this be?
-            sbi.sb = sb;
-            let sbi_ptr = Box::into_raw(sbi) as *mut c_void; // this seems wrong but it works
+            sbi.mount_opts = HayleyfsMountOpts::default();
+
+            let sbi_ptr = Box::into_raw(sbi) as *mut c_void;
             unsafe { (*fc).s_fs_info = sbi_ptr };
             unsafe { (*sb).s_fs_info = sbi_ptr };
-            Ok(())
+            Ok(sbi_ptr)
         }
         Err(_) => Err(Error::ENOMEM),
     }
@@ -181,29 +183,47 @@ pub unsafe extern "C" fn hayleyfs_fill_super(
 }
 
 #[no_mangle]
-fn _hayleyfs_fill_super<'a>(
-    sb: &'a mut super_block,
-    fc: &mut fs_context,
-) -> Result<(DirInitToken<'a>, DirPageAddToken<'a>)> {
+fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()> {
+    // fn _hayleyfs_fill_super<'a>(sb: &'a mut super_block, fc: &mut fs_context) -> Result<()> {
+    // ) -> Result<(DirInitToken<'a>, DirPageAddToken<'a>)> {
     pr_info!("mounting the file system!\n");
-    hayleyfs_alloc_sbi(sb, fc)?; // TODO: does this need to produce a token?
-                                 // what the heck is this function for
+    hayleyfs_alloc_sbi(fc, sb)?;
 
     let mut sbi = hayleyfs_get_sbi(sb);
+    sbi.mount_opts = unsafe { *((*fc).fs_private as *mut HayleyfsMountOpts) }; // TODO: abstraction
     hayleyfs_get_pm_info(sb, sbi)?;
 
     sbi.mode = 0o755;
     sbi.uid = unsafe { hayleyfs_current_fsuid() };
     sbi.gid = unsafe { hayleyfs_current_fsgid() };
 
-    let super_token = hayleyfs_set_up_super(&sbi)?;
+    if sbi.mount_opts.init {
+        // TODO: move this into its own function that returns the required tokens
+        let super_token = hayleyfs_set_up_super(&sbi)?;
 
-    let inode_alloc_token = hayleyfs_allocate_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO, &super_token)?;
+        let inode_alloc_token =
+            hayleyfs_allocate_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO, &super_token)?;
 
-    let mut inode_init_token = hayleyfs_initialize_inode(*sbi, &inode_alloc_token)?;
+        let mut inode_init_token = hayleyfs_initialize_inode(*sbi, &inode_alloc_token)?;
 
-    // this all happens in volatile memory and does not require tokens
-    // TODO: although might need to be careful dealing with visibility?
+        // allocate a data page
+        let data_token = hayleyfs_alloc_page(&sbi)?;
+
+        let (dir_init_token, page_add_token) = initialize_dir(
+            &sbi,
+            inode_init_token,
+            HAYLEYFS_ROOT_INO,
+            data_token.page_no(),
+        )?;
+    } else {
+        // we are recovering and should do some kind of scan to see the state of the system
+        // FOR NOW although soft updates is implemented for mount, let's assume crashes
+        // only happen after mount has completed
+        hayleyfs_recovery(&mut sbi)?;
+    }
+
+    // everything else happens regardless of whether we are initializing or not
+
     let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO)?;
     let mut root_i = unsafe { &mut *(root_i as *mut inode) };
     // TODO: convert into a bindgen inode rather than doing this unsafe stuff
@@ -219,17 +239,9 @@ fn _hayleyfs_fill_super<'a>(
         sb.s_root = d_make_root(root_i);
     }
 
-    // allocate a data page
-    let data_token = hayleyfs_alloc_page(&sbi)?;
-
-    let (dir_init_token, page_add_token) = initialize_dir(
-        &sbi,
-        inode_init_token,
-        HAYLEYFS_ROOT_INO,
-        data_token.page_no(),
-    )?;
-
-    Ok((dir_init_token, page_add_token))
+    // TODO: enforce token requirements
+    // Ok((dir_init_token, page_add_token))
+    Ok(())
 }
 
 fn hayleyfs_get_super(sbi: &SbInfo) -> &'static mut HayleyfsSuperBlock {
@@ -244,8 +256,6 @@ pub unsafe extern "C" fn hayleyfs_parse_params(
     fc: *mut fs_context,
     param: *mut fs_parameter,
 ) -> i32 {
-    pr_info!("running hayleyfs parse params\n");
-    let sbi = hayleyfs_get_sbi_from_fc(fc);
     // TODO: put this in a function
     // this is using the bindgen version of fs_parse_result which is why
     // it looks weird
@@ -256,19 +266,23 @@ pub unsafe extern "C" fn hayleyfs_parse_params(
 
     let opt = unsafe { hayleyfs_fs_parse(fc, hayleyfs_fs_parameters.as_ptr(), param, &mut result) };
 
-    // TODO: opt is an i32. might be nice to convert things to rust enum, although it might
-    // fail on unrecognized opts
     let opt_init = hayleyfs_param::Opt_init as c_int;
     let opt_source = hayleyfs_param::Opt_source as c_int;
     let enoparam = -(ENOPARAM as c_int);
     match opt {
         opt if opt == opt_init => {
-            pr_info!("OPT: init\n");
+            // let mut sbi = hayleyfs_get_sbi_from_fc(fc);
+            let mut mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
+            mount_opts.init = true;
+            pr_info!("opt init done\n");
         }
         opt if opt == opt_source => {
-            pr_info!("OPT: source\n");
-            // TODO: handle errors
-            unsafe { vfs_parse_fs_param_source(fc, param) };
+            pr_info!("opt source\n");
+            let result = unsafe { vfs_parse_fs_param_source(fc, param) };
+            if result < 0 {
+                return result;
+            }
+            pr_info!("opt source done\n");
         }
         opt if opt == enoparam => pr_info!("enoparam\n"),
         _ => pr_info!("Unrecognized opt\n"),
@@ -296,12 +310,22 @@ pub unsafe extern "C" fn hayleyfs_get_tree(fc: *mut fs_context) -> i32 {
 
 #[no_mangle]
 pub unsafe extern "C" fn hayleyfs_init_fs_context(fc: *mut fs_context) -> c_int {
-    // TODO: handle parameters
-
-    unsafe {
-        (*fc).ops = &HayleyfsContextOps;
+    // pr_info!("init fs context, alloc sbi\n");
+    // pr_info!("{:p}\n", fc);
+    // hayleyfs_alloc_sbi(fc); // TODO: handle errors
+    let mount_opts = Box::<HayleyfsMountOpts>::try_new_zeroed();
+    match mount_opts {
+        Ok(mount_opts) => {
+            let mut mount_opts = unsafe { mount_opts.assume_init() };
+            let opts_ptr = Box::into_raw(mount_opts) as *mut c_void;
+            unsafe {
+                (*fc).ops = &HayleyfsContextOps;
+                (*fc).fs_private = opts_ptr;
+            }
+            0
+        }
+        Err(_) => -(ENOMEM as c_int),
     }
-    0
 }
 
 // extra attributes here replicate the __init macro

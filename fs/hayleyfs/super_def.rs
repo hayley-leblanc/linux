@@ -35,6 +35,12 @@ pub(crate) struct HayleyfsSuperBlock {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Default, Debug)]
+pub(crate) struct HayleyfsMountOpts {
+    pub(crate) init: bool,
+}
+
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub(crate) struct SbInfo {
     pub(crate) sb: *mut super_block, // raw pointer to the VFS super block
@@ -46,6 +52,7 @@ pub(crate) struct SbInfo {
     pub(crate) uid: kuid_t,
     pub(crate) gid: kgid_t,
     pub(crate) mode: umode_t,
+    pub(crate) mount_opts: HayleyfsMountOpts,
 }
 
 // TODO: do CacheLine and PersistentBitmap have to be packed?
