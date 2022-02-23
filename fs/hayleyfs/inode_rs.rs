@@ -43,8 +43,10 @@ enum NewInodeType {
 
 // inode that lives in PM
 // TODO: should this actually be packed?
+// TODO: organize this better
 // #[repr(packed)]
 pub(crate) struct HayleyfsInode {
+    valid: bool,
     ino: InodeNum,
     data0: Option<PmPage>,
     mode: u32,
@@ -64,6 +66,7 @@ impl HayleyfsInode {
         link_count: u16,
         _: &InodeAllocToken,
     ) {
+        self.valid = false;
         self.ino = ino;
         self.data0 = data;
         self.mode = mode;
@@ -87,15 +90,23 @@ impl HayleyfsInode {
     pub(crate) fn inc_links(&mut self) {
         self.link_count += 1;
     }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        self.valid
+    }
+
+    // unsafe because only tokens should set the valid bit. user should not
+    // do this directly
+    pub(crate) unsafe fn set_valid(&mut self, v: bool) {
+        self.valid = v;
+    }
 }
 
-// TODO: figure out if you actually need this
-pub(crate) unsafe fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut HayleyfsInode {
+pub(crate) fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut HayleyfsInode {
     let addr = (PAGE_SIZE * 2) + (ino * size_of::<HayleyfsInode>());
     // TODO: check that this address does not exceed the inode page
     // TODO: handle possible panic on converting usize to isize here
     let addr = sbi.virt_addr as usize + addr;
-    // unsafe { &mut *(addr as *mut HayleyfsInode) }
     unsafe { &mut *(addr as *mut HayleyfsInode) }
 }
 
@@ -104,7 +115,7 @@ fn get_inode_bitmap_addr(sbi: &SbInfo) -> *mut c_void {
     (sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE)) as *mut c_void
 }
 
-fn get_inode_bitmap(sbi: &SbInfo) -> &mut PersistentBitmap {
+pub(crate) fn get_inode_bitmap(sbi: &SbInfo) -> &mut PersistentBitmap {
     unsafe {
         &mut *((sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE)) as *mut PersistentBitmap)
     }
@@ -206,7 +217,7 @@ fn inc_parent_links(sbi: &SbInfo, parent_ino: InodeNum) -> ParentLinkToken<'_> {
     // 1. obtain the parent inode
     // 2. increment link count
     // 3. return it in a parent link token
-    let mut parent_dir = unsafe { hayleyfs_get_inode_by_ino(&sbi, parent_ino) };
+    let mut parent_dir = hayleyfs_get_inode_by_ino(&sbi, parent_ino);
     unsafe { parent_dir.inc_links() };
 
     let link_token = unsafe { ParentLinkToken::new(parent_dir) };
@@ -378,7 +389,7 @@ unsafe extern "C" fn hayleyfs_lookup(
     let sbi = hayleyfs_get_sbi(sb);
 
     // look up the parent's inode so that we can look at its directory entries
-    let parent_pi = unsafe { hayleyfs_get_inode_by_ino(sbi, dir.i_ino.try_into().unwrap()) };
+    let parent_pi = hayleyfs_get_inode_by_ino(sbi, dir.i_ino.try_into().unwrap());
     // TODO: check that this is actually a directory
 
     match parent_pi.get_data_page_no() {

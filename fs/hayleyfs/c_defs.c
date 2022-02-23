@@ -22,6 +22,9 @@ unsigned long hayleyfs_find_next_zero_bit(const unsigned long *addr, unsigned lo
     return find_next_zero_bit_le(addr, size, offset);
 }
 
+int hayleyfs_test_bit(int nr, const void *addr) {
+    return test_bit_le(nr, addr);
+}
 bool hayleyfs_dir_emit(struct dir_context* ctx, const char *name, int namelen, u64 ino, unsigned type) {
     return dir_emit(ctx, name, namelen, ino, type);   
 }

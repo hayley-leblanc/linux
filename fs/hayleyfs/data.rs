@@ -119,7 +119,7 @@ fn get_data_bitmap_addr(sbi: &SbInfo) -> *mut c_void {
     (sbi.virt_addr as usize + (DATA_BITMAP_PAGE * PAGE_SIZE)) as *mut c_void
 }
 
-fn get_data_bitmap(sbi: &SbInfo) -> &mut PersistentBitmap {
+pub(crate) fn get_data_bitmap(sbi: &SbInfo) -> &mut PersistentBitmap {
     unsafe {
         &mut *((sbi.virt_addr as usize + (DATA_BITMAP_PAGE * PAGE_SIZE)) as *mut PersistentBitmap)
     }
@@ -265,7 +265,7 @@ unsafe extern "C" fn hayleyfs_readdir(file: *mut file, ctx_raw: *mut dir_context
     let inode = unsafe { &mut *(hayleyfs_file_inode(file) as *mut inode) };
     let sb = unsafe { (*inode).i_sb };
     let sbi = hayleyfs_get_sbi(sb);
-    let pi = unsafe { hayleyfs_get_inode_by_ino(&sbi, inode.i_ino.try_into().unwrap()) };
+    let pi = hayleyfs_get_inode_by_ino(&sbi, inode.i_ino.try_into().unwrap());
     let ctx = unsafe { &mut *(ctx_raw as *mut dir_context) };
 
     if ctx.pos == READDIR_END {

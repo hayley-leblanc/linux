@@ -57,6 +57,8 @@ impl<'a> InodeInitToken<'a> {
     pub(crate) fn new(inode: &'a mut HayleyfsInode) -> Self {
         pr_info!("flushing inode init token!\n");
         clflush(inode, size_of::<HayleyfsInode>(), true);
+        unsafe { inode.set_valid(true) };
+        clflush(inode, CACHELINE_SIZE, true); // TODO: does this need a fence?
         Self { inode }
     }
 
