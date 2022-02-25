@@ -59,16 +59,31 @@ pub(crate) struct SbInfo {
 // p sure Rust makes arrays contiguous so they shouldn't need to be
 // compiler warning indicates making them packed could have weird consequences
 pub(crate) struct CacheLine {
-    pub(crate) bits: [u64; 8],
+    pub(crate) bits: [u64; 64],
+}
+
+impl CacheLine {
+    pub(crate) fn set_at_offset(&mut self, offset: usize) {
+        // TODO: return error if offset is not less than 512
+        unsafe { hayleyfs_set_bit(offset, self as *mut _ as *mut c_void) };
+    }
 }
 
 pub(crate) struct PersistentBitmap {
     pub(crate) bits: [CacheLine; PAGE_SIZE / CACHELINE_SIZE],
 }
 
-pub(crate) fn get_bitmap_cacheline(bitmap: &mut PersistentBitmap, index: usize) -> *mut CacheLine {
-    let cacheline_num = index >> 6;
-    &mut bitmap.bits[cacheline_num] as *mut _ as *mut CacheLine
+impl PersistentBitmap {
+    pub(crate) fn get_bitmap_cacheline(&mut self, index: usize) -> &mut CacheLine {
+        // each cache line has 64 bytes * 8 bits = 512 slots
+        // 2^9 = 512
+        let cacheline_num = index >> 9;
+        &mut self.bits[cacheline_num]
+    }
+
+    pub(crate) fn get_cacheline_by_index(&mut self, index: usize) -> &mut CacheLine {
+        &mut self.bits[index]
+    }
 }
 
 pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {

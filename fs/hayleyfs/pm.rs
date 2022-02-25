@@ -9,7 +9,7 @@ use kernel::prelude::*;
 /// Taken from Corundum
 /// Flushes cache line back to memory
 pub(crate) fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
-    #[cfg(not(feature = "no_persist"))]
+    // #[cfg(not(feature = "no_persist"))]
     {
         let ptr = ptr as *const u8 as *mut u8;
         let mut start = ptr as usize;

@@ -50,6 +50,18 @@ impl DirPage {
         }
         Err(Error::ENOENT)
     }
+
+    // TODO: this should use a set, not a vec
+    // could maybe use kernel's rb tree implementation?
+    pub(crate) fn get_inos(&self) -> Vec<InodeNum> {
+        let mut inos = Vec::<InodeNum>::new();
+        for dentry in self.dentries.iter() {
+            if dentry.is_valid() {
+                inos.try_push(dentry.get_ino());
+            }
+        }
+        inos
+    }
 }
 
 #[no_mangle]
@@ -165,7 +177,7 @@ pub(crate) fn hayleyfs_alloc_page(sbi: &SbInfo) -> Result<DataAllocToken> {
     // TODO: like in inode, this is redundant. take care of it
     let mut bitmap = get_data_bitmap(&sbi);
     unsafe { hayleyfs_set_bit(page_no, bitmap as *mut _ as *mut c_void) };
-    let cacheline = get_bitmap_cacheline(&mut bitmap, page_no);
+    let cacheline = bitmap.get_bitmap_cacheline(page_no);
 
     let token = DataAllocToken::new(page_no, cacheline);
 
@@ -176,12 +188,12 @@ pub(crate) fn hayleyfs_alloc_page(sbi: &SbInfo) -> Result<DataAllocToken> {
 /// data pages
 #[no_mangle]
 pub(crate) fn initialize_dir<'a>(
-    sbi: &SbInfo,
+    sbi: &'a SbInfo,
     ino_token: InodeInitToken<'a>,
     parent_ino: InodeNum,
     page_no: PmPage,
 ) -> Result<(DirInitToken<'a>, DirPageAddToken<'a>)> {
-    let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
+    let dir_page = get_dir_page(*sbi, page_no);
 
     // TODO: confirm that split_at_mut is just an ownership/mutability thing
     // and doesn't make copies
@@ -243,8 +255,8 @@ pub(crate) fn add_dentry_to_parent<'a>(
     match parent_dir.get_data_page_no() {
         Some(page_no) => {
             // TODO: safe abstraction for this
-            let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
-
+            // let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) };
+            let dir_page = get_dir_page(*sbi, page_no);
             let dentry = dir_page.get_next_invalid_dentry().unwrap();
             dentry.set_ino(inode_token.get_ino());
             dentry.set_dentry_name(name.to_str().unwrap());
@@ -276,7 +288,8 @@ unsafe extern "C" fn hayleyfs_readdir(file: *mut file, ctx_raw: *mut dir_context
         Some(page) => {
             // iterate over the dentries in the file and feed them to dir_emit
             // right now there can only be one page of directory entries
-            let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page) as *mut DirPage) };
+            // let dir_page = unsafe { &mut *(get_data_page_addr(sbi, page) as *mut DirPage) };
+            let dir_page = get_dir_page(*sbi, page);
             // TODO: none of this should work but since it does i'm not going to touch it for now
             // but it should be adjusted to use the safe interface to dentries
             for i in 0..DENTRIES_PER_PAGE {
@@ -307,4 +320,10 @@ unsafe extern "C" fn hayleyfs_readdir(file: *mut file, ctx_raw: *mut dir_context
         }
         None => -(ENOTDIR as c_int),
     }
+}
+
+// TODO: lifetime?
+// TODO: should have some checks to make sure it's actually a directory page
+pub(crate) fn get_dir_page(sbi: SbInfo, page_no: PmPage) -> &'static mut DirPage {
+    unsafe { &mut *(get_data_page_addr(&sbi, page_no) as *mut DirPage) }
 }

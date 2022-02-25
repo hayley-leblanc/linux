@@ -57,8 +57,8 @@ impl<'a> InodeInitToken<'a> {
     pub(crate) fn new(inode: &'a mut HayleyfsInode) -> Self {
         pr_info!("flushing inode init token!\n");
         clflush(inode, size_of::<HayleyfsInode>(), true);
-        unsafe { inode.set_valid(true) };
-        clflush(inode, CACHELINE_SIZE, true); // TODO: does this need a fence?
+        // unsafe { inode.set_valid(true) };
+        // clflush(inode, CACHELINE_SIZE, true); // TODO: does this need a fence?
         Self { inode }
     }
 
@@ -168,16 +168,50 @@ impl<'a> DirPageAddToken<'a> {
 
 // differs from dentry add token because this only provides an immutable
 // reference to the dentry and does not flush on drop
+// TODO: do you need this?
 pub(crate) struct DentryReadToken<'a> {
     dentry: &'a HayleyfsDentry,
 }
 
 impl<'a> DentryReadToken<'a> {
-    pub(crate) unsafe fn new(d: &'a HayleyfsDentry) -> Self {
+    pub(crate) fn new(d: &'a HayleyfsDentry) -> Self {
         Self { dentry: d }
     }
 
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.dentry.get_ino()
+    }
+}
+
+pub(crate) struct InodeZeroToken<'a> {
+    inode: &'a HayleyfsInode,
+}
+
+impl<'a> InodeZeroToken<'a> {
+    pub(crate) fn new(inode: &'a HayleyfsInode) -> Self {
+        pr_info!("flushing inode zero token\n");
+        clflush(inode, size_of::<HayleyfsInode>(), true);
+        Self { inode }
+    }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.inode.get_ino()
+    }
+}
+
+pub(crate) struct BitmapToken<'a> {
+    bitmap: &'a PersistentBitmap,
+}
+
+impl<'a> BitmapToken<'a> {
+    pub(crate) fn new(bitmap: &'a mut PersistentBitmap, modified_cache_lines: Vec<usize>) -> Self {
+        // modified cache lines should be a vector of indexes into the bitmap
+        // indicating which cache lines have been modified
+        for cl in modified_cache_lines {
+            let cacheline = bitmap.get_cacheline_by_index(cl);
+            clflush(cacheline, CACHELINE_SIZE, false);
+        }
+        sfence();
+        Self { bitmap }
     }
 }

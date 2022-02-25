@@ -46,7 +46,7 @@ enum NewInodeType {
 // TODO: organize this better
 // #[repr(packed)]
 pub(crate) struct HayleyfsInode {
-    valid: bool,
+    // valid: bool,
     ino: InodeNum,
     data0: Option<PmPage>,
     mode: u32,
@@ -58,6 +58,7 @@ impl HayleyfsInode {
 
     /// unsafe because we should only modify the inode directly in specific circumstances
     /// TODO: should take an inode alloc token
+    /// TODO: this could be safe if it returns an inode init token?
     pub(crate) unsafe fn set_up_inode(
         &mut self,
         ino: InodeNum,
@@ -66,19 +67,25 @@ impl HayleyfsInode {
         link_count: u16,
         _: &InodeAllocToken,
     ) {
-        self.valid = false;
+        // self.valid = false;
         self.ino = ino;
         self.data0 = data;
         self.mode = mode;
         self.link_count = link_count;
     }
 
+    pub(crate) fn zero_inode(&mut self) -> InodeZeroToken<'_> {
+        self.ino = 0;
+        self.data0 = None;
+        self.mode = 0;
+        self.link_count = 0;
+        InodeZeroToken::new(self)
+    }
+
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.ino
     }
 
-    // TODO: double check that the page number can't be modified
-    // after being returned here. it shouldn't but double check
     pub(crate) fn get_data_page_no(&self) -> Option<PmPage> {
         self.data0
     }
@@ -91,15 +98,19 @@ impl HayleyfsInode {
         self.link_count += 1;
     }
 
-    pub(crate) fn is_valid(&self) -> bool {
-        self.valid
+    pub(crate) fn get_mode(&self) -> u32 {
+        self.mode
     }
 
-    // unsafe because only tokens should set the valid bit. user should not
-    // do this directly
-    pub(crate) unsafe fn set_valid(&mut self, v: bool) {
-        self.valid = v;
-    }
+    // pub(crate) fn is_valid(&self) -> bool {
+    //     self.valid
+    // }
+
+    // // unsafe because only tokens should set the valid bit. user should not
+    // // do this directly
+    // pub(crate) unsafe fn set_valid(&mut self, v: bool) {
+    //     self.valid = v;
+    // }
 }
 
 pub(crate) fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut HayleyfsInode {
@@ -152,7 +163,7 @@ fn hayleyfs_allocate_inode(sbi: &SbInfo) -> Result<InodeAllocToken> {
     // TODO: this doesn't work without the double cast - why though?
     // TODO: safe abstraction around this - maybe one that produces the inode alloc token for you
     unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
-    let cacheline = get_bitmap_cacheline(&mut bitmap, ino);
+    let cacheline = bitmap.get_bitmap_cacheline(ino);
 
     let token = InodeAllocToken::new(ino, cacheline);
 
@@ -179,7 +190,7 @@ pub(crate) fn hayleyfs_allocate_inode_by_ino(
         return Err(Error::EEXIST);
     }
 
-    let cacheline = get_bitmap_cacheline(&mut bitmap, ino);
+    let cacheline = bitmap.get_bitmap_cacheline(ino);
 
     let token = InodeAllocToken::new(ino, cacheline);
 
@@ -269,7 +280,8 @@ unsafe extern "C" fn hayleyfs_mkdir(
     }
 }
 
-// TODO: actual error handling
+// TODO: actual error handling - you'll need to roll back changes
+// if something goes wrong?
 // TODO: what does the dentry add token actually borrow from?
 #[no_mangle]
 fn _hayleyfs_mkdir<'a>(
@@ -296,6 +308,8 @@ fn _hayleyfs_mkdir<'a>(
     let ino_token = hayleyfs_allocate_inode(&sbi).unwrap();
 
     let mut inode_init_token = hayleyfs_initialize_inode(*sbi, &ino_token)?;
+
+    return Err(Error::EINVAL);
 
     // allocate a data page
     let data_alloc_token = hayleyfs_alloc_page(&sbi).unwrap();
