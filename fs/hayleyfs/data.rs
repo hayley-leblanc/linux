@@ -213,7 +213,15 @@ pub(crate) fn initialize_dir<'a>(
 
     let init_token = DirInitToken::new(self_dentry, parent_dentry);
 
+    if sbi.mount_opts.crash_point == 4 {
+        return Err(Error::EINVAL);
+    }
+
     let page_token = ino_token.add_data_page(page_no, &init_token);
+
+    if sbi.mount_opts.crash_point == 5 {
+        return Err(Error::EINVAL);
+    }
 
     Ok((init_token, page_token))
 }

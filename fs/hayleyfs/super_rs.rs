@@ -266,12 +266,16 @@ pub unsafe extern "C" fn hayleyfs_parse_params(
 
     let opt = unsafe { hayleyfs_fs_parse(fc, hayleyfs_fs_parameters.as_ptr(), param, &mut result) };
 
+    // TODO: there's probably a macro or function that will do this for you
     let opt_init = hayleyfs_param::Opt_init as c_int;
     let opt_source = hayleyfs_param::Opt_source as c_int;
+    let opt_crash = hayleyfs_param::Opt_crash as c_int;
     let enoparam = -(ENOPARAM as c_int);
+
     match opt {
         opt if opt == opt_init => {
             // let mut sbi = hayleyfs_get_sbi_from_fc(fc);
+            // TODO: safe abstraction around this
             let mut mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
             mount_opts.init = true;
             pr_info!("opt init done\n");
@@ -283,6 +287,13 @@ pub unsafe extern "C" fn hayleyfs_parse_params(
                 return result;
             }
             pr_info!("opt source done\n");
+        }
+        opt if opt == opt_crash => {
+            pr_info!("opt crash\n");
+            // TODO: safe abstraction around this
+            let mut mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
+            mount_opts.crash_point = unsafe { result.__bindgen_anon_1.uint_32 };
+            pr_info!("crash point: {:?}\n", mount_opts.crash_point);
         }
         opt if opt == enoparam => pr_info!("enoparam\n"),
         _ => pr_info!("Unrecognized opt\n"),

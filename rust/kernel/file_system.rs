@@ -73,3 +73,17 @@ macro_rules! fsparam_string {
         )
     };
 }
+
+/// Corresponds to the fsparam_string macro in C
+#[macro_export]
+macro_rules! fsparam_u32 {
+    ($name:literal, $opt:expr) => {
+        $crate::__fsparam!(
+            Some(::kernel::bindings::fs_param_is_u32), // type
+            ::kernel::c_str!($name).as_char_ptr(),     // name
+            $opt as _,                                 // opt
+            0,                                         // flags
+            0 as _                                     // data -> TODO: should be NULL
+        )
+    };
+}

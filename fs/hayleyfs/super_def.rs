@@ -4,7 +4,7 @@ use kernel::bindings::{
 };
 use kernel::c_types::c_void;
 use kernel::prelude::*;
-use kernel::{c_default_struct, fsparam_flag, fsparam_string, PAGE_SIZE};
+use kernel::{c_default_struct, fsparam_flag, fsparam_string, fsparam_u32, PAGE_SIZE};
 
 use crate::data::*;
 use crate::defs::*;
@@ -13,15 +13,18 @@ use crate::pm::*;
 use core::mem::size_of;
 
 #[repr(C)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum hayleyfs_param {
-    Opt_init,
-    Opt_source,
+    Opt_init,   // flag to indicate whether to initialize the FS or remount existing system
+    Opt_source, // flag indicating source device to mount on
+    Opt_crash, // flag for testing remount/recovery; tells us a point to inject a crash (by returning an error early)
 }
 
 #[no_mangle]
-pub(crate) static hayleyfs_fs_parameters: [fs_parameter_spec; 3] = [
+pub(crate) static hayleyfs_fs_parameters: [fs_parameter_spec; 4] = [
     fsparam_string!("source", hayleyfs_param::Opt_source),
     fsparam_flag!("init", hayleyfs_param::Opt_init),
+    fsparam_u32!("crash", hayleyfs_param::Opt_crash),
     c_default_struct!(fs_parameter_spec),
 ];
 
@@ -38,6 +41,7 @@ pub(crate) struct HayleyfsSuperBlock {
 #[derive(Copy, Clone, Default, Debug)]
 pub(crate) struct HayleyfsMountOpts {
     pub(crate) init: bool,
+    pub(crate) crash_point: u32,
 }
 
 #[repr(C)]

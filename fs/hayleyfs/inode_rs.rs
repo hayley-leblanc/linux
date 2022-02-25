@@ -282,7 +282,9 @@ unsafe extern "C" fn hayleyfs_mkdir(
 
 // TODO: actual error handling - you'll need to roll back changes
 // if something goes wrong?
-// TODO: what does the dentry add token actually borrow from?
+// TODO: you need to test this, in both this implementation and other possible ones
+// (e.g., changing the ordering of operations that aren't dependent on each other)
+// how could you do that systematically?
 #[no_mangle]
 fn _hayleyfs_mkdir<'a>(
     mnt_userns: &mut user_namespace,
@@ -307,12 +309,23 @@ fn _hayleyfs_mkdir<'a>(
     // TODO: handle out of inodes case
     let ino_token = hayleyfs_allocate_inode(&sbi).unwrap();
 
+    if sbi.mount_opts.crash_point == 1 {
+        return Err(Error::EINVAL);
+    }
+
     let mut inode_init_token = hayleyfs_initialize_inode(*sbi, &ino_token)?;
 
-    return Err(Error::EINVAL);
+    if sbi.mount_opts.crash_point == 2 {
+        return Err(Error::EINVAL);
+    }
 
     // allocate a data page
     let data_alloc_token = hayleyfs_alloc_page(&sbi).unwrap();
+
+    if sbi.mount_opts.crash_point == 3 {
+        return Err(Error::EINVAL);
+    }
+
     // set up the data page with dentries for the new directory
     let (dir_init_token, page_add_token) = initialize_dir(
         &sbi,
@@ -324,6 +337,10 @@ fn _hayleyfs_mkdir<'a>(
     // setting link count does not require any tokens BUT it produces
     // a token that is required to add a dentry to the parent
     let parent_link_token = inc_parent_links(&sbi, dir.i_ino.try_into().unwrap());
+
+    if sbi.mount_opts.crash_point == 6 {
+        return Err(Error::EINVAL);
+    }
 
     // set up vfs inode
     // TODO: what if this fails?
@@ -349,6 +366,10 @@ fn _hayleyfs_mkdir<'a>(
         &parent_link_token,
         dentry_name,
     )?;
+
+    if sbi.mount_opts.crash_point == 7 {
+        return Err(Error::EINVAL);
+    }
 
     Ok(dentry_add_token)
 }

@@ -44,7 +44,6 @@ pub(crate) fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
         }
     }
     if fence {
-        pr_info!("fence\n");
         sfence();
     }
 }
@@ -52,8 +51,8 @@ pub(crate) fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
 /// Store fence (from Corundum)
 // #[inline(always)]
 pub(crate) fn sfence() {
-    #[cfg(any(feature = "use_clwb", feature = "use_clflushopt"))]
+    pr_info!("fence\n");
     unsafe {
-        _mm_sfence();
+        asm!("sfence");
     }
 }
