@@ -13,11 +13,18 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
     // are expected to be in use.
     // TODO: store in a structure other than a vector - in memory set would
     // be easiest from programming perspective. Not sure what would be fastest
+    // TODO: right now we look up the same inodes more than once. should
+    // look them up ONCE, store the relevant information in memory, and use
+    // DRAM structures to organize them for fast access
+    // TODO: right now this only works with directories. when we can create files,
+    // need to handle that differently
 
     let mut inuse_inos = Vec::<InodeNum>::new();
     let mut inuse_pages = Vec::<PmPage>::new();
     let mut valid_inos = Vec::<InodeNum>::new();
     let mut invalid_inos = Vec::<InodeNum>::new();
+    let mut valid_pages = Vec::<PmPage>::new();
+    let mut invalid_pages = Vec::<PmPage>::new();
 
     let inode_bitmap = get_inode_bitmap(&sbi) as *mut _ as *mut c_void;
     let data_bitmap = get_data_bitmap(&sbi) as *mut _ as *mut c_void;
@@ -47,6 +54,10 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
         let pi = hayleyfs_get_inode_by_ino(&sbi, *ino);
         if pi.get_mode() & S_IFDIR != 0 {
             let page_no = pi.get_data_page_no();
+            // just because this page number is pointed to by a well-formed inode does NOT mean
+            // that the page is actually valid and in-use. an inode isn't valid until its parent
+            // points to it, but its internal directory contents are set up before the parent
+            // points to it
             match page_no {
                 Some(page_no) => {
                     let dir_page = get_dir_page(*sbi, page_no);
@@ -95,7 +106,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
     for token in zero_token_vec {
         let ino = token.get_ino();
         let cache_line = bitmap.get_bitmap_cacheline(ino);
-        let cache_line_num = ino >> 9;
+        let cache_line_num = ino >> CACHELINE_SHIFT;
         let cacheline_offset = cacheline_offset_mask & ino;
         cache_line.set_at_offset(cacheline_offset);
         // there doesn't seem to be a nice way to check if two cache line pointers are the same
@@ -110,6 +121,32 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
     pr_info!("modified cache lines: {:?}\n", modified_cache_lines);
 
     let bitmap_token = BitmapToken::new(bitmap, modified_cache_lines);
+
+    // now that we actually know which inodes are valid, we can determine which pages are actually in use
+    // we know that if an inode points to a page, that page has been filled in with the . and .. dentries
+    // and we know that all inodes left in the system are valid. so we can just scan them to find the valid
+    // data pages
+    for ino in valid_inos {
+        // TODO: don't look the inode up again from PM - get it from DRAM
+        let mut pi = hayleyfs_get_inode_by_ino(&sbi, ino);
+        let page_no = pi.get_data_page_no();
+        if let Some(page_no) = page_no {
+            valid_pages.try_push(page_no + DATA_START);
+        }
+    }
+    // TODO: having to deal with the data start offset is annoying. make it so you don't have to do that
+    // should just make the data page bitmap be absolute? you'll have to make sure that is handled properly
+    // at mount
+
+    pr_info!("valid pages: {:?}\n", valid_pages);
+
+    for page in inuse_pages {
+        if !valid_pages.contains(&page) {
+            invalid_pages.try_push(page);
+        }
+    }
+
+    pr_info!("invalid pages: {:?}\n", invalid_pages);
 
     Ok(())
 }

@@ -10,6 +10,7 @@ use crate::data::*;
 use crate::defs::*;
 use crate::inode_rs::*;
 use crate::pm::*;
+use crate::tokens::*;
 use core::mem::size_of;
 
 #[repr(C)]
@@ -63,30 +64,55 @@ pub(crate) struct SbInfo {
 // p sure Rust makes arrays contiguous so they shouldn't need to be
 // compiler warning indicates making them packed could have weird consequences
 pub(crate) struct CacheLine {
-    pub(crate) bits: [u64; 64],
+    pub(crate) bits: [u8; 64],
 }
 
 impl CacheLine {
     pub(crate) fn set_at_offset(&mut self, offset: usize) {
-        // TODO: return error if offset is not less than 512
+        // TODO: return error if offset is not less than 64
         unsafe { hayleyfs_set_bit(offset, self as *mut _ as *mut c_void) };
+    }
+
+    fn fill(&mut self, value: u8) -> bool {
+        let mut ret = false;
+        for byte in self.bits.iter_mut() {
+            if *byte != value {
+                *byte = value;
+            }
+        }
+        ret
     }
 }
 
 pub(crate) struct PersistentBitmap {
-    pub(crate) bits: [CacheLine; PAGE_SIZE / CACHELINE_SIZE],
+    contents: [CacheLine; PAGE_SIZE / CACHELINE_SIZE],
 }
 
 impl PersistentBitmap {
     pub(crate) fn get_bitmap_cacheline(&mut self, index: usize) -> &mut CacheLine {
-        // each cache line has 64 bytes * 8 bits = 512 slots
-        // 2^9 = 512
-        let cacheline_num = index >> 9;
-        &mut self.bits[cacheline_num]
+        // each cache line has 8 bytes - 64 bits
+        // 2^6 = 64
+        let cacheline_num = index >> CACHELINE_SHIFT;
+        &mut self.contents[cacheline_num]
     }
 
     pub(crate) fn get_cacheline_by_index(&mut self, index: usize) -> &mut CacheLine {
-        &mut self.bits[index]
+        &mut self.contents[index]
+    }
+
+    pub(crate) fn zero_bitmap(&mut self) -> BitmapToken<'_> {
+        // keep track of modified cache lines so we can use them to create a
+        // single bitmap token that flushes only the cache lines that actually
+        // were changed
+        let mut modified_cache_lines = Vec::<usize>::new();
+        let mut i = 0;
+        for (i, line) in self.contents.iter_mut().enumerate() {
+            let res = line.fill(0);
+            if res {
+                modified_cache_lines.try_push(i);
+            }
+        }
+        BitmapToken::new(self, modified_cache_lines)
     }
 }
 

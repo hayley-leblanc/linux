@@ -15,6 +15,11 @@ use kernel::prelude::*;
 // we would get anything useful out of that right now, but it could be
 // useful in the future
 
+// TODO: think about redesigning the tokens so that there are fewer
+// and they represent general actions on specific structures, not
+// specific actions on specific structures? then it's your fault if you
+// update the wrong piece of data
+
 pub(crate) struct SuperInitToken<'a> {
     hsb: &'a mut HayleyfsSuperBlock,
 }
@@ -168,7 +173,7 @@ impl<'a> DirPageAddToken<'a> {
 
 // differs from dentry add token because this only provides an immutable
 // reference to the dentry and does not flush on drop
-// TODO: do you need this?
+// TODO: do you need this? no
 pub(crate) struct DentryReadToken<'a> {
     dentry: &'a HayleyfsDentry,
 }
@@ -211,7 +216,20 @@ impl<'a> BitmapToken<'a> {
             let cacheline = bitmap.get_cacheline_by_index(cl);
             clflush(cacheline, CACHELINE_SIZE, false);
         }
+        // TODO: I think we can get rid of the sfence here by using merge tokens
+        // of some kind
         sfence();
         Self { bitmap }
+    }
+}
+
+pub(crate) struct BitmapFenceToken<'a> {
+    tokens: Vec<BitmapToken<'a>>,
+}
+
+impl<'a> BitmapFenceToken<'a> {
+    pub(crate) fn new(tokens: Vec<BitmapToken<'a>>) -> Self {
+        sfence();
+        Self { tokens }
     }
 }

@@ -14,7 +14,7 @@ pub(crate) fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
         let ptr = ptr as *const u8 as *mut u8;
         let mut start = ptr as usize;
         // start = (start >> 9) << 9;
-        start = (start >> 6) << 6; // TODO: i think this properly aligns it
+        start = (start >> CACHELINE_SHIFT) << CACHELINE_SHIFT; // TODO: i think this properly aligns it
         let end = start + len;
 
         pr_info!("start {:#X}, end {:#X}, len {:?}\n", start, end, len);

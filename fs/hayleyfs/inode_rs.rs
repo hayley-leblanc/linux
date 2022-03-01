@@ -101,16 +101,6 @@ impl HayleyfsInode {
     pub(crate) fn get_mode(&self) -> u32 {
         self.mode
     }
-
-    // pub(crate) fn is_valid(&self) -> bool {
-    //     self.valid
-    // }
-
-    // // unsafe because only tokens should set the valid bit. user should not
-    // // do this directly
-    // pub(crate) unsafe fn set_valid(&mut self, v: bool) {
-    //     self.valid = v;
-    // }
 }
 
 pub(crate) fn hayleyfs_get_inode_by_ino(sbi: &SbInfo, ino: InodeNum) -> &mut HayleyfsInode {
@@ -180,6 +170,7 @@ pub(crate) fn hayleyfs_allocate_inode_by_ino(
     let mut bitmap = get_inode_bitmap(&sbi);
 
     if ino == (PAGE_SIZE * 8) {
+        pr_info!("ino is too big\n");
         return Err(Error::ENOSPC);
     }
 
@@ -187,6 +178,7 @@ pub(crate) fn hayleyfs_allocate_inode_by_ino(
     // return an error if it is already in use
     let bit_test = unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
     if bit_test != 0 {
+        pr_info!("bitmap is already set\n");
         return Err(Error::EEXIST);
     }
 

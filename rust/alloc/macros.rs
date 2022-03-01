@@ -118,7 +118,11 @@ macro_rules! format {
 /// Force AST node to an expression to improve diagnostics in pattern position.
 #[doc(hidden)]
 #[macro_export]
-#[unstable(feature = "liballoc_internals", issue = "none", reason = "implementation detail")]
+#[unstable(
+    feature = "liballoc_internals",
+    issue = "none",
+    reason = "implementation detail"
+)]
 macro_rules! __rust_force_expr {
     ($e:expr) => {
         $e

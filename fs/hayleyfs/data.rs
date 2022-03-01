@@ -138,13 +138,10 @@ pub(crate) fn get_data_bitmap(sbi: &SbInfo) -> &mut PersistentBitmap {
 }
 
 pub(crate) fn get_data_page_addr(sbi: &SbInfo, page_no: PmPage) -> *mut c_void {
-    (sbi.virt_addr as usize + ((DATA_START + page_no) * PAGE_SIZE)) as *mut c_void
+    (sbi.virt_addr as usize + (page_no * PAGE_SIZE)) as *mut c_void
 }
 
-/// page_no is a relative page number, NOT absolute.
-/// so the first valid data page number is 0, but it's actually
-/// the 5th page (since the first four pages are reserved)
-/// this will make it easier to manage the bitmap
+/// page_no should be absolute.
 /// TODO: phase this out or make it unsafe - doesn't work well with tokens
 fn set_data_bitmap_bit(sbi: &mut SbInfo, page_no: PmPage) -> Result<()> {
     // TODO: return an error if the page number is not valid
@@ -211,6 +208,8 @@ pub(crate) fn initialize_dir<'a>(
     parent_dentry.set_up(parent_ino, "..");
     unsafe { self_dentry.set_valid(true) };
 
+    // TODO: rename these to something that makes a little more sense,
+    // and only return the dir init token?
     let init_token = DirInitToken::new(self_dentry, parent_dentry);
 
     if sbi.mount_opts.crash_point == 4 {

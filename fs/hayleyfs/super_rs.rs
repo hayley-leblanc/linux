@@ -165,6 +165,21 @@ fn hayleyfs_set_up_super(sbi: &SbInfo) -> Result<SuperInitToken<'_>> {
     Ok(token)
 }
 
+fn zero_bitmaps(sbi: &SbInfo) -> BitmapFenceToken<'_> {
+    let mut inode_bitmap = get_inode_bitmap(&sbi);
+    let mut data_bitmap = get_data_bitmap(&sbi);
+
+    let inode_bitmap_token = inode_bitmap.zero_bitmap();
+    let data_bitmap_token = data_bitmap.zero_bitmap();
+
+    // vec! macro doesn't work here (because it doesn't have the ability
+    // to handle OOM?)
+    let mut vec = Vec::<BitmapToken<'_>>::new();
+    vec.try_push(inode_bitmap_token);
+    vec.try_push(data_bitmap_token);
+    BitmapFenceToken::new(vec)
+}
+
 // TODO: differentiate between remount and initalization, or at least make sure to wipe old stuff
 // every time the file system is mounted for now
 #[no_mangle]
@@ -198,14 +213,20 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
     sbi.gid = unsafe { hayleyfs_current_fsgid() };
 
     if sbi.mount_opts.init {
-        // TODO: move this into its own function that returns the required tokens
+        // zero out bitmaps
+        // TODO: do we need to zero out anything else to make this correct?
+        // TODO: we don't do anything with the bitmap token right now but probably should -
+        // it should probably be required to allocate inodes or data pages?
+        let bitmap_token = zero_bitmaps(&sbi);
         let super_token = hayleyfs_set_up_super(&sbi)?;
-
+        pr_info!("set up super\n");
         let inode_alloc_token =
             hayleyfs_allocate_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO, &super_token)?;
-
+        pr_info!("allocated inode\n");
         let mut inode_init_token = hayleyfs_initialize_inode(*sbi, &inode_alloc_token)?;
 
+        // TODO: reserved pages should be marked on the page bitmap, which will require
+        // getting a cacheline or bitmap token
         // allocate a data page
         let data_token = hayleyfs_alloc_page(&sbi)?;
 
