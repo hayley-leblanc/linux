@@ -6,11 +6,7 @@ use kernel::c_types::c_void;
 use kernel::prelude::*;
 use kernel::{c_default_struct, fsparam_flag, fsparam_string, fsparam_u32, PAGE_SIZE};
 
-use crate::data::*;
 use crate::defs::*;
-use crate::inode_rs::*;
-use crate::pm::*;
-use crate::tokens::*;
 use core::mem::size_of;
 
 #[repr(C)]
@@ -29,13 +25,11 @@ pub(crate) static hayleyfs_fs_parameters: [fs_parameter_spec; 4] = [
     c_default_struct!(fs_parameter_spec),
 ];
 
-// TODO: packed?
 // TODO: order structs low to high
-#[repr(packed)]
+#[repr(C)]
 pub(crate) struct HayleyfsSuperBlock {
     pub(crate) blocksize: u32,
     pub(crate) magic: u32,
-    pub(crate) size: u64,
 }
 
 #[repr(C)]
@@ -58,78 +52,6 @@ pub(crate) struct SbInfo {
     pub(crate) gid: kgid_t,
     pub(crate) mode: umode_t,
     pub(crate) mount_opts: HayleyfsMountOpts,
-}
-
-// TODO: do CacheLine and PersistentBitmap have to be packed?
-// p sure Rust makes arrays contiguous so they shouldn't need to be
-// compiler warning indicates making them packed could have weird consequences
-pub(crate) struct CacheLine {
-    pub(crate) bits: [u8; 64],
-}
-
-impl CacheLine {
-    pub(crate) fn set_at_offset(&mut self, offset: usize) {
-        // TODO: return error if offset is not less than 64
-        unsafe { hayleyfs_set_bit(offset, self as *mut _ as *mut c_void) };
-    }
-
-    // TODO: this is not really the right place to do this I think; find a better location
-    // this function assumes that the bitmap this is set on is the data bitmap, but we don't
-    // actually do anything to enforce that right now
-    // TODO: do we really need to pass in the bitmap token?
-    pub(crate) fn set_reserved_page_bits(
-        &mut self,
-        bitmap_token: BitmapFenceToken<'_>,
-    ) -> CacheLineToken {
-        self.set_at_offset(SUPER_BLOCK_PAGE);
-        self.set_at_offset(INODE_BITMAP_PAGE);
-        self.set_at_offset(INODE_PAGE);
-        self.set_at_offset(DATA_BITMAP_PAGE);
-
-        CacheLineToken::new(self)
-    }
-
-    fn fill(&mut self, value: u8) -> bool {
-        let mut ret = false;
-        for byte in self.bits.iter_mut() {
-            if *byte != value {
-                *byte = value;
-            }
-        }
-        ret
-    }
-}
-
-pub(crate) struct PersistentBitmap {
-    contents: [CacheLine; PAGE_SIZE / CACHELINE_SIZE],
-}
-
-impl PersistentBitmap {
-    pub(crate) fn get_bitmap_cacheline(&mut self, index: usize) -> &mut CacheLine {
-        // each cache line has 64 bytes - 64*8 = 512
-        // 512 inodes/pages per cache line
-        let cacheline_num = index >> CACHELINE_BIT_SHIFT;
-        &mut self.contents[cacheline_num]
-    }
-
-    pub(crate) fn get_cacheline_by_index(&mut self, index: usize) -> &mut CacheLine {
-        &mut self.contents[index]
-    }
-
-    pub(crate) fn zero_bitmap(&mut self) -> BitmapToken<'_> {
-        // keep track of modified cache lines so we can use them to create a
-        // single bitmap token that flushes only the cache lines that actually
-        // were changed
-        let mut modified_cache_lines = Vec::<usize>::new();
-        let mut i = 0;
-        for (i, line) in self.contents.iter_mut().enumerate() {
-            let res = line.fill(0);
-            if res {
-                modified_cache_lines.try_push(i);
-            }
-        }
-        BitmapToken::new(self, modified_cache_lines)
-    }
 }
 
 pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {

@@ -24,6 +24,19 @@ pub(crate) const LONG_MAX: usize = 9223372036854775807;
 pub(crate) const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;
 pub(crate) const READDIR_END: i64 = !0;
 
+// semantic types indicating the persistence state of an object
+pub(crate) struct Dirty;
+pub(crate) struct Flushed;
+pub(crate) struct Clean;
+
+// semantic types indicating the most recent type of modification to an object
+pub(crate) struct Read; // indicates no change since it was read. TODO: better name
+pub(crate) struct Alloc;
+pub(crate) struct Init;
+pub(crate) struct Valid;
+
+pub(crate) type PmPage = usize; // TODO: move this somewhere else
+
 extern "C" {
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_fs_put_dax(dax_dev: *mut dax_device);
