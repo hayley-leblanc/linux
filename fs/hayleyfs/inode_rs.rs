@@ -313,6 +313,7 @@ fn _hayleyfs_mkdir<'a>(
         inode_init_token,
         dir.i_ino.try_into().unwrap(),
         data_alloc_token.page_no(),
+        true,
     )?;
 
     // setting link count does not require any tokens BUT it produces

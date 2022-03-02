@@ -101,7 +101,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
     // make a list of which cache lines have been modified and flush them at the end
     // TODO: should be a set or something, not a vector
     let mut modified_cache_lines = Vec::<usize>::new();
-    let cacheline_offset_mask = 0x1ff; // 511
+    let cacheline_offset_mask = (1 << CACHELINE_BIT_SHIFT) - 1;
     let mut bitmap = get_inode_bitmap(&sbi);
     for token in zero_token_vec {
         let ino = token.get_ino();
@@ -120,7 +120,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
 
     pr_info!("modified cache lines: {:?}\n", modified_cache_lines);
 
-    let bitmap_token = BitmapToken::new(bitmap, modified_cache_lines);
+    let inode_bitmap_token = BitmapToken::new(bitmap, modified_cache_lines);
 
     // since we aren't considering crashes during initialization right now,
     // assume that the reserved pages are always valid
@@ -152,7 +152,25 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
 
     pr_info!("invalid pages: {:?}\n", invalid_pages);
 
-    // TODO: finish handling invalid pages
+    // TODO: do we need to do anything with invalid pages other than clear their bits
+    // in the bitmap?
+
+    let mut modified_cache_lines = Vec::<usize>::new();
+    let mut bitmap = get_data_bitmap(&sbi);
+    for page in invalid_pages {
+        let cache_line = bitmap.get_bitmap_cacheline(page);
+        let cache_line_num = page >> CACHELINE_BIT_SHIFT;
+        let cacheline_offset = cacheline_offset_mask & page;
+        cache_line.set_at_offset(cacheline_offset);
+
+        if !modified_cache_lines.contains(&cache_line_num) {
+            modified_cache_lines.try_push(cache_line_num);
+        }
+    }
+
+    let data_bitmap_token = BitmapToken::new(bitmap, modified_cache_lines);
+
+    // TODO: do something with the bitmap tokens
 
     Ok(())
 }

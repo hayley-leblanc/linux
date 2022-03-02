@@ -232,6 +232,7 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
             inode_init_token,
             HAYLEYFS_ROOT_INO,
             data_token.page_no(),
+            false,
         )?;
     } else {
         // we are recovering and should do some kind of scan to see the state of the system

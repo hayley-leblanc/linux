@@ -189,6 +189,7 @@ pub(crate) fn initialize_dir<'a>(
     ino_token: InodeInitToken<'a>,
     parent_ino: InodeNum,
     page_no: PmPage,
+    test_crash: bool,
 ) -> Result<(DirInitToken<'a>, DirPageAddToken<'a>)> {
     let dir_page = get_dir_page(*sbi, page_no);
 
@@ -212,13 +213,13 @@ pub(crate) fn initialize_dir<'a>(
     // and only return the dir init token?
     let init_token = DirInitToken::new(self_dentry, parent_dentry);
 
-    if sbi.mount_opts.crash_point == 4 {
+    if sbi.mount_opts.crash_point == 4 && test_crash {
         return Err(Error::EINVAL);
     }
 
     let page_token = ino_token.add_data_page(page_no, &init_token);
 
-    if sbi.mount_opts.crash_point == 5 {
+    if sbi.mount_opts.crash_point == 5 && test_crash {
         return Err(Error::EINVAL);
     }
 
