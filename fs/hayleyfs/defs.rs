@@ -17,7 +17,8 @@ pub(crate) const DATA_START: usize = 4;
 pub(crate) const MAX_FILENAME_LEN: usize = 32;
 pub(crate) const DENTRIES_PER_PAGE: usize = 32;
 pub(crate) const CACHELINE_SIZE: usize = 64; // TODO: this should probably come from the kernel
-pub(crate) const CACHELINE_SHIFT: usize = 6; //
+pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
+pub(crate) const CACHELINE_BIT_SHIFT: usize = 9;
 
 pub(crate) const LONG_MAX: usize = 9223372036854775807;
 pub(crate) const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;

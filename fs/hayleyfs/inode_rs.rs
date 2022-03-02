@@ -122,17 +122,6 @@ pub(crate) fn get_inode_bitmap(sbi: &SbInfo) -> &mut PersistentBitmap {
     }
 }
 
-// TODO: phase this out or make it unsafe or something. it doesn't really work the way i want
-// with the tokens
-pub(crate) unsafe fn set_inode_bitmap_bit(sbi: &SbInfo, ino: InodeNum) -> Result<()> {
-    let addr = get_inode_bitmap_addr(&sbi);
-    // TODO: should check that the provided ino is valid and return an error if not
-    unsafe { hayleyfs_set_bit(ino, addr as *mut c_void) };
-    // TODO: only flush the updated cache line, not the whole bitmap
-    clflush(addr as *const c_void, PAGE_SIZE, false);
-    Ok(())
-}
-
 #[no_mangle]
 fn hayleyfs_allocate_inode(sbi: &SbInfo) -> Result<InodeAllocToken> {
     let mut bitmap = get_inode_bitmap(&sbi);

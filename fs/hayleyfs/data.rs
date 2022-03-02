@@ -334,3 +334,11 @@ unsafe extern "C" fn hayleyfs_readdir(file: *mut file, ctx_raw: *mut dir_context
 pub(crate) fn get_dir_page(sbi: SbInfo, page_no: PmPage) -> &'static mut DirPage {
     unsafe { &mut *(get_data_page_addr(&sbi, page_no) as *mut DirPage) }
 }
+
+pub(crate) fn alloc_reserved_pages(mut bitmap_token: BitmapFenceToken<'_>) -> CacheLineToken {
+    // TODO: handle the option in a more robust way
+    let mut data_token = bitmap_token.get_data_token().unwrap();
+    // reserved pages will always live on the first cache line of the bitmap
+    let cache_line = data_token.get_cacheline_by_index(0);
+    cache_line.set_reserved_page_bits(bitmap_token)
+}

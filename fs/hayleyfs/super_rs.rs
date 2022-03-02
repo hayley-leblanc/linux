@@ -153,7 +153,7 @@ fn hayleyfs_alloc_sbi(fc: *mut fs_context, sb: *mut super_block) -> Result<*mut 
     }
 }
 
-fn hayleyfs_set_up_super(sbi: &SbInfo) -> Result<SuperInitToken<'_>> {
+fn hayleyfs_set_up_super<'a>(sbi: &'a SbInfo, _: &CacheLineToken) -> Result<SuperInitToken<'a>> {
     let mut hsb = hayleyfs_get_super(&sbi);
 
     hsb.size = sbi.pm_size;
@@ -172,12 +172,7 @@ fn zero_bitmaps(sbi: &SbInfo) -> BitmapFenceToken<'_> {
     let inode_bitmap_token = inode_bitmap.zero_bitmap();
     let data_bitmap_token = data_bitmap.zero_bitmap();
 
-    // vec! macro doesn't work here (because it doesn't have the ability
-    // to handle OOM?)
-    let mut vec = Vec::<BitmapToken<'_>>::new();
-    vec.try_push(inode_bitmap_token);
-    vec.try_push(data_bitmap_token);
-    BitmapFenceToken::new(vec)
+    BitmapFenceToken::new(inode_bitmap_token, data_bitmap_token)
 }
 
 // TODO: differentiate between remount and initalization, or at least make sure to wipe old stuff
@@ -217,17 +212,19 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // TODO: do we need to zero out anything else to make this correct?
         // TODO: we don't do anything with the bitmap token right now but probably should -
         // it should probably be required to allocate inodes or data pages?
-        let bitmap_token = zero_bitmaps(&sbi);
-        let super_token = hayleyfs_set_up_super(&sbi)?;
-        pr_info!("set up super\n");
+        let mut bitmap_token = zero_bitmaps(&sbi);
+
+        // allocate reserved pages by marking them in-use the data bitmap
+        let reserved_page_alloc_token = alloc_reserved_pages(bitmap_token);
+
+        let super_token = hayleyfs_set_up_super(&sbi, &reserved_page_alloc_token)?;
         let inode_alloc_token =
             hayleyfs_allocate_inode_by_ino(&sbi, HAYLEYFS_ROOT_INO, &super_token)?;
-        pr_info!("allocated inode\n");
         let mut inode_init_token = hayleyfs_initialize_inode(*sbi, &inode_alloc_token)?;
 
-        // TODO: reserved pages should be marked on the page bitmap, which will require
-        // getting a cacheline or bitmap token
-        // allocate a data page
+        // TODO: this should really require the bitmap token or the reserved page alloc token,
+        // but that would make it trickier to allocate pages in other contexts since we don't
+        // have those tokens when we are allocating pages later...
         let data_token = hayleyfs_alloc_page(&sbi)?;
 
         let (dir_init_token, page_add_token) = initialize_dir(

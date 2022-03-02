@@ -33,7 +33,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
             inuse_inos.try_push(bit)?;
         }
         if unsafe { hayleyfs_test_bit(bit, data_bitmap) } == 1 {
-            inuse_pages.try_push(bit + DATA_START)?;
+            inuse_pages.try_push(bit)?;
         }
     }
 
@@ -106,7 +106,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
     for token in zero_token_vec {
         let ino = token.get_ino();
         let cache_line = bitmap.get_bitmap_cacheline(ino);
-        let cache_line_num = ino >> CACHELINE_SHIFT;
+        let cache_line_num = ino >> CACHELINE_BIT_SHIFT;
         let cacheline_offset = cacheline_offset_mask & ino;
         cache_line.set_at_offset(cacheline_offset);
         // there doesn't seem to be a nice way to check if two cache line pointers are the same
@@ -122,6 +122,13 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
 
     let bitmap_token = BitmapToken::new(bitmap, modified_cache_lines);
 
+    // since we aren't considering crashes during initialization right now,
+    // assume that the reserved pages are always valid
+    valid_pages.try_push(SUPER_BLOCK_PAGE);
+    valid_pages.try_push(INODE_BITMAP_PAGE);
+    valid_pages.try_push(INODE_PAGE);
+    valid_pages.try_push(DATA_BITMAP_PAGE);
+
     // now that we actually know which inodes are valid, we can determine which pages are actually in use
     // we know that if an inode points to a page, that page has been filled in with the . and .. dentries
     // and we know that all inodes left in the system are valid. so we can just scan them to find the valid
@@ -131,12 +138,9 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
         let mut pi = hayleyfs_get_inode_by_ino(&sbi, ino);
         let page_no = pi.get_data_page_no();
         if let Some(page_no) = page_no {
-            valid_pages.try_push(page_no + DATA_START);
+            valid_pages.try_push(page_no);
         }
     }
-    // TODO: having to deal with the data start offset is annoying. make it so you don't have to do that
-    // should just make the data page bitmap be absolute? you'll have to make sure that is handled properly
-    // at mount
 
     pr_info!("valid pages: {:?}\n", valid_pages);
 
@@ -147,6 +151,8 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
     }
 
     pr_info!("invalid pages: {:?}\n", invalid_pages);
+
+    // TODO: finish handling invalid pages
 
     Ok(())
 }

@@ -32,6 +32,20 @@ impl<'a> SuperInitToken<'a> {
     }
 }
 
+// TODO: have this replace inode alloc and data alloc tokens
+pub(crate) struct CacheLineToken {
+    cache_line: *const CacheLine,
+}
+
+impl CacheLineToken {
+    pub(crate) fn new(line: *const CacheLine) -> Self {
+        pr_info!("flushing cache line token\n");
+        clflush(line, CACHELINE_SIZE, true);
+        // TODO: probably shouldn't flush here
+        Self { cache_line: line }
+    }
+}
+
 pub(crate) struct InodeAllocToken {
     ino: InodeNum,
     cache_line: *const CacheLine,
@@ -205,7 +219,7 @@ impl<'a> InodeZeroToken<'a> {
 }
 
 pub(crate) struct BitmapToken<'a> {
-    bitmap: &'a PersistentBitmap,
+    bitmap: &'a mut PersistentBitmap,
 }
 
 impl<'a> BitmapToken<'a> {
@@ -221,15 +235,32 @@ impl<'a> BitmapToken<'a> {
         sfence();
         Self { bitmap }
     }
+
+    pub(crate) fn get_cacheline_by_index(&mut self, index: usize) -> &mut CacheLine {
+        self.bitmap.get_cacheline_by_index(index)
+    }
 }
 
 pub(crate) struct BitmapFenceToken<'a> {
-    tokens: Vec<BitmapToken<'a>>,
+    // tokens: Vec<BitmapToken<'a>>,
+    inode_token: Option<BitmapToken<'a>>,
+    data_token: Option<BitmapToken<'a>>,
 }
 
 impl<'a> BitmapFenceToken<'a> {
-    pub(crate) fn new(tokens: Vec<BitmapToken<'a>>) -> Self {
+    pub(crate) fn new(inode_token: BitmapToken<'a>, data_token: BitmapToken<'a>) -> Self {
         sfence();
-        Self { tokens }
+        Self {
+            inode_token: Some(inode_token),
+            data_token: Some(data_token),
+        }
+    }
+
+    pub(crate) fn get_inode_token(&mut self) -> Option<BitmapToken<'a>> {
+        self.inode_token.take()
+    }
+
+    pub(crate) fn get_data_token(&mut self) -> Option<BitmapToken<'a>> {
+        self.data_token.take()
     }
 }

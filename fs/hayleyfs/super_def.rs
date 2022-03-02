@@ -73,6 +73,22 @@ impl CacheLine {
         unsafe { hayleyfs_set_bit(offset, self as *mut _ as *mut c_void) };
     }
 
+    // TODO: this is not really the right place to do this I think; find a better location
+    // this function assumes that the bitmap this is set on is the data bitmap, but we don't
+    // actually do anything to enforce that right now
+    // TODO: do we really need to pass in the bitmap token?
+    pub(crate) fn set_reserved_page_bits(
+        &mut self,
+        bitmap_token: BitmapFenceToken<'_>,
+    ) -> CacheLineToken {
+        self.set_at_offset(SUPER_BLOCK_PAGE);
+        self.set_at_offset(INODE_BITMAP_PAGE);
+        self.set_at_offset(INODE_PAGE);
+        self.set_at_offset(DATA_BITMAP_PAGE);
+
+        CacheLineToken::new(self)
+    }
+
     fn fill(&mut self, value: u8) -> bool {
         let mut ret = false;
         for byte in self.bits.iter_mut() {
@@ -90,9 +106,9 @@ pub(crate) struct PersistentBitmap {
 
 impl PersistentBitmap {
     pub(crate) fn get_bitmap_cacheline(&mut self, index: usize) -> &mut CacheLine {
-        // each cache line has 8 bytes - 64 bits
-        // 2^6 = 64
-        let cacheline_num = index >> CACHELINE_SHIFT;
+        // each cache line has 64 bytes - 64*8 = 512
+        // 512 inodes/pages per cache line
+        let cacheline_num = index >> CACHELINE_BIT_SHIFT;
         &mut self.contents[cacheline_num]
     }
 
