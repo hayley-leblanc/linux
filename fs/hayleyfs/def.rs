@@ -35,6 +35,7 @@ pub(crate) struct Read; // indicates no change since it was read. TODO: better n
 pub(crate) struct Alloc;
 pub(crate) struct Init;
 pub(crate) struct Valid;
+pub(crate) struct Zero;
 
 pub(crate) type PmPage = usize; // TODO: move this somewhere else
 

@@ -67,6 +67,12 @@ pub(crate) mod hayleyfs_bitmap {
         lines: [CacheLine; NUM_BITMAP_CACHELINES],
     }
 
+    impl Bitmap {
+        fn iter_mut(&mut self) -> impl Iterator<Item = &mut CacheLine> {
+            self.lines.iter_mut()
+        }
+    }
+
     pub(crate) struct BitmapWrapper<'a, State = Clean, Op = Read> {
         state: PhantomData<State>,
         op: PhantomData<Op>,
@@ -87,19 +93,21 @@ pub(crate) mod hayleyfs_bitmap {
             }
         }
 
+        // TODO: this should also be implemented for non-clean bitmaps
         fn get_cacheline(self, index: usize) -> CacheLineWrapper<'a, Clean, Read> {
             let cacheline_num = index >> CACHELINE_BIT_SHIFT;
             CacheLineWrapper {
                 state: PhantomData,
                 op: PhantomData,
                 line: &mut self.bitmap.lines[cacheline_num],
-                ino: index,
+                ino: Some(index),
             }
         }
 
         // TODO: may want to relax return value at some point
+        // TODO: this should also be implemented for non-clean bitmaps
         pub(crate) fn find_and_set_next_zero_bit(
-            mut self,
+            self,
         ) -> Result<CacheLineWrapper<'a, Clean, Alloc>> {
             // starts at bit 1 to ignore bit 0 since we don't use inode 0
             let ino = unsafe {
@@ -121,6 +129,68 @@ pub(crate) mod hayleyfs_bitmap {
 
             Ok(cache_line)
         }
+
+        // consumes the bitmap wrapper in return for a set of cacheline wrappers selected
+        // via the filtering closure
+        fn filter_cache_lines<F>(self, f: F) -> Result<Vec<CacheLineWrapper<'a, Clean, Read>>>
+        where
+            F: Fn(&CacheLine) -> bool,
+        {
+            // let vec = Vec::CacheLineWrapper<'a, Clean, Read>::new();
+            let mut vec = Vec::new();
+            for line in self.bitmap.iter_mut() {
+                if f(line) {
+                    vec.try_push(CacheLineWrapper {
+                        state: PhantomData,
+                        op: PhantomData,
+                        line,
+                        ino: None,
+                    })?;
+                }
+            }
+            Ok(vec)
+        }
+
+        pub(crate) fn zero_bitmap(mut self, sbi: &SbInfo) -> Result<()> {
+            let mut modified_cache_lines = Vec::<CacheLineWrapper<'a, Dirty, Zero>>::new();
+            // figure out which cache lines have non-zero values
+            let filter_closure = |c: &CacheLine| {
+                for byte in c.bits.iter() {
+                    if *byte != 0 {
+                        return true;
+                    }
+                }
+                false
+            };
+            let mut cache_lines = self.filter_cache_lines(filter_closure)?;
+            // set the cachelines to zero and save them in the modified lines vector
+            for line in cache_lines.drain(..) {
+                let line = line.zero();
+                modified_cache_lines.try_push(line)?;
+            }
+
+            Ok(())
+        }
+    }
+
+    impl<'a, Op> BitmapWrapper<'a, Clean, Op> {
+        pub(crate) fn inode_bitmap_coalesce_persist(
+            cache_lines: Vec<CacheLineWrapper<'a, Dirty, Op>>,
+            sbi: &SbInfo,
+        ) -> Self {
+            for line in cache_lines {
+                line.flush();
+            }
+            sfence();
+            Self {
+                state: PhantomData,
+                op: PhantomData,
+                bitmap: unsafe {
+                    &mut *((sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE))
+                        as *mut Bitmap)
+                },
+            }
+        }
     }
 
     // TODO: extend to allow allocation/deallocation of multiple inodes
@@ -133,8 +203,7 @@ pub(crate) mod hayleyfs_bitmap {
         state: PhantomData<State>,
         op: PhantomData<Op>,
         line: &'a mut CacheLine,
-        ino: InodeNum, // TODO: this could also be page
-                       // TODO: there might be cases where we want to store a set of inodes, or no inodes
+        ino: Option<InodeNum>, // TODO: this could also be page; might need to be a set/vector?
     }
 
     // methods that can be called on any cache line regardless of state
@@ -147,14 +216,29 @@ pub(crate) mod hayleyfs_bitmap {
                 state: PhantomData,
                 op: PhantomData,
                 line: self.line,
-                ino: bit,
+                ino: Some(bit),
             }
         }
 
-        pub(crate) fn set_bit_persist(
-            mut self,
-            bit: InodeNum,
-        ) -> CacheLineWrapper<'a, Clean, Alloc> {
+        pub(crate) fn zero(mut self) -> CacheLineWrapper<'a, Dirty, Zero> {
+            for byte in self.line.bits.iter_mut() {
+                if *byte != 0 {
+                    *byte = 0;
+                }
+            }
+            CacheLineWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                line: self.line,
+                ino: None,
+            }
+        }
+
+        // pub(crate) fn fill(mut self, val: u64) -> CacheLineWrapper<'a, Dirty, Alloc> {
+
+        // }
+
+        pub(crate) fn set_bit_persist(self, bit: InodeNum) -> CacheLineWrapper<'a, Clean, Alloc> {
             // TODO: is it faster to re-implement with flush and fence, or to call
             // the existing set bit and then flush and fence?
             // TODO: have some copy constructors for different wrapper variants
@@ -165,12 +249,24 @@ pub(crate) mod hayleyfs_bitmap {
                 state: PhantomData,
                 op: PhantomData,
                 line: wrapper.line,
-                ino: bit,
+                ino: Some(bit),
             }
         }
 
-        pub(crate) fn get_ino(&self) -> InodeNum {
+        pub(crate) fn get_ino(&self) -> Option<InodeNum> {
             self.ino
+        }
+    }
+
+    impl<'a, Op> CacheLineWrapper<'a, Dirty, Op> {
+        pub(crate) fn flush(self) -> CacheLineWrapper<'a, Flushed, Op> {
+            clwb(&self.line, CACHELINE_SIZE, false);
+            CacheLineWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                line: self.line,
+                ino: self.ino,
+            }
         }
     }
 }
