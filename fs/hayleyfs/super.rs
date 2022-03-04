@@ -6,25 +6,19 @@
 // #![allow(clippy::needless_borrow)]
 #![allow(clippy::missing_safety_doc)] // TODO: remove
 
-// mod data;
 mod def;
-// mod inode_rs;
-mod pm;
-// mod recovery;
 mod h_inode;
 mod inode_def;
+mod pm;
 mod super_def;
-// mod tokens;
 
-// use crate::data::*;
 use crate::def::*;
-// use crate::inode_rs::*;
 use crate::h_inode::*;
-use crate::pm::*;
-// use crate::recovery::*;
 use crate::inode_def::*;
+use crate::pm::*;
+use crate::super_def::hayleyfs_bitmap::*;
+use crate::super_def::hayleyfs_sb::*;
 use crate::super_def::*;
-// use crate::tokens::*;
 use core::ptr;
 
 use kernel::bindings::{
@@ -156,47 +150,46 @@ pub unsafe extern "C" fn hayleyfs_fill_super(
  * Horizontal line through arrows means that the prior operation(s) must
  * be flushed and fenced before the subsequent ones are allowed to occur
  *
- *                            ┌──────────────┐
- *                            │              │
- *                            │ zero bitmaps │
- *                            │              │
- *                            └──────┬───────┘
- *                                   │
- *                               ────┼────
- *                                   │
- *                       ┌───────────▼─────────────┐
- *                       │                         │
- *           ┌───────────┤ allocate reserved pages ├───────────┐
- *           │           │                         │           │
- *           │           └───────────┬─────────────┘           │
- *           │                       │                         │
- *           │                     ──┼─────────────────────────┼──
- *           │                       │                         │
- * ┌─────────▼─────────┐   ┌─────────▼───────────┐   ┌─────────▼──────────┐
- * │                   │   │                     │   │                    │
- * │ set up super block│   │ allocate root inode │   │ allocate dir page  │
- * │                   │   │                     │   │                    │
- * └───────────────────┘   └─────────┬────────┬──┘   └─────────┬──────────┘
- *                                   │        │                │
- *                           ────────┼────────┼────────────────┼─────────
- *                                   │        │                │
- *                                   │        └────────┐       │
- *                                   │                 │       │
- *                         ┌─────────▼────────┐     ┌──▼───────▼──────────┐
- *                         │                  │     │                     │
- *                         │ initialize inode │     │ initialize root dir │
- *                         │                  │     │                     │
- *                         └───────────────┬──┘     └──┬──────────────────┘
- *                                         │           │
- *                                   ──────┼───────────┼─────
- *                                         │           │
- *                                     ┌───▼───────────▼───┐
- *                                     │                   │
- *                                     │ add page to inode │
- *                                     │                   │
- *                                     └───────────────────┘
+ *                             ┌──────────────┐
+ *                             │              │
+ *                             │ zero bitmaps │
+ *                             │              │
+ *                             └──────┬───────┘
+ *                                    │
+ *                                ────┼────
+ *                                    │
+ *                        ┌───────────▼─────────────┐
+ *                        │                         │
+ *           ┌────────────┤ allocate reserved pages ├───────────┐
+ *           │            │                         │           │
+ *           │            └───────────┬─────────────┘           │
+ *           │                        │                         │
+ *           │                      ──┼─────────────────────────┼──
+ *           │                        │                         │
+ * ┌─────────▼──────────┐   ┌─────────▼───────────┐   ┌─────────▼──────────┐
+ * │                    │   │                     │   │                    │
+ * │ set up super block │   │ allocate root inode │   │ allocate dir page  │
+ * │                    │   │                     │   │                    │
+ * └────────────────────┘   └─────────┬────────┬──┘   └─────────┬──────────┘
+ *                                    │        │                │
+ *                            ────────┼────────┼────────────────┼─────────
+ *                                    │        │                │
+ *                                    │        └────────┐       │
+ *                                    │                 │       │
+ *                          ┌─────────▼────────┐     ┌──▼───────▼──────────┐
+ *                          │                  │     │                     │
+ *                          │ initialize inode │     │ initialize root dir │
+ *                          │                  │     │                     │
+ *                          └───────────────┬──┘     └──┬──────────────────┘
+ *                                          │           │
+ *                                    ──────┼───────────┼─────
+ *                                          │           │
+ *                                      ┌───▼───────────▼───┐
+ *                                      │                   │
+ *                                      │ add page to inode │
+ *                                      │                   │
+ *                                      └───────────────────┘
  */
-
 #[no_mangle]
 fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()> {
     hayleyfs_alloc_sbi(fc, sb)?;
@@ -212,7 +205,17 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
     let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO)?;
     let mut root_i = unsafe { &mut *(root_i as *mut inode) };
 
-    if sbi.mount_opts.init {}
+    if sbi.mount_opts.init {
+        // zero bitmaps
+        let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi).zero_bitmap(sbi)?;
+        let data_bitmap = BitmapWrapper::read_data_bitmap(sbi).zero_bitmap(sbi)?;
+
+        // allocate reserved pages
+        let data_bitmap = data_bitmap.alloc_reserved_pages(sbi)?;
+
+        // initialize super block
+        let sb = SuperBlockWrapper::init(sbi, &data_bitmap);
+    }
 
     root_i.i_mode = S_IFDIR as u16;
     root_i.i_op = &HayleyfsDirInodeOps;
@@ -226,12 +229,6 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
     }
 
     Ok(())
-}
-
-fn hayleyfs_get_super(sbi: &SbInfo) -> &'static mut HayleyfsSuperBlock {
-    let hayleyfs_super: &mut HayleyfsSuperBlock =
-        unsafe { &mut *(sbi.virt_addr as *mut HayleyfsSuperBlock) };
-    hayleyfs_super
 }
 
 // TODO: lots of unsafe code here; make it nicer
