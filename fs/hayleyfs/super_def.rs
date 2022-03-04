@@ -116,10 +116,24 @@ pub(crate) mod hayleyfs_bitmap {
         ) -> Result<BitmapWrapper<'a, Clean, Alloc, DataBmap>> {
             // TODO: right now, the set of reserved pages fits on one cache line. that will
             // PROBABLY always hold, but if it doesn't, make sure this is updated
-            let cache_line = self.get_cacheline_by_line_index(0).set_reserved_page_bits();
+            let cache_line = self
+                .get_cacheline_by_line_index(0)
+                .set_reserved_page_bits()?;
             let mut vec = Vec::new();
             vec.try_push(cache_line)?;
             Ok(BitmapWrapper::<'a, Clean, _, DataBmap>::bitmap_coalesce_persist(vec, sbi))
+        }
+    }
+
+    impl<'a> BitmapWrapper<'a, Clean, Zero, InoBmap> {
+        // TODO: could be extended to allocate other reserved inos
+        pub(crate) fn alloc_root_ino(self, sbi: &SbInfo) {
+            // ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, InoBmap>> {
+            let ino = 1;
+            let cache_line_num = get_cacheline_num(ino);
+            let offset = ino & CACHELINE_MASK;
+            // check if the bit is already set in our cache line - return an error if it is
+            // TODO: finish this
         }
     }
 
@@ -129,7 +143,7 @@ pub(crate) mod hayleyfs_bitmap {
         /// given a page number or inode number, obtains the cache line that the corresponding bit
         /// lives on in the bitmap
         pub(crate) fn get_cacheline(self, index: usize) -> CacheLineWrapper<'a, Clean, Read, Type> {
-            let cacheline_num = index >> CACHELINE_BIT_SHIFT;
+            let cacheline_num = get_cacheline_num(index);
             CacheLineWrapper::new(&mut self.bitmap.lines[cacheline_num], Some(index))
         }
 
@@ -162,7 +176,7 @@ pub(crate) mod hayleyfs_bitmap {
             let cache_line = self.get_cacheline(ino);
 
             // unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
-            let cache_line = cache_line.set_bit_persist(ino);
+            let cache_line = cache_line.set_bit_persist(ino)?;
 
             Ok(cache_line)
         }
@@ -254,10 +268,18 @@ pub(crate) mod hayleyfs_bitmap {
     // methods that can be called on any cache line regardless of state
     impl<'a, State, Op, Type> CacheLineWrapper<'a, State, Op, Type> {
         // TODO: could also be pm page, not just inode num
-        pub(crate) fn set_bit(mut self, bit: usize) -> CacheLineWrapper<'a, Dirty, Alloc, Type> {
+        pub(crate) fn test_and_set_bit(
+            mut self,
+            bit: usize,
+        ) -> Result<CacheLineWrapper<'a, Dirty, Alloc, Type>> {
             let offset = bit & CACHELINE_MASK;
-            unsafe { hayleyfs_set_bit(offset, &mut self.line as *mut _ as *mut c_void) };
-            CacheLineWrapper::new(self.line, Some(bit))
+            let bit_test =
+                unsafe { hayleyfs_set_bit(offset, &mut self.line as *mut _ as *mut c_void) };
+            if bit_test == 1 {
+                Err(Error::EEXIST)
+            } else {
+                Ok(CacheLineWrapper::new(self.line, Some(bit)))
+            }
         }
 
         pub(crate) fn zero(mut self) -> CacheLineWrapper<'a, Dirty, Zero, Type> {
@@ -272,12 +294,12 @@ pub(crate) mod hayleyfs_bitmap {
         pub(crate) fn set_bit_persist(
             self,
             bit: InodeNum,
-        ) -> CacheLineWrapper<'a, Clean, Alloc, Type> {
+        ) -> Result<CacheLineWrapper<'a, Clean, Alloc, Type>> {
             // TODO: is it faster to re-implement with flush and fence, or to call
             // the existing set bit and then flush and fence?
-            let wrapper = self.set_bit(bit);
+            let wrapper = self.test_and_set_bit(bit)?;
             clwb(wrapper.line, CACHELINE_SIZE, true);
-            CacheLineWrapper::new(wrapper.line, Some(bit))
+            Ok(CacheLineWrapper::new(wrapper.line, Some(bit)))
         }
 
         pub(crate) fn get_val(&self) -> Option<usize> {
@@ -301,11 +323,15 @@ pub(crate) mod hayleyfs_bitmap {
 
     impl<'a> CacheLineWrapper<'a, Clean, Read, DataBmap> {
         // TODO: if we reserve more pages, add them here
-        pub(crate) fn set_reserved_page_bits(self) -> CacheLineWrapper<'a, Dirty, Alloc, DataBmap> {
-            self.set_bit(SUPER_BLOCK_PAGE)
-                .set_bit(INODE_BITMAP_PAGE)
-                .set_bit(INODE_PAGE)
-                .set_bit(DATA_BITMAP_PAGE)
+        pub(crate) fn set_reserved_page_bits(
+            self,
+        ) -> Result<CacheLineWrapper<'a, Dirty, Alloc, DataBmap>> {
+            let res = self
+                .test_and_set_bit(SUPER_BLOCK_PAGE)?
+                .test_and_set_bit(INODE_BITMAP_PAGE)?
+                .test_and_set_bit(INODE_PAGE)?
+                .test_and_set_bit(DATA_BITMAP_PAGE);
+            res
         }
     }
 }
@@ -367,4 +393,8 @@ pub(crate) fn hayleyfs_get_sbi_from_fc(fc: *mut fs_context) -> &'static mut SbIn
 
 pub(crate) fn set_nlink_safe(inode: &mut inode, n: u32) {
     unsafe { set_nlink(inode, n) };
+}
+
+pub(crate) fn get_cacheline_num(val: usize) -> usize {
+    val >> CACHELINE_BIT_SHIFT
 }

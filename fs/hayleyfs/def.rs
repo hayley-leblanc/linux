@@ -37,6 +37,16 @@ pub(crate) struct Init;
 pub(crate) struct Valid;
 pub(crate) struct Zero;
 
+// marker traits that allow us to specify a subset of semantic types in a function sig
+// pub(crate) trait CleanOrFlush;
+// pub(crate) trait AllocOrZero;
+
+// impl CleanOrFlush for Clean {}
+// impl CleanOrFlush for Flushed {}
+
+// impl AllocOrZero for Alloc {}
+// impl AllocOrzero for Zero {}
+
 // semantic types used to indicate the type of a bitmap (data or inode)
 // to reduce some code repetition and prevent mistakes
 pub(crate) struct InoBmap;

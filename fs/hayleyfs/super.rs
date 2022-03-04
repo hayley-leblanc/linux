@@ -215,6 +215,9 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
 
         // initialize super block
         let sb = SuperBlockWrapper::init(sbi, &data_bitmap);
+
+        // allocate root inode and a page for its data
+        // these require special methods that ensure the bitmaps have been set up properly
     }
 
     root_i.i_mode = S_IFDIR as u16;
