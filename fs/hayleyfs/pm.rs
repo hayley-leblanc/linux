@@ -1,14 +1,13 @@
 #![allow(non_camel_case_types)]
 #![allow(missing_docs)]
 #![allow(non_upper_case_globals)]
-#![allow(unused_imports)]
 
-use crate::defs::*;
+use crate::def::*;
 use kernel::prelude::*;
 
 /// Taken from Corundum
 /// Flushes cache line back to memory
-pub(crate) fn clflush<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
+pub(crate) fn clwb<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
     // #[cfg(not(feature = "no_persist"))]
     {
         let ptr = ptr as *const u8 as *mut u8;

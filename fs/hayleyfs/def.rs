@@ -1,10 +1,9 @@
-#![allow(unused)]
-
 use kernel::bindings::{
     dax_device, dir_context, file, fs_context, fs_parameter, fs_parameter_spec, fs_parse_result,
     inode, kgid_t, kuid_t, pfn_t,
 };
 use kernel::c_types::{c_char, c_int, c_ulong, c_void};
+use kernel::PAGE_SIZE;
 
 pub(crate) const __LOG_PREFIX: &[u8] = b"hayleyfs\0";
 
@@ -19,6 +18,8 @@ pub(crate) const DENTRIES_PER_PAGE: usize = 32;
 pub(crate) const CACHELINE_SIZE: usize = 64; // TODO: this should probably come from the kernel
 pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 pub(crate) const CACHELINE_BIT_SHIFT: usize = 9;
+pub(crate) const NUM_BITMAP_CACHELINES: usize = PAGE_SIZE / CACHELINE_SIZE;
+pub(crate) const CACHELINE_MASK: usize = (1 << CACHELINE_BIT_SHIFT) - 1;
 
 pub(crate) const LONG_MAX: usize = 9223372036854775807;
 pub(crate) const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;

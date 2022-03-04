@@ -2,39 +2,39 @@
 #![allow(missing_docs)]
 #![allow(non_upper_case_globals)]
 #![feature(new_uninit)]
-#![allow(unused)]
-#![allow(clippy::needless_borrow)]
+// #![allow(unused)]
+// #![allow(clippy::needless_borrow)]
 #![allow(clippy::missing_safety_doc)] // TODO: remove
 
 // mod data;
-mod defs;
+mod def;
 // mod inode_rs;
-// mod pm;
+mod pm;
 // mod recovery;
+mod h_inode;
 mod inode_def;
 mod super_def;
 // mod tokens;
 
 // use crate::data::*;
-use crate::defs::*;
+use crate::def::*;
 // use crate::inode_rs::*;
-// use crate::pm::*;
+use crate::h_inode::*;
+use crate::pm::*;
 // use crate::recovery::*;
 use crate::inode_def::*;
 use crate::super_def::*;
 // use crate::tokens::*;
-use core::mem::size_of;
 use core::ptr;
 
 use kernel::bindings::{
-    d_make_root, dax_device, dax_direct_access, file_system_type, fs_context,
-    fs_context_operations, fs_dax_get_by_bdev, fs_parameter, fs_parameter__bindgen_ty_1,
-    fs_parse_result, fs_parse_result__bindgen_ty_1, get_next_ino, get_tree_bdev, inc_nlink,
-    init_user_ns, inode, inode_init_owner, kill_block_super, new_inode, pfn_t, register_filesystem,
-    set_nlink, super_block, super_operations, umode_t, unregister_filesystem,
-    vfs_parse_fs_param_source, ENOMEM, ENOPARAM, PAGE_SHIFT, S_IFDIR, S_IFMT,
+    d_make_root, dax_direct_access, file_system_type, fs_context, fs_context_operations,
+    fs_dax_get_by_bdev, fs_parameter, fs_parse_result, fs_parse_result__bindgen_ty_1,
+    get_tree_bdev, inode, kill_block_super, pfn_t, register_filesystem, super_block,
+    super_operations, unregister_filesystem, vfs_parse_fs_param_source, ENOMEM, ENOPARAM,
+    PAGE_SHIFT, S_IFDIR,
 };
-use kernel::c_types::{c_char, c_int, c_uint, c_ulong, c_void};
+use kernel::c_types::{c_int, c_void};
 use kernel::prelude::*;
 use kernel::{c_default_struct, c_str, PAGE_SIZE};
 
@@ -99,7 +99,7 @@ fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> Result<()> {
             pr_alert!("direct access failed\n");
             Err(Error::EINVAL)
         } else {
-            size *= (PAGE_SIZE as i64);
+            size *= PAGE_SIZE as i64;
             sbi.pm_size = u64::try_from(size).unwrap(); // should never fail - size is always positive
             sbi.virt_addr = virt_addr;
 
@@ -151,6 +151,52 @@ pub unsafe extern "C" fn hayleyfs_fill_super(
     }
 }
 
+/*
+ * Initialization dependencies
+ * Horizontal line through arrows means that the prior operation(s) must
+ * be flushed and fenced before the subsequent ones are allowed to occur
+ *
+ *                            ┌──────────────┐
+ *                            │              │
+ *                            │ zero bitmaps │
+ *                            │              │
+ *                            └──────┬───────┘
+ *                                   │
+ *                               ────┼────
+ *                                   │
+ *                       ┌───────────▼─────────────┐
+ *                       │                         │
+ *           ┌───────────┤ allocate reserved pages ├───────────┐
+ *           │           │                         │           │
+ *           │           └───────────┬─────────────┘           │
+ *           │                       │                         │
+ *           │                     ──┼─────────────────────────┼──
+ *           │                       │                         │
+ * ┌─────────▼─────────┐   ┌─────────▼───────────┐   ┌─────────▼──────────┐
+ * │                   │   │                     │   │                    │
+ * │ set up super block│   │ allocate root inode │   │ allocate dir page  │
+ * │                   │   │                     │   │                    │
+ * └───────────────────┘   └─────────┬────────┬──┘   └─────────┬──────────┘
+ *                                   │        │                │
+ *                           ────────┼────────┼────────────────┼─────────
+ *                                   │        │                │
+ *                                   │        └────────┐       │
+ *                                   │                 │       │
+ *                         ┌─────────▼────────┐     ┌──▼───────▼──────────┐
+ *                         │                  │     │                     │
+ *                         │ initialize inode │     │ initialize root dir │
+ *                         │                  │     │                     │
+ *                         └───────────────┬──┘     └──┬──────────────────┘
+ *                                         │           │
+ *                                   ──────┼───────────┼─────
+ *                                         │           │
+ *                                     ┌───▼───────────▼───┐
+ *                                     │                   │
+ *                                     │ add page to inode │
+ *                                     │                   │
+ *                                     └───────────────────┘
+ */
+
 #[no_mangle]
 fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()> {
     hayleyfs_alloc_sbi(fc, sb)?;
@@ -165,7 +211,8 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
 
     let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO)?;
     let mut root_i = unsafe { &mut *(root_i as *mut inode) };
-    // TODO: convert into a bindgen inode rather than doing this unsafe stuff
+
+    if sbi.mount_opts.init {}
 
     root_i.i_mode = S_IFDIR as u16;
     root_i.i_op = &HayleyfsDirInodeOps;
@@ -213,7 +260,7 @@ pub unsafe extern "C" fn hayleyfs_parse_params(
         opt if opt == opt_init => {
             // let mut sbi = hayleyfs_get_sbi_from_fc(fc);
             // TODO: safe abstraction around this
-            let mut mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
+            let mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
             mount_opts.init = true;
             pr_info!("opt init done\n");
         }
