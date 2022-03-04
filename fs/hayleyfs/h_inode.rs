@@ -80,16 +80,17 @@ fn _hayleyfs_mkdir(
         return Err(Error::ENAMETOOLONG);
     }
 
-    let ino = allocate_inode(sbi)?;
-    pr_info!("{:?}\n", ino.get_ino());
+    // let ino = allocate_inode(sbi)?;
+    // pr_info!("{:?}\n", ino.get_val());
 
     Ok(())
 }
 
 #[no_mangle]
-fn allocate_inode<'a>(sbi: &SbInfo) -> Result<CacheLineWrapper<'a, Clean, Alloc>> {
-    let bitmap = BitmapWrapper::read_inode_bitmap(sbi);
+fn allocate_inode(sbi: &SbInfo) -> Result<()> {
+    // let bitmap = InodeBitmapWrapper::read_bitmap(sbi);
 
-    let ino = bitmap.find_and_set_next_zero_bit()?;
-    Ok(ino)
+    // let ino = bitmap.find_and_set_next_zero_bit()?;
+    // Ok(ino)
+    Ok(())
 }

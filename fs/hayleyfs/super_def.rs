@@ -57,6 +57,7 @@ pub(crate) struct SbInfo {
 
 pub(crate) mod hayleyfs_bitmap {
     use super::*;
+
     // persistent cache lines making up a bitmap
     struct CacheLine {
         bits: [u8; 64],
@@ -73,16 +74,14 @@ pub(crate) mod hayleyfs_bitmap {
         }
     }
 
-    pub(crate) struct BitmapWrapper<'a, State = Clean, Op = Read> {
+    pub(crate) struct BitmapWrapper<'a, State, Op> {
         state: PhantomData<State>,
         op: PhantomData<Op>,
         bitmap: &'a mut Bitmap,
     }
 
-    // TODO: should potentially use mutexes so only one thread can read these
-    // things at a time
     impl<'a> BitmapWrapper<'a, Clean, Read> {
-        pub(crate) fn read_inode_bitmap(sbi: &SbInfo) -> Self {
+        pub(crate) fn read_bitmap(sbi: &SbInfo) -> Self {
             Self {
                 state: PhantomData,
                 op: PhantomData,
@@ -94,13 +93,13 @@ pub(crate) mod hayleyfs_bitmap {
         }
 
         // TODO: this should also be implemented for non-clean bitmaps
-        fn get_cacheline(self, index: usize) -> CacheLineWrapper<'a, Clean, Read> {
+        pub(crate) fn get_cacheline(self, index: usize) -> CacheLineWrapper<'a, Clean, Read> {
             let cacheline_num = index >> CACHELINE_BIT_SHIFT;
             CacheLineWrapper {
                 state: PhantomData,
                 op: PhantomData,
                 line: &mut self.bitmap.lines[cacheline_num],
-                ino: Some(index),
+                val: Some(index),
             }
         }
 
@@ -144,7 +143,7 @@ pub(crate) mod hayleyfs_bitmap {
                         state: PhantomData,
                         op: PhantomData,
                         line,
-                        ino: None,
+                        val: None,
                     })?;
                 }
             }
@@ -174,7 +173,7 @@ pub(crate) mod hayleyfs_bitmap {
     }
 
     impl<'a, Op> BitmapWrapper<'a, Clean, Op> {
-        pub(crate) fn inode_bitmap_coalesce_persist(
+        pub(crate) fn bitmap_coalesce_persist(
             cache_lines: Vec<CacheLineWrapper<'a, Dirty, Op>>,
             sbi: &SbInfo,
         ) -> Self {
@@ -203,7 +202,7 @@ pub(crate) mod hayleyfs_bitmap {
         state: PhantomData<State>,
         op: PhantomData<Op>,
         line: &'a mut CacheLine,
-        ino: Option<InodeNum>, // TODO: this could also be page; might need to be a set/vector?
+        val: Option<usize>, // TODO: this could also be page; might need to be a set/vector?
     }
 
     // methods that can be called on any cache line regardless of state
@@ -216,7 +215,7 @@ pub(crate) mod hayleyfs_bitmap {
                 state: PhantomData,
                 op: PhantomData,
                 line: self.line,
-                ino: Some(bit),
+                val: Some(bit),
             }
         }
 
@@ -230,13 +229,9 @@ pub(crate) mod hayleyfs_bitmap {
                 state: PhantomData,
                 op: PhantomData,
                 line: self.line,
-                ino: None,
+                val: None,
             }
         }
-
-        // pub(crate) fn fill(mut self, val: u64) -> CacheLineWrapper<'a, Dirty, Alloc> {
-
-        // }
 
         pub(crate) fn set_bit_persist(self, bit: InodeNum) -> CacheLineWrapper<'a, Clean, Alloc> {
             // TODO: is it faster to re-implement with flush and fence, or to call
@@ -249,12 +244,12 @@ pub(crate) mod hayleyfs_bitmap {
                 state: PhantomData,
                 op: PhantomData,
                 line: wrapper.line,
-                ino: Some(bit),
+                val: Some(bit),
             }
         }
 
-        pub(crate) fn get_ino(&self) -> Option<InodeNum> {
-            self.ino
+        pub(crate) fn get_val(&self) -> Option<usize> {
+            self.val
         }
     }
 
@@ -265,7 +260,7 @@ pub(crate) mod hayleyfs_bitmap {
                 state: PhantomData,
                 op: PhantomData,
                 line: self.line,
-                ino: self.ino,
+                val: self.val,
             }
         }
     }

@@ -37,6 +37,11 @@ pub(crate) struct Init;
 pub(crate) struct Valid;
 pub(crate) struct Zero;
 
+// semantic types used to indicate the type of a bitmap (data or inode)
+// to reduce some code repetition and prevent mistakes
+pub(crate) struct InoBmap;
+pub(crate) struct DataBmap;
+
 pub(crate) type PmPage = usize; // TODO: move this somewhere else
 
 extern "C" {
