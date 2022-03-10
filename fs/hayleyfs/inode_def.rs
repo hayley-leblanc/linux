@@ -14,7 +14,7 @@ enum NewInodeType {
     Mkdir,
 }
 
-mod hayleyfs_inode {
+pub(crate) mod hayleyfs_inode {
     use super::*;
 
     // inode that lives in PM

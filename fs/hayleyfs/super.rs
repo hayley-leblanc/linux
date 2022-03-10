@@ -14,6 +14,7 @@ mod super_def;
 
 use crate::def::*;
 use crate::h_inode::*;
+use crate::inode_def::hayleyfs_inode::*;
 use crate::inode_def::*;
 use crate::pm::*;
 use crate::super_def::hayleyfs_bitmap::*;
@@ -221,6 +222,18 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // implement for now
         let root_ino_wrapper = inode_bitmap.alloc_root_ino(&data_bitmap)?;
         let root_page_wrapper = data_bitmap.alloc_root_ino_page(&root_ino_wrapper)?;
+
+        let (root_ino_wrapper, root_page_wrapper) = fence_all!(root_ino_wrapper, root_page_wrapper);
+
+        // initialize inode
+        // requires a clean inode wrapper indirectly, since we can only get
+        // inode num from a clean one.
+        // TODO: theoretically could get around that restriction by hard coding
+        // or otherwise making up an inode num. but it makes implementation cleaner.
+        let ino = root_ino_wrapper.get_val().ok_or(Error::ENOENT)?;
+        let inode_wrapper = InodeWrapper::read_inode(ino, sbi);
+
+        // initialize root dir
     }
 
     root_i.i_mode = S_IFDIR as u16;

@@ -336,10 +336,6 @@ pub(crate) mod hayleyfs_bitmap {
             clwb(wrapper.line, CACHELINE_SIZE, false);
             Ok(CacheLineWrapper::new(wrapper.line, Some(bit)))
         }
-
-        pub(crate) fn get_val(&self) -> Option<usize> {
-            self.val
-        }
     }
 
     impl<'a, Op, Type> CacheLineWrapper<'a, Dirty, Op, Type> {
@@ -353,6 +349,19 @@ pub(crate) mod hayleyfs_bitmap {
         pub(crate) fn fence(self) -> CacheLineWrapper<'a, Clean, Op, Type> {
             sfence();
             CacheLineWrapper::new(self.line, self.val)
+        }
+
+        /// should only be used in the fence macro, since we know that we have issued
+        /// a store fence in that context. Unsafe anywhere else, since it allows us to
+        /// create an object that is marked Clean without making a fence
+        pub(crate) unsafe fn fence_unsafe(self) -> CacheLineWrapper<'a, Clean, Op, Type> {
+            CacheLineWrapper::new(self.line, self.val)
+        }
+    }
+
+    impl<'a, Op, Type> CacheLineWrapper<'a, Clean, Op, Type> {
+        pub(crate) fn get_val(&self) -> Option<usize> {
+            self.val
         }
     }
 

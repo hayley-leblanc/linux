@@ -55,3 +55,25 @@ pub(crate) fn sfence() {
         asm!("sfence");
     }
 }
+
+// TODO: check if these work! we are probably going to end up with weird nested
+// tuples with more than 2 objects being fenced. test that later.
+#[macro_export]
+macro_rules! fence_all {
+    ($($args:tt),+) => { {
+        sfence();
+        fence_obj!($($args),+)
+    }
+    }
+}
+
+#[macro_export]
+macro_rules! fence_obj {
+    ($p_obj:ident) => {
+        unsafe { $p_obj.fence_unsafe() }
+    };
+
+    ($p_obj0:ident, $($p_obj1:ident),+) => {
+        (fence_obj!{$p_obj0}, fence_obj!{$($p_obj1),+})
+    };
+}
