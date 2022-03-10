@@ -26,6 +26,9 @@ pub(crate) mod hayleyfs_dir {
             self.ino = ino;
             self.set_dentry_name(name);
             self.valid = false;
+            clwb(self, size_of::<HayleyfsDentry>(), true);
+            self.valid = true;
+            clwb(&self.valid, CACHELINE_SIZE, false);
         }
 
         fn set_dentry_name(&mut self, name: &str) {
@@ -66,7 +69,7 @@ pub(crate) mod hayleyfs_dir {
         /// returns the next unused dentry on the given page
         pub(crate) fn get_new_dentry(sbi: &SbInfo, page_no: PmPage) -> Result<Self> {
             let page_addr = sbi.virt_addr as usize + (page_no * PAGE_SIZE);
-            let mut page = unsafe { &mut *(page_addr as *mut DirPage) };
+            let page = unsafe { &mut *(page_addr as *mut DirPage) };
 
             // obtain the next unused dentry
             for dentry in page.dentries.iter_mut() {
@@ -84,7 +87,8 @@ pub(crate) mod hayleyfs_dir {
             name: &str,
         ) -> DentryWrapper<'a, Flushed, Init> {
             self.dentry.set_up(ino, name);
-            clwb(self.dentry, size_of::<HayleyfsDentry>(), false);
+
+            self.dentry.set_valid();
             DentryWrapper::new(self.dentry)
         }
     }

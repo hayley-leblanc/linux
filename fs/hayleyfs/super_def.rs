@@ -4,8 +4,7 @@ use crate::pm::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use kernel::bindings::{
-    dax_device, fs_context, fs_parameter_spec, inode, kgid_t, kuid_t, set_nlink, super_block,
-    umode_t,
+    dax_device, fs_parameter_spec, inode, kgid_t, kuid_t, set_nlink, super_block, umode_t,
 };
 use kernel::c_types::c_void;
 use kernel::prelude::*;
@@ -223,7 +222,7 @@ pub(crate) mod hayleyfs_bitmap {
         }
 
         pub(crate) fn zero_bitmap(
-            mut self,
+            self,
             sbi: &SbInfo,
         ) -> Result<BitmapWrapper<'a, Clean, Zero, Type>> {
             let mut modified_cache_lines = Vec::<CacheLineWrapper<'a, Dirty, Zero, Type>>::new();
@@ -310,7 +309,7 @@ pub(crate) mod hayleyfs_bitmap {
             }
         }
 
-        pub(crate) fn zero(mut self) -> CacheLineWrapper<'a, Dirty, Zero, Type> {
+        pub(crate) fn zero(self) -> CacheLineWrapper<'a, Dirty, Zero, Type> {
             for byte in self.line.bits.iter_mut() {
                 if *byte != 0 {
                     *byte = 0;
@@ -436,10 +435,10 @@ pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {
     sbi
 }
 
-pub(crate) fn hayleyfs_get_sbi_from_fc(fc: *mut fs_context) -> &'static mut SbInfo {
-    let sbi: &mut SbInfo = unsafe { &mut *((*fc).s_fs_info as *mut SbInfo) };
-    sbi
-}
+// pub(crate) fn hayleyfs_get_sbi_from_fc(fc: *mut fs_context) -> &'static mut SbInfo {
+//     let sbi: &mut SbInfo = unsafe { &mut *((*fc).s_fs_info as *mut SbInfo) };
+//     sbi
+// }
 
 pub(crate) fn set_nlink_safe(inode: &mut inode, n: u32) {
     unsafe { set_nlink(inode, n) };

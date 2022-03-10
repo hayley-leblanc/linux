@@ -218,7 +218,7 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         let data_bitmap = data_bitmap.alloc_reserved_pages(sbi)?;
 
         // initialize super block
-        let sb = SuperBlockWrapper::init(sbi, &data_bitmap);
+        let _sb = SuperBlockWrapper::init(sbi, &data_bitmap);
 
         // TODO: right now these functions enforce an ordering (inode bitmap before data bitmap)
         // that is not actually necessary for correctness because it's a little faster to
@@ -241,11 +241,12 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         let dentry0 = DentryWrapper::get_new_dentry(sbi, page_no)?;
         let dentry1 = DentryWrapper::get_new_dentry(sbi, page_no)?;
 
-        // TODO: initialize the dentries and then get everything flushing
         let dentry0 = dentry0.initialize_dentry(ino, ".");
         let dentry1 = dentry1.initialize_dentry(ino, "..");
 
         let (inode_wrapper, dentry0, dentry1) = fence_all!(inode_wrapper, dentry0, dentry1);
+
+        // add page to inode
     }
 
     root_i.i_mode = S_IFDIR as u16;
@@ -286,7 +287,6 @@ pub unsafe extern "C" fn hayleyfs_parse_params(
 
     match opt {
         opt if opt == opt_init => {
-            // let mut sbi = hayleyfs_get_sbi_from_fc(fc);
             // TODO: safe abstraction around this
             let mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
             mount_opts.init = true;
@@ -339,7 +339,7 @@ pub unsafe extern "C" fn hayleyfs_init_fs_context(fc: *mut fs_context) -> c_int 
     let mount_opts = Box::<HayleyfsMountOpts>::try_new_zeroed();
     match mount_opts {
         Ok(mount_opts) => {
-            let mut mount_opts = unsafe { mount_opts.assume_init() };
+            let mount_opts = unsafe { mount_opts.assume_init() };
             let opts_ptr = Box::into_raw(mount_opts) as *mut c_void;
             unsafe {
                 (*fc).ops = &HayleyfsContextOps;
