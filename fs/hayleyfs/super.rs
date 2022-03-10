@@ -216,8 +216,11 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // initialize super block
         let sb = SuperBlockWrapper::init(sbi, &data_bitmap);
 
-        // allocate root inode and a page for its data
-        // these require special methods that ensure the bitmaps have been set up properly
+        // TODO: right now these functions enforce an ordering (inode bitmap before data bitmap)
+        // that is not actually necessary for correctness because it's a little faster to
+        // implement for now
+        let root_ino_wrapper = inode_bitmap.alloc_root_ino(&data_bitmap)?;
+        let root_page_wrapper = data_bitmap.alloc_root_ino_page(&root_ino_wrapper)?;
     }
 
     root_i.i_mode = S_IFDIR as u16;

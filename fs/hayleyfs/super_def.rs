@@ -125,15 +125,39 @@ pub(crate) mod hayleyfs_bitmap {
         }
     }
 
+    impl<'a> BitmapWrapper<'a, Clean, Alloc, DataBmap> {
+        // TODO: this should also be allowed to take a clean zeroed wrapper
+        pub(crate) fn alloc_root_ino_page(
+            self,
+            _: &CacheLineWrapper<'a, Flushed, Alloc, InoBmap>,
+        ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, DataBmap>> {
+            self.find_and_set_next_zero_bit()
+        }
+    }
+
     impl<'a> BitmapWrapper<'a, Clean, Zero, InoBmap> {
         // TODO: could be extended to allocate other reserved inos
-        pub(crate) fn alloc_root_ino(self, sbi: &SbInfo) {
-            // ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, InoBmap>> {
+        // TODO: this should also be allowed to take a flushed allocated data bitmap wrapper
+        pub(crate) fn alloc_root_ino(
+            self,
+            _: &BitmapWrapper<'a, Clean, Alloc, DataBmap>,
+        ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, InoBmap>> {
             let ino = 1;
             let cache_line_num = get_cacheline_num(ino);
             let offset = ino & CACHELINE_MASK;
             // check if the bit is already set in our cache line - return an error if it is
-            // TODO: finish this
+            let cache_line = self.get_cacheline_by_line_index(cache_line_num);
+            let set = cache_line.test_and_set_bit(offset);
+            match set {
+                Ok(cache_line) => {
+                    // test_and_set-bit doesn't flush (because sometimes we
+                    // set multiple bits in the same cache line at the same time)
+                    // so we have to manually flush it here
+                    let cache_line = cache_line.flush();
+                    Ok(cache_line)
+                }
+                Err(e) => Err(e),
+            }
         }
     }
 
@@ -159,7 +183,7 @@ pub(crate) mod hayleyfs_bitmap {
         // TODO: this should also be implemented for non-clean bitmaps
         pub(crate) fn find_and_set_next_zero_bit(
             self,
-        ) -> Result<CacheLineWrapper<'a, Clean, Alloc, Type>> {
+        ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, Type>> {
             // starts at bit 1 to ignore bit 0 since we don't use inode 0
             let ino = unsafe {
                 hayleyfs_find_next_zero_bit(
@@ -176,7 +200,7 @@ pub(crate) mod hayleyfs_bitmap {
             let cache_line = self.get_cacheline(ino);
 
             // unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
-            let cache_line = cache_line.set_bit_persist(ino)?;
+            let cache_line = cache_line.set_bit_flush(ino)?;
 
             Ok(cache_line)
         }
@@ -299,6 +323,17 @@ pub(crate) mod hayleyfs_bitmap {
             // the existing set bit and then flush and fence?
             let wrapper = self.test_and_set_bit(bit)?;
             clwb(wrapper.line, CACHELINE_SIZE, true);
+            Ok(CacheLineWrapper::new(wrapper.line, Some(bit)))
+        }
+
+        pub(crate) fn set_bit_flush(
+            self,
+            bit: InodeNum,
+        ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, Type>> {
+            // TODO: is it faster to re-implement with flush and fence, or to call
+            // the existing set bit and then flush and fence?
+            let wrapper = self.test_and_set_bit(bit)?;
+            clwb(wrapper.line, CACHELINE_SIZE, false);
             Ok(CacheLineWrapper::new(wrapper.line, Some(bit)))
         }
 

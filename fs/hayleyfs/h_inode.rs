@@ -91,5 +91,6 @@ fn allocate_inode<'a>(sbi: &SbInfo) -> Result<CacheLineWrapper<'a, Clean, Alloc,
     let bitmap = BitmapWrapper::read_inode_bitmap(sbi);
 
     let ino = bitmap.find_and_set_next_zero_bit()?;
+    let ino = ino.fence();
     Ok(ino)
 }
