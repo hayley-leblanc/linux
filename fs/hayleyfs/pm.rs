@@ -62,7 +62,7 @@ pub(crate) fn sfence() {
 macro_rules! fence_all {
     ($($args:tt),+) => { {
         sfence();
-        fence_obj!($($args),+)
+        fence_obj!($($args),+).flatten_tuple()
     }
     }
 }

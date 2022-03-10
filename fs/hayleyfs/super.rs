@@ -7,12 +7,15 @@
 #![allow(clippy::missing_safety_doc)] // TODO: remove
 
 mod def;
+mod dir;
 mod h_inode;
 mod inode_def;
 mod pm;
 mod super_def;
 
 use crate::def::*;
+use crate::dir::hayleyfs_dir::*;
+use crate::dir::*;
 use crate::h_inode::*;
 use crate::inode_def::hayleyfs_inode::*;
 use crate::inode_def::*;
@@ -231,9 +234,18 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // TODO: theoretically could get around that restriction by hard coding
         // or otherwise making up an inode num. but it makes implementation cleaner.
         let ino = root_ino_wrapper.get_val().ok_or(Error::ENOENT)?;
-        let inode_wrapper = InodeWrapper::read_inode(ino, sbi);
+        let inode_wrapper = InodeWrapper::read_inode(ino, sbi).initialize_inode(ino);
 
-        // initialize root dir
+        // initialize root dir page
+        let page_no = root_page_wrapper.get_val().ok_or(Error::ENOENT)?;
+        let dentry0 = DentryWrapper::get_new_dentry(sbi, page_no)?;
+        let dentry1 = DentryWrapper::get_new_dentry(sbi, page_no)?;
+
+        // TODO: initialize the dentries and then get everything flushing
+        let dentry0 = dentry0.initialize_dentry(ino, ".");
+        let dentry1 = dentry1.initialize_dentry(ino, "..");
+
+        let (inode_wrapper, dentry0, dentry1) = fence_all!(inode_wrapper, dentry0, dentry1);
     }
 
     root_i.i_mode = S_IFDIR as u16;

@@ -2,6 +2,7 @@ use crate::def::*;
 use crate::super_def::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
+use kernel::bindings::S_IFDIR;
 use kernel::PAGE_SIZE;
 
 pub(crate) type InodeNum = usize;
@@ -26,13 +27,34 @@ pub(crate) mod hayleyfs_inode {
         data0: Option<PmPage>,
     }
 
+    impl HayleyfsInode {
+        fn set_up(&mut self, ino: InodeNum, data: Option<PmPage>, mode: u32, link_count: u16) {
+            self.ino = ino;
+            self.data0 = data;
+            self.mode = mode;
+            self.link_count = link_count;
+        }
+    }
+
     // we should only be able to modify inodes via an InodeWrapper that
     // handles flushing it and keeping track of the last operation
     // so the private/public stuff has to be set up so the compiler enforces that
-    pub(crate) struct InodeWrapper<'a, State = Clean, Op = Read> {
+    pub(crate) struct InodeWrapper<'a, State, Op> {
         state: PhantomData<State>,
         op: PhantomData<Op>,
         inode: &'a mut HayleyfsInode,
+    }
+
+    impl<'a, State, Op> PmObjWrapper for InodeWrapper<'a, State, Op> {}
+
+    impl<'a, State, Op> InodeWrapper<'a, State, Op> {
+        fn new(inode: &'a mut HayleyfsInode) -> Self {
+            Self {
+                state: PhantomData,
+                op: PhantomData,
+                inode,
+            }
+        }
     }
 
     impl<'a> InodeWrapper<'a, Clean, Read> {
@@ -45,6 +67,18 @@ pub(crate) mod hayleyfs_inode {
                 op: PhantomData,
                 inode,
             }
+        }
+
+        // TODO: add arguments for different types of files; right now this only does dirs
+        pub(crate) fn initialize_inode(self, ino: InodeNum) -> InodeWrapper<'a, Flushed, Init> {
+            self.inode.set_up(ino, None, S_IFDIR, 2);
+            InodeWrapper::new(self.inode)
+        }
+    }
+
+    impl<'a, Op> InodeWrapper<'a, Flushed, Op> {
+        pub(crate) unsafe fn fence_unsafe(self) -> InodeWrapper<'a, Clean, Op> {
+            InodeWrapper::new(self.inode)
         }
     }
 }

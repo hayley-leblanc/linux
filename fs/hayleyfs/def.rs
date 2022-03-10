@@ -32,27 +32,51 @@ pub(crate) struct Clean;
 
 // semantic types indicating the most recent type of modification to an object
 pub(crate) struct Read; // indicates no change since it was read. TODO: better name
-pub(crate) struct Alloc;
+pub(crate) struct Alloc; // TODO: might be more clear to have separate alloc, init, and uninit types
 pub(crate) struct Init;
 pub(crate) struct Valid;
 pub(crate) struct Zero;
-
-// marker traits that allow us to specify a subset of semantic types in a function sig
-// pub(crate) trait CleanOrFlush;
-// pub(crate) trait AllocOrZero;
-
-// impl CleanOrFlush for Clean {}
-// impl CleanOrFlush for Flushed {}
-
-// impl AllocOrZero for Alloc {}
-// impl AllocOrzero for Zero {}
 
 // semantic types used to indicate the type of a bitmap (data or inode)
 // to reduce some code repetition and prevent mistakes
 pub(crate) struct InoBmap;
 pub(crate) struct DataBmap;
 
+pub(crate) trait PmObjWrapper {}
+
 pub(crate) type PmPage = usize; // TODO: move this somewhere else
+
+pub(crate) trait Flatten {
+    type Output;
+
+    fn flatten_tuple(self) -> Self::Output;
+}
+
+impl<A, B> Flatten for (A, B)
+where
+    A: PmObjWrapper,
+    B: PmObjWrapper,
+{
+    type Output = (A, B);
+
+    fn flatten_tuple(self) -> Self::Output {
+        self
+    }
+}
+
+impl<A, B, C> Flatten for (A, (B, C))
+where
+    A: PmObjWrapper,
+    B: PmObjWrapper,
+    C: PmObjWrapper,
+{
+    type Output = (A, B, C);
+
+    fn flatten_tuple(self) -> Self::Output {
+        let (a, (b, c)) = self;
+        (a, b, c)
+    }
+}
 
 extern "C" {
     #[allow(improper_ctypes)]

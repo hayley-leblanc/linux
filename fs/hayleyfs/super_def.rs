@@ -82,6 +82,8 @@ pub(crate) mod hayleyfs_bitmap {
         bitmap: &'a mut Bitmap,
     }
 
+    impl<'a, State, Op, Type> PmObjWrapper for BitmapWrapper<'a, State, Op, Type> {}
+
     impl<'a, State, Op, Type> BitmapWrapper<'a, State, Op, Type> {
         fn new(bitmap: &'a mut Bitmap) -> Self {
             Self {
@@ -277,6 +279,8 @@ pub(crate) mod hayleyfs_bitmap {
         val: Option<usize>, // TODO: this could also be page; might need to be a set/vector?
     }
 
+    impl<'a, State, Op, Type> PmObjWrapper for CacheLineWrapper<'a, State, Op, Type> {}
+
     impl<'a, State, Op, Type> CacheLineWrapper<'a, State, Op, Type> {
         fn new(line: &'a mut CacheLine, val: Option<usize>) -> Self {
             Self {
@@ -395,6 +399,8 @@ pub(crate) mod hayleyfs_sb {
         op: PhantomData<Op>,
         sb: &'a mut HayleyfsSuperBlock,
     }
+
+    impl<'a, State, Op> PmObjWrapper for SuperBlockWrapper<'a, State, Op> {}
 
     impl<'a, State, Op> SuperBlockWrapper<'a, State, Op> {
         fn new(sb: &'a mut HayleyfsSuperBlock) -> Self {

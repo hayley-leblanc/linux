@@ -81,7 +81,6 @@ fn _hayleyfs_mkdir(
     }
 
     let ino = allocate_inode(sbi)?;
-    // pr_info!("{:?}\n", ino.get_val());
 
     Ok(())
 }
