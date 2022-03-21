@@ -1,8 +1,10 @@
 use crate::def::*;
+use crate::pm::*;
 use crate::super_def::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use kernel::bindings::S_IFDIR;
+use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
 pub(crate) type InodeNum = usize;
@@ -34,6 +36,10 @@ pub(crate) mod hayleyfs_inode {
             self.mode = mode;
             self.link_count = link_count;
         }
+
+        fn set_page(&mut self, page: Option<PmPage>) {
+            self.data0 = page;
+        }
     }
 
     // we should only be able to modify inodes via an InodeWrapper that
@@ -55,10 +61,30 @@ pub(crate) mod hayleyfs_inode {
                 inode,
             }
         }
+
+        pub(crate) fn get_data_page_no(&self) -> Option<PmPage> {
+            self.inode.data0
+        }
+
+        pub(crate) fn get_ino(&self) -> InodeNum {
+            self.inode.ino
+        }
+    }
+
+    impl<'a> InodeWrapper<'a, Clean, Init> {
+        // TODO: this should have a different soft updates indicator than Valid
+        // but it works for mkdir since we can't use the inode until it points to a valid page
+        pub(crate) fn add_dir_page(self, page: Option<PmPage>) -> InodeWrapper<'a, Clean, Valid> {
+            // TODO: should probably have some wrappers that return the dirty inode and force
+            // some clearer flush/fence ordering to make sure you remember to actually do it
+            self.inode.set_page(page);
+            clwb(&self.inode.data0, CACHELINE_SIZE, true);
+            InodeWrapper::new(self.inode)
+        }
     }
 
     impl<'a> InodeWrapper<'a, Clean, Read> {
-        pub(crate) fn read_inode(ino: InodeNum, sbi: &SbInfo) -> Self {
+        pub(crate) fn read_inode(sbi: &SbInfo, ino: InodeNum) -> Self {
             let addr = (PAGE_SIZE * INODE_PAGE) + (ino * size_of::<HayleyfsInode>());
             let addr = sbi.virt_addr as usize + addr;
             let inode = unsafe { &mut *(addr as *mut HayleyfsInode) };
@@ -72,11 +98,15 @@ pub(crate) mod hayleyfs_inode {
         // TODO: add arguments for different types of files; right now this only does dirs
         pub(crate) fn initialize_inode(self, ino: InodeNum) -> InodeWrapper<'a, Flushed, Init> {
             self.inode.set_up(ino, None, S_IFDIR, 2);
+            clwb(self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }
     }
 
     impl<'a, Op> InodeWrapper<'a, Flushed, Op> {
+        // intentionally does NOT call fence here; this is an unsafe function that
+        // should only be used when fencing multiple objects on a single fence call
+        // using the batch fence function/macro(whatever you end up using)
         pub(crate) unsafe fn fence_unsafe(self) -> InodeWrapper<'a, Clean, Op> {
             InodeWrapper::new(self.inode)
         }

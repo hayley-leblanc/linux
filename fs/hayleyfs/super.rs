@@ -234,7 +234,7 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // TODO: theoretically could get around that restriction by hard coding
         // or otherwise making up an inode num. but it makes implementation cleaner.
         let ino = root_ino_wrapper.get_val().ok_or(Error::ENOENT)?;
-        let inode_wrapper = InodeWrapper::read_inode(ino, sbi).initialize_inode(ino);
+        let inode_wrapper = InodeWrapper::read_inode(sbi, ino).initialize_inode(ino);
 
         // initialize root dir page
         let page_no = root_page_wrapper.get_val().ok_or(Error::ENOENT)?;
@@ -247,6 +247,7 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         let (inode_wrapper, dentry0, dentry1) = fence_all!(inode_wrapper, dentry0, dentry1);
 
         // add page to inode
+        let inode_wrapper = inode_wrapper.add_dir_page(Some(page_no));
     }
 
     root_i.i_mode = S_IFDIR as u16;
@@ -255,7 +256,7 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
 
     // TODO: hide in a function
     unsafe {
-        // root_i.__bindgen_anon_3.i_fop = &HayleyfsFileOps;
+        root_i.__bindgen_anon_3.i_fop = &HayleyfsFileOps;
         sb.s_op = &HayleyfsSuperOps;
         sb.s_root = d_make_root(root_i);
     }

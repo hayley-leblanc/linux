@@ -56,6 +56,10 @@ pub(crate) fn sfence() {
     }
 }
 
+// TODO: could instead use a trait object for a trait that all of the wrappers
+// implement. vector of Boxed trait objects + macro to build vector (copy std lib)
+// will need a nice way to convert vector to tuple at the end
+
 // TODO: check if these work! we are probably going to end up with weird nested
 // tuples with more than 2 objects being fenced. test that later.
 #[macro_export]
