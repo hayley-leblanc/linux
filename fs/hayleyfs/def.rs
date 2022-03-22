@@ -88,7 +88,7 @@ extern "C" {
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_set_bit(nr: usize, addr: *mut c_void) -> i32;
     #[allow(improper_ctypes)]
-    pub(crate) fn hayleyfs_test_bit(nr: usize, addr: *mut c_void) -> i32;
+    pub(crate) fn hayleyfs_test_bit(nr: usize, addr: *const c_void) -> i32;
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_find_next_zero_bit(
         addr: *mut c_ulong,

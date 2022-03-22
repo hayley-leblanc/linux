@@ -2,8 +2,6 @@
 #![allow(missing_docs)]
 #![allow(non_upper_case_globals)]
 #![feature(new_uninit)]
-// #![allow(unused)]
-// #![allow(clippy::needless_borrow)]
 #![allow(clippy::missing_safety_doc)] // TODO: remove
 
 mod def;
@@ -11,6 +9,7 @@ mod dir;
 mod h_inode;
 mod inode_def;
 mod pm;
+mod recovery;
 mod super_def;
 
 use crate::def::*;
@@ -19,6 +18,7 @@ use crate::h_inode::*;
 use crate::inode_def::hayleyfs_inode::*;
 use crate::inode_def::*;
 use crate::pm::*;
+use crate::recovery::*;
 use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::hayleyfs_sb::*;
 use crate::super_def::*;
@@ -256,6 +256,8 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // TODO: how do we enforce the use of the fence?
         let inode_wrapper =
             inode_wrapper.add_dir_page_fence(Some(page_no), self_dentry, parent_dentry);
+    } else {
+        hayleyfs_recovery(sbi)?;
     }
 
     root_i.i_mode = S_IFDIR as u16;

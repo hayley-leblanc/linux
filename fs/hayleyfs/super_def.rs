@@ -92,6 +92,13 @@ pub(crate) mod hayleyfs_bitmap {
                 bitmap,
             }
         }
+
+        // clippy tells me not to use the return, but the regular compiler doesn't understand if I don't
+        #[allow(clippy::needless_return)]
+        pub(crate) fn check_bit(&self, bit: usize) -> bool {
+            return unsafe { hayleyfs_test_bit(bit, self.bitmap as *const _ as *const c_void) }
+                == 1;
+        }
     }
 
     impl<'a> BitmapWrapper<'a, Clean, Read, InoBmap> {
@@ -493,11 +500,6 @@ pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {
     let sbi: &mut SbInfo = unsafe { &mut *((*sb).s_fs_info as *mut SbInfo) };
     sbi
 }
-
-// pub(crate) fn hayleyfs_get_sbi_from_fc(fc: *mut fs_context) -> &'static mut SbInfo {
-//     let sbi: &mut SbInfo = unsafe { &mut *((*fc).s_fs_info as *mut SbInfo) };
-//     sbi
-// }
 
 pub(crate) fn set_nlink_safe(inode: &mut inode, n: u32) {
     unsafe { set_nlink(inode, n) };
