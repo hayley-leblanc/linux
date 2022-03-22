@@ -54,7 +54,7 @@ pub(crate) mod hayleyfs_dir {
         // TODO: nicer abstractions for unsafe code here
 
         let inode = unsafe { &mut *(hayleyfs_file_inode(file) as *mut inode) };
-        let sb = unsafe { (*inode).i_sb };
+        let sb = inode.i_sb;
         let sbi = hayleyfs_get_sbi(sb);
         let pi = hayleyfs_inode::InodeWrapper::read_inode(sbi, inode.i_ino.try_into().unwrap());
         let ctx = unsafe { &mut *(ctx_raw as *mut dir_context) };
@@ -172,6 +172,7 @@ pub(crate) mod hayleyfs_dir {
             // obtain the next unused dentry
             for dentry in page.dentries.iter_mut() {
                 if !dentry.valid {
+                    // pr_info!("allocating dentry #{:?}\n", i);
                     return Ok(DentryWrapper::new(dentry));
                 }
             }
@@ -179,14 +180,37 @@ pub(crate) mod hayleyfs_dir {
             Err(Error::ENOSPC)
         }
 
-        pub(crate) fn initialize_dentry(
+        fn initialize_dentry(self, ino: InodeNum, name: &str) -> DentryWrapper<'a, Flushed, Init> {
+            pr_info!("initializing dentry {:?} for inode {:?}\n", name, ino);
+            self.dentry.set_up(ino, name);
+            DentryWrapper::new(self.dentry)
+        }
+
+        // the two inode wrappers are only used to enforce dependencies
+        pub(crate) fn initialize_mkdir_dentry(
             self,
             ino: InodeNum,
             name: &str,
+            _: &hayleyfs_inode::InodeWrapper<'a, Clean, Valid>,
+            _: &hayleyfs_inode::InodeWrapper<'a, Clean, Link>,
         ) -> DentryWrapper<'a, Flushed, Init> {
             self.dentry.set_up(ino, name);
             DentryWrapper::new(self.dentry)
         }
+    }
+
+    pub(crate) fn initialize_self_and_parent_dentries<'a>(
+        self_dentry: DentryWrapper<'a, Clean, Alloc>,
+        self_ino: InodeNum,
+        parent_dentry: DentryWrapper<'a, Clean, Alloc>,
+        parent_ino: InodeNum,
+    ) -> (
+        DentryWrapper<'a, Flushed, Init>,
+        DentryWrapper<'a, Flushed, Init>,
+    ) {
+        let self_dentry = self_dentry.initialize_dentry(self_ino, ".");
+        let parent_dentry = parent_dentry.initialize_dentry(parent_ino, "..");
+        (self_dentry, parent_dentry)
     }
 
     impl<'a, Op> DentryWrapper<'a, Flushed, Op> {

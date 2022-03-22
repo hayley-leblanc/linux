@@ -202,6 +202,8 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
     sbi.mount_opts = unsafe { *((*fc).fs_private as *mut HayleyfsMountOpts) }; // TODO: abstraction
     hayleyfs_get_pm_info(sb, sbi)?;
 
+    pr_info!("sbi virt addr: {:?}\n", sbi.virt_addr);
+
     sbi.mode = 0o755;
     sbi.uid = unsafe { hayleyfs_current_fsuid() };
     sbi.gid = unsafe { hayleyfs_current_fsgid() };
@@ -214,8 +216,13 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi).zero_bitmap(sbi)?;
         let data_bitmap = BitmapWrapper::read_data_bitmap(sbi).zero_bitmap(sbi)?;
 
+        // TODO: we need to zero out pages when we allocate them too (or at least mark metadata
+        // that is in them invalid)
+
         // allocate reserved pages
         let data_bitmap = data_bitmap.alloc_reserved_pages(sbi)?;
+
+        // TODO: should set inode 0 as in use since we don't actually want to allocate that
 
         // initialize super block
         let _sb = SuperBlockWrapper::init(sbi, &data_bitmap);
@@ -241,13 +248,14 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         let dentry0 = DentryWrapper::get_new_dentry(sbi, page_no)?;
         let dentry1 = DentryWrapper::get_new_dentry(sbi, page_no)?;
 
-        let dentry0 = dentry0.initialize_dentry(ino, ".");
-        let dentry1 = dentry1.initialize_dentry(ino, "..");
+        let (dentry0, dentry1) =
+            hayleyfs_dir::initialize_self_and_parent_dentries(dentry0, ino, dentry1, ino);
 
         let (inode_wrapper, dentry0, dentry1) = fence_all!(inode_wrapper, dentry0, dentry1);
 
         // add page to inode
-        let inode_wrapper = inode_wrapper.add_dir_page(Some(page_no));
+        // TODO: how do we enforce the use of the fence?
+        let inode_wrapper = inode_wrapper.add_dir_page_fence(Some(page_no));
     }
 
     root_i.i_mode = S_IFDIR as u16;

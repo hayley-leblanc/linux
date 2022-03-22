@@ -4,7 +4,6 @@ use crate::super_def::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use kernel::bindings::S_IFDIR;
-use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
 pub(crate) type InodeNum = usize;
@@ -12,7 +11,7 @@ pub(crate) type InodeNum = usize;
 // reserved inode nums
 pub(crate) const HAYLEYFS_ROOT_INO: InodeNum = 1;
 
-enum NewInodeType {
+pub(crate) enum NewInodeType {
     Create,
     Mkdir,
 }
@@ -39,6 +38,10 @@ pub(crate) mod hayleyfs_inode {
 
         fn set_page(&mut self, page: Option<PmPage>) {
             self.data0 = page;
+        }
+
+        fn inc_links(&mut self) {
+            self.link_count += 1;
         }
     }
 
@@ -74,7 +77,18 @@ pub(crate) mod hayleyfs_inode {
     impl<'a> InodeWrapper<'a, Clean, Init> {
         // TODO: this should have a different soft updates indicator than Valid
         // but it works for mkdir since we can't use the inode until it points to a valid page
-        pub(crate) fn add_dir_page(self, page: Option<PmPage>) -> InodeWrapper<'a, Clean, Valid> {
+        pub(crate) fn add_dir_page(self, page: Option<PmPage>) -> InodeWrapper<'a, Flushed, Valid> {
+            // TODO: should probably have some wrappers that return the dirty inode and force
+            // some clearer flush/fence ordering to make sure you remember to actually do it
+            self.inode.set_page(page);
+            clwb(&self.inode.data0, CACHELINE_SIZE, false);
+            InodeWrapper::new(self.inode)
+        }
+
+        pub(crate) fn add_dir_page_fence(
+            self,
+            page: Option<PmPage>,
+        ) -> InodeWrapper<'a, Clean, Valid> {
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
             self.inode.set_page(page);
@@ -98,6 +112,13 @@ pub(crate) mod hayleyfs_inode {
         // TODO: add arguments for different types of files; right now this only does dirs
         pub(crate) fn initialize_inode(self, ino: InodeNum) -> InodeWrapper<'a, Flushed, Init> {
             self.inode.set_up(ino, None, S_IFDIR, 2);
+            clwb(self.inode, size_of::<HayleyfsInode>(), false);
+            InodeWrapper::new(self.inode)
+        }
+
+        // TODO: this might need to go in a different impl
+        pub(crate) fn inc_links(self) -> InodeWrapper<'a, Flushed, Link> {
+            self.inode.inc_links();
             clwb(self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }

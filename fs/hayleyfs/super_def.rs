@@ -117,9 +117,11 @@ pub(crate) mod hayleyfs_bitmap {
         ) -> Result<BitmapWrapper<'a, Clean, Alloc, DataBmap>> {
             // TODO: right now, the set of reserved pages fits on one cache line. that will
             // PROBABLY always hold, but if it doesn't, make sure this is updated
-            let cache_line = self
-                .get_cacheline_by_line_index(0)
-                .set_reserved_page_bits()?;
+            let cache_line = self.get_cacheline_by_line_index(0);
+            let cache_line = cache_line.set_reserved_page_bits()?;
+            // let cache_line = self
+            //     .get_cacheline_by_line_index(0)
+            //     .set_reserved_page_bits()?;
             let mut vec = Vec::new();
             vec.try_push(cache_line)?;
             Ok(BitmapWrapper::<'a, Clean, _, DataBmap>::bitmap_coalesce_persist(vec, sbi))
@@ -185,12 +187,11 @@ pub(crate) mod hayleyfs_bitmap {
         pub(crate) fn find_and_set_next_zero_bit(
             self,
         ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, Type>> {
-            // starts at bit 1 to ignore bit 0 since we don't use inode 0
             let ino = unsafe {
                 hayleyfs_find_next_zero_bit(
                     self.bitmap as *mut _ as *mut u64,
                     (PAGE_SIZE * 8).try_into().unwrap(),
-                    2,
+                    0,
                 )
             };
 
@@ -199,6 +200,7 @@ pub(crate) mod hayleyfs_bitmap {
             }
 
             let cache_line = self.get_cacheline(ino);
+            pr_info!("cache line addr: {:p}\n", cache_line.line);
 
             // unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
             let cache_line = cache_line.set_bit_flush(ino)?;
@@ -213,6 +215,7 @@ pub(crate) mod hayleyfs_bitmap {
             F: Fn(&CacheLine) -> bool,
         {
             let mut vec = Vec::new();
+            pr_info!("filter cache lines bitmap: {:p}\n", &self.bitmap.lines);
             for line in self.bitmap.iter_mut() {
                 if f(line) {
                     vec.try_push(CacheLineWrapper::new(line, None))?;
@@ -220,12 +223,28 @@ pub(crate) mod hayleyfs_bitmap {
             }
             Ok(vec)
         }
+    }
+
+    impl<'a, Op> BitmapWrapper<'a, Clean, Op, DataBmap> {
+        pub(crate) fn bitmap_coalesce_persist(
+            cache_lines: Vec<CacheLineWrapper<'a, Dirty, Op, DataBmap>>,
+            sbi: &SbInfo,
+        ) -> Self {
+            for line in cache_lines {
+                line.flush();
+            }
+            sfence();
+            BitmapWrapper::new(unsafe {
+                &mut *((sbi.virt_addr as usize + (DATA_BITMAP_PAGE * PAGE_SIZE)) as *mut Bitmap)
+            })
+        }
 
         pub(crate) fn zero_bitmap(
             self,
             sbi: &SbInfo,
-        ) -> Result<BitmapWrapper<'a, Clean, Zero, Type>> {
-            let mut modified_cache_lines = Vec::<CacheLineWrapper<'a, Dirty, Zero, Type>>::new();
+        ) -> Result<BitmapWrapper<'a, Clean, Zero, DataBmap>> {
+            let mut modified_cache_lines =
+                Vec::<CacheLineWrapper<'a, Dirty, Zero, DataBmap>>::new();
             // figure out which cache lines have non-zero values
             let filter_closure = |c: &CacheLine| {
                 for byte in c.bits.iter() {
@@ -241,18 +260,17 @@ pub(crate) mod hayleyfs_bitmap {
                 let line = line.zero();
                 modified_cache_lines.try_push(line)?;
             }
-            Ok(
-                BitmapWrapper::<'a, Clean, _, Type>::bitmap_coalesce_persist(
-                    modified_cache_lines,
-                    sbi,
-                ),
-            )
+            let new_wrapper = BitmapWrapper::<'a, Clean, _, DataBmap>::bitmap_coalesce_persist(
+                modified_cache_lines,
+                sbi,
+            );
+            Ok(new_wrapper)
         }
     }
 
-    impl<'a, Op, Type> BitmapWrapper<'a, Clean, Op, Type> {
+    impl<'a, Op> BitmapWrapper<'a, Clean, Op, InoBmap> {
         pub(crate) fn bitmap_coalesce_persist(
-            cache_lines: Vec<CacheLineWrapper<'a, Dirty, Op, Type>>,
+            cache_lines: Vec<CacheLineWrapper<'a, Dirty, Op, InoBmap>>,
             sbi: &SbInfo,
         ) -> Self {
             for line in cache_lines {
@@ -260,8 +278,35 @@ pub(crate) mod hayleyfs_bitmap {
             }
             sfence();
             BitmapWrapper::new(unsafe {
-                &mut *((sbi.virt_addr as usize + (DATA_BITMAP_PAGE * PAGE_SIZE)) as *mut Bitmap)
+                &mut *((sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE)) as *mut Bitmap)
             })
+        }
+
+        pub(crate) fn zero_bitmap(
+            self,
+            sbi: &SbInfo,
+        ) -> Result<BitmapWrapper<'a, Clean, Zero, InoBmap>> {
+            let mut modified_cache_lines = Vec::<CacheLineWrapper<'a, Dirty, Zero, InoBmap>>::new();
+            // figure out which cache lines have non-zero values
+            let filter_closure = |c: &CacheLine| {
+                for byte in c.bits.iter() {
+                    if *byte != 0 {
+                        return true;
+                    }
+                }
+                false
+            };
+            let mut cache_lines = self.filter_cache_lines(filter_closure)?;
+            // set the cachelines to zero and save them in the modified lines vector
+            for line in cache_lines.drain(..) {
+                let line = line.zero();
+                modified_cache_lines.try_push(line)?;
+            }
+            let new_wrapper = BitmapWrapper::<'a, Clean, _, InoBmap>::bitmap_coalesce_persist(
+                modified_cache_lines,
+                sbi,
+            );
+            Ok(new_wrapper)
         }
     }
 
@@ -299,9 +344,9 @@ pub(crate) mod hayleyfs_bitmap {
             mut self,
             bit: usize,
         ) -> Result<CacheLineWrapper<'a, Dirty, Alloc, Type>> {
+            // THIS IS NOT WORKING
             let offset = bit & CACHELINE_MASK;
-            let bit_test =
-                unsafe { hayleyfs_set_bit(offset, &mut self.line as *mut _ as *mut c_void) };
+            let bit_test = unsafe { hayleyfs_set_bit(offset, self.line as *mut _ as *mut c_void) };
             if bit_test == 1 {
                 Err(Error::EEXIST)
             } else {
@@ -428,6 +473,16 @@ pub(crate) mod hayleyfs_sb {
             SuperBlockWrapper::<'a, Clean, _>::new_flush(sb)
         }
     }
+}
+
+// TODO: this should probably live somewhere else
+pub(crate) fn allocate_data_page<'a>(
+    sbi: &SbInfo,
+) -> Result<hayleyfs_bitmap::CacheLineWrapper<'a, Flushed, Alloc, DataBmap>> {
+    let bitmap = hayleyfs_bitmap::BitmapWrapper::read_data_bitmap(sbi);
+
+    let page_no = bitmap.find_and_set_next_zero_bit()?;
+    Ok(page_no)
 }
 
 pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {

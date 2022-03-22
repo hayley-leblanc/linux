@@ -31,11 +31,13 @@ pub(crate) struct Flushed;
 pub(crate) struct Clean;
 
 // semantic types indicating the most recent type of modification to an object
+// TODO: think more about what these should be once the fs works better
 pub(crate) struct Read; // indicates no change since it was read. TODO: better name
 pub(crate) struct Alloc; // TODO: might be more clear to have separate alloc, init, and uninit types
 pub(crate) struct Init;
 pub(crate) struct Valid;
 pub(crate) struct Zero;
+pub(crate) struct Link;
 
 // semantic types used to indicate the type of a bitmap (data or inode)
 // to reduce some code repetition and prevent mistakes
