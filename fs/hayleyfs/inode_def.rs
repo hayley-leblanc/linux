@@ -1,4 +1,5 @@
 use crate::def::*;
+use crate::dir::hayleyfs_dir::*;
 use crate::pm::*;
 use crate::super_def::*;
 use core::marker::PhantomData;
@@ -88,6 +89,8 @@ pub(crate) mod hayleyfs_inode {
         pub(crate) fn add_dir_page_fence(
             self,
             page: Option<PmPage>,
+            _: DentryWrapper<'a, Clean, Init>,
+            _: DentryWrapper<'a, Clean, Init>,
         ) -> InodeWrapper<'a, Clean, Valid> {
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it

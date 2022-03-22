@@ -14,7 +14,6 @@ mod pm;
 mod super_def;
 
 use crate::def::*;
-use crate::dir::hayleyfs_dir::*;
 use crate::dir::*;
 use crate::h_inode::*;
 use crate::inode_def::hayleyfs_inode::*;
@@ -153,7 +152,8 @@ pub unsafe extern "C" fn hayleyfs_fill_super(
  * Initialization dependencies
  * Horizontal line through arrows means that the prior operation(s) must
  * be flushed and fenced before the subsequent ones are allowed to occur
- *
+ * THIS IS NOT UP TO DATE
+ * TODO: update with more detailed directory page initialization
  *                             ┌──────────────┐
  *                             │              │
  *                             │ zero bitmaps │
@@ -245,17 +245,17 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
 
         // initialize root dir page
         let page_no = root_page_wrapper.get_val().ok_or(Error::ENOENT)?;
-        let dentry0 = DentryWrapper::get_new_dentry(sbi, page_no)?;
-        let dentry1 = DentryWrapper::get_new_dentry(sbi, page_no)?;
 
-        let (dentry0, dentry1) =
-            hayleyfs_dir::initialize_self_and_parent_dentries(dentry0, ino, dentry1, ino);
+        let (self_dentry, parent_dentry) =
+            hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, ino, ino)?;
 
-        let (inode_wrapper, dentry0, dentry1) = fence_all!(inode_wrapper, dentry0, dentry1);
+        let (inode_wrapper, self_dentry, parent_dentry) =
+            fence_all!(inode_wrapper, self_dentry, parent_dentry);
 
         // add page to inode
         // TODO: how do we enforce the use of the fence?
-        let inode_wrapper = inode_wrapper.add_dir_page_fence(Some(page_no));
+        let inode_wrapper =
+            inode_wrapper.add_dir_page_fence(Some(page_no), self_dentry, parent_dentry);
     }
 
     root_i.i_mode = S_IFDIR as u16;

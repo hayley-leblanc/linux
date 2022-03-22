@@ -145,12 +145,16 @@ pub(crate) mod hayleyfs_bitmap {
             self,
             _: &BitmapWrapper<'a, Clean, Alloc, DataBmap>,
         ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, InoBmap>> {
-            let ino = 1;
-            let cache_line_num = get_cacheline_num(ino);
-            let offset = ino & CACHELINE_MASK;
-            // check if the bit is already set in our cache line - return an error if it is
+            let cache_line_num = get_cacheline_num(0);
             let cache_line = self.get_cacheline_by_line_index(cache_line_num);
+
+            // set the 0th bit to make sure it doesn't accidentally get alloc'ed later
+            let cache_line = cache_line.test_and_set_bit(0)?;
+
+            let offset = 1 & CACHELINE_MASK;
+            // check if the bit is already set in our cache line - return an error if it is
             let set = cache_line.test_and_set_bit(offset);
+
             match set {
                 Ok(cache_line) => {
                     // test_and_set-bit doesn't flush (because sometimes we
@@ -341,7 +345,7 @@ pub(crate) mod hayleyfs_bitmap {
     impl<'a, State, Op, Type> CacheLineWrapper<'a, State, Op, Type> {
         // TODO: could also be pm page, not just inode num
         pub(crate) fn test_and_set_bit(
-            mut self,
+            self,
             bit: usize,
         ) -> Result<CacheLineWrapper<'a, Dirty, Alloc, Type>> {
             // THIS IS NOT WORKING

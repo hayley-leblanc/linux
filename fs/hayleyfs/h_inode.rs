@@ -67,7 +67,8 @@ unsafe extern "C" fn hayleyfs_mkdir(
     }
 }
 
-/*
+/* THIS IS NOT UP TO DATE
+ * TODO: update with more detailed dentry initialization dependencies
  *  ┌────────────────┐               ┌───────────────────┐
  *  │                │               │                   │
  *  │ allocate inode │               │ allocate dir page │
@@ -137,12 +138,8 @@ fn _hayleyfs_mkdir(
     let self_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, page_no)?;
     let parent_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, page_no)?;
 
-    let (self_dentry, parent_dentry) = hayleyfs_dir::initialize_self_and_parent_dentries(
-        self_dentry,
-        ino,
-        parent_dentry,
-        parent_ino,
-    );
+    let (self_dentry, parent_dentry) =
+        hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, ino, parent_ino)?;
 
     let (pi, self_dentry, parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
 

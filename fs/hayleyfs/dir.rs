@@ -22,7 +22,7 @@ pub(crate) mod hayleyfs_dir {
         dentries: [HayleyfsDentry; DENTRIES_PER_PAGE],
     }
 
-    impl DirPage {
+    impl<'a> DirPage {
         fn lookup_name(&self, name: &[u8]) -> Result<InodeNum> {
             for dentry in self.dentries.iter() {
                 if !dentry.is_valid() {
@@ -33,6 +33,24 @@ pub(crate) mod hayleyfs_dir {
             }
             Err(Error::ENOENT)
         }
+
+        fn iter_mut(&'a mut self) -> DirPageIterator<'a> {
+            DirPageIterator {
+                iter: self.dentries.as_mut_slice()[..].iter_mut(),
+            }
+        }
+    }
+
+    struct DirPageIterator<'a> {
+        iter: core::slice::IterMut<'a, HayleyfsDentry>,
+    }
+
+    impl<'a> Iterator for DirPageIterator<'a> {
+        type Item = DentryWrapper<'a, Clean, Read>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.iter.next().map(DentryWrapper::new) // clippy told me to do this, idk why it works
+        }
     }
 
     fn get_data_page_addr(sbi: &SbInfo, page_no: PmPage) -> *mut c_void {
@@ -42,6 +60,73 @@ pub(crate) mod hayleyfs_dir {
     // TODO: should probably not have the static lifetime
     fn get_dir_page(sbi: &SbInfo, page_no: PmPage) -> &'static mut DirPage {
         unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) }
+    }
+
+    pub(crate) struct DirPageWrapper<'a, State, Op> {
+        state: PhantomData<State>,
+        op: PhantomData<Op>,
+        dir_page: &'a mut DirPage,
+    }
+
+    impl<'a, State, Op> DirPageWrapper<'a, State, Op> {
+        fn new(dir_page: &'a mut DirPage) -> Self {
+            Self {
+                state: PhantomData,
+                op: PhantomData,
+                dir_page,
+            }
+        }
+    }
+
+    impl<'a> DirPageWrapper<'a, Clean, Read> {
+        pub(crate) fn read_dir_page(sbi: &SbInfo, page_no: PmPage) -> Self {
+            // TODO: some kind of check that it's actually a dir page
+            let addr = (sbi.virt_addr as usize) + (PAGE_SIZE * page_no);
+            let dir_page = unsafe { &mut *(addr as *mut DirPage) };
+            Self {
+                state: PhantomData,
+                op: PhantomData,
+                dir_page,
+            }
+        }
+
+        // TODO: include the page number in a structure somewhere - dir page wrapper itself?
+        // dentry wrapper? so we don't have to pass it around here
+        pub(crate) fn invalidate_dentries(
+            self,
+            sbi: &SbInfo,
+            page_no: PmPage,
+        ) -> Result<DirPageWrapper<'a, Clean, Zero>> {
+            let mut dentry_vec = Vec::new();
+
+            for dentry in self.dir_page.iter_mut() {
+                if dentry.is_valid() {
+                    let dentry = unsafe { dentry.set_invalid() };
+                    dentry_vec.try_push(dentry)?;
+                }
+            }
+
+            // turn vector of flushed dentries into a clean dir page wrapper
+            Ok(DirPageWrapper::dir_page_coalesce_persist(
+                sbi, dentry_vec, page_no,
+            ))
+        }
+    }
+
+    // TODO: should potentially allow coalescing more types of op
+    impl<'a> DirPageWrapper<'a, Clean, Zero> {
+        // TODO: should make it harder/impossible to provide an incorrect page no. would work better
+        // to check which page the dentries live on and get page number(s) that way
+        // TODO: this assumes that the dentries are all on the same page, which in the
+        // future they may not be
+        pub(crate) fn dir_page_coalesce_persist(
+            sbi: &SbInfo,
+            _: Vec<DentryWrapper<'a, Flushed, Zero>>,
+            page_no: PmPage,
+        ) -> Self {
+            sfence();
+            DirPageWrapper::new(get_dir_page(sbi, page_no))
+        }
     }
 
     #[no_mangle]
@@ -161,6 +246,20 @@ pub(crate) mod hayleyfs_dir {
                 dentry,
             }
         }
+
+        fn is_valid(&self) -> bool {
+            self.dentry.valid
+        }
+
+        // TODO: does this actually have to be unsafe?
+        // it is right now because I think setting something invalid at the wrong time
+        // will cause crash consistency issues and there are no restrictions on
+        // when this can be called
+        unsafe fn set_invalid(self) -> DentryWrapper<'a, Flushed, Zero> {
+            self.dentry.valid = false;
+            clwb(&self.dentry.valid, CACHELINE_SIZE, false);
+            DentryWrapper::new(self.dentry)
+        }
     }
 
     impl<'a> DentryWrapper<'a, Clean, Alloc> {
@@ -200,17 +299,28 @@ pub(crate) mod hayleyfs_dir {
     }
 
     pub(crate) fn initialize_self_and_parent_dentries<'a>(
-        self_dentry: DentryWrapper<'a, Clean, Alloc>,
+        sbi: &SbInfo,
+        page_no: PmPage,
         self_ino: InodeNum,
-        parent_dentry: DentryWrapper<'a, Clean, Alloc>,
         parent_ino: InodeNum,
-    ) -> (
+    ) -> Result<(
         DentryWrapper<'a, Flushed, Init>,
         DentryWrapper<'a, Flushed, Init>,
-    ) {
-        let self_dentry = self_dentry.initialize_dentry(self_ino, ".");
-        let parent_dentry = parent_dentry.initialize_dentry(parent_ino, "..");
-        (self_dentry, parent_dentry)
+    )> {
+        // 1. invalidate all existing dentries in the page
+        let dir_page =
+            DirPageWrapper::read_dir_page(sbi, page_no).invalidate_dentries(sbi, page_no);
+
+        // 2. set up self and parent dentries
+        // since we just invalidated all of the dentries in the page, we don't need to
+        // do anything special to obtain these
+        let self_dentry =
+            DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(self_ino, ".");
+        let parent_dentry =
+            DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(parent_ino, "..");
+
+        // 4. return them
+        Ok((self_dentry, parent_dentry))
     }
 
     impl<'a, Op> DentryWrapper<'a, Flushed, Op> {
