@@ -41,7 +41,7 @@ pub(crate) mod hayleyfs_dir {
         }
     }
 
-    struct DirPageIterator<'a> {
+    pub(crate) struct DirPageIterator<'a> {
         iter: core::slice::IterMut<'a, HayleyfsDentry>,
     }
 
@@ -75,6 +75,10 @@ pub(crate) mod hayleyfs_dir {
                 op: PhantomData,
                 dir_page,
             }
+        }
+
+        pub(crate) fn iter_mut(&'a mut self) -> DirPageIterator<'a> {
+            self.dir_page.iter_mut()
         }
     }
 
@@ -119,6 +123,8 @@ pub(crate) mod hayleyfs_dir {
         // to check which page the dentries live on and get page number(s) that way
         // TODO: this assumes that the dentries are all on the same page, which in the
         // future they may not be
+        // TODO: the caller could provide an empty directory and obtain a clean dir page wrapper
+        // when they have not actually flushed the necessary things.....
         pub(crate) fn dir_page_coalesce_persist(
             sbi: &SbInfo,
             _: Vec<DentryWrapper<'a, Flushed, Zero>>,
@@ -141,7 +147,7 @@ pub(crate) mod hayleyfs_dir {
         let inode = unsafe { &mut *(hayleyfs_file_inode(file) as *mut inode) };
         let sb = inode.i_sb;
         let sbi = hayleyfs_get_sbi(sb);
-        let pi = hayleyfs_inode::InodeWrapper::read_inode(sbi, inode.i_ino.try_into().unwrap());
+        let pi = hayleyfs_inode::InodeWrapper::read_inode(sbi, &(inode.i_ino.try_into().unwrap()));
         let ctx = unsafe { &mut *(ctx_raw as *mut dir_context) };
 
         if ctx.pos == READDIR_END {
@@ -247,8 +253,16 @@ pub(crate) mod hayleyfs_dir {
             }
         }
 
-        fn is_valid(&self) -> bool {
+        pub(crate) fn is_valid(&self) -> bool {
             self.dentry.valid
+        }
+
+        pub(crate) fn get_name(&self) -> &[u8] {
+            self.dentry.get_name()
+        }
+
+        pub(crate) fn get_ino(&self) -> InodeNum {
+            self.dentry.get_ino()
         }
 
         // TODO: does this actually have to be unsafe?

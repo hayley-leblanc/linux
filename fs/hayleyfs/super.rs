@@ -241,7 +241,7 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // TODO: theoretically could get around that restriction by hard coding
         // or otherwise making up an inode num. but it makes implementation cleaner.
         let ino = root_ino_wrapper.get_val().ok_or(Error::ENOENT)?;
-        let inode_wrapper = InodeWrapper::read_inode(sbi, ino).initialize_inode(ino);
+        let inode_wrapper = InodeWrapper::read_inode(sbi, &ino).initialize_inode(ino);
 
         // initialize root dir page
         let page_no = root_page_wrapper.get_val().ok_or(Error::ENOENT)?;

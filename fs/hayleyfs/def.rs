@@ -7,6 +7,8 @@ use kernel::PAGE_SIZE;
 
 pub(crate) const __LOG_PREFIX: &[u8] = b"hayleyfs\0";
 
+pub(crate) const ROOT_INO: usize = 1;
+
 pub(crate) const SUPER_BLOCK_PAGE: usize = 0;
 pub(crate) const INODE_BITMAP_PAGE: usize = 1;
 pub(crate) const INODE_PAGE: usize = 2;

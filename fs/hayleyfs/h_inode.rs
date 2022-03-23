@@ -129,7 +129,7 @@ fn _hayleyfs_mkdir(
     let ino = ino.get_val().unwrap();
     let parent_ino = dir.i_ino.try_into().unwrap();
 
-    let pi = InodeWrapper::read_inode(sbi, ino);
+    let pi = InodeWrapper::read_inode(sbi, &ino);
     let pi = pi.initialize_inode(ino);
 
     // initialize dentries
@@ -144,7 +144,7 @@ fn _hayleyfs_mkdir(
     let (pi, self_dentry, parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
 
     // increment parent link count
-    let parent_pi = InodeWrapper::read_inode(sbi, parent_ino);
+    let parent_pi = InodeWrapper::read_inode(sbi, &parent_ino);
     let parent_pi = parent_pi.inc_links();
 
     // add page with newly initialized dentries to the new inode
@@ -247,7 +247,7 @@ pub(crate) fn _hayleyfs_lookup(dir: &mut inode, dentry: &mut dentry, flags: u32)
     // look up parent inode
     // TODO: check that this is actually a directory and return an error if it isn't
     // TODO: don't panic if type conversion fails
-    let parent_pi = InodeWrapper::read_inode(sbi, dir.i_ino.try_into().unwrap());
+    let parent_pi = InodeWrapper::read_inode(sbi, &(dir.i_ino.try_into().unwrap()));
 
     // TODO: finish - can test fs mounting once this is done
     match parent_pi.get_data_page_no() {

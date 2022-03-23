@@ -73,6 +73,19 @@ pub(crate) mod hayleyfs_inode {
         pub(crate) fn get_ino(&self) -> InodeNum {
             self.inode.ino
         }
+
+        pub(crate) fn is_dir(&self) -> bool {
+            (self.inode.mode & S_IFDIR) != 0
+        }
+
+        pub(crate) fn zero_inode(self) -> InodeWrapper<'a, Clean, Zero> {
+            self.inode.ino = 0;
+            self.inode.data0 = None;
+            self.inode.mode = 0;
+            self.inode.link_count = 0;
+            clwb(&self.inode, size_of::<HayleyfsInode>(), true);
+            InodeWrapper::new(self.inode)
+        }
     }
 
     impl<'a> InodeWrapper<'a, Clean, Init> {
@@ -101,7 +114,7 @@ pub(crate) mod hayleyfs_inode {
     }
 
     impl<'a> InodeWrapper<'a, Clean, Read> {
-        pub(crate) fn read_inode(sbi: &SbInfo, ino: InodeNum) -> Self {
+        pub(crate) fn read_inode(sbi: &SbInfo, ino: &InodeNum) -> Self {
             let addr = (PAGE_SIZE * INODE_PAGE) + (ino * size_of::<HayleyfsInode>());
             let addr = sbi.virt_addr as usize + addr;
             let inode = unsafe { &mut *(addr as *mut HayleyfsInode) };
