@@ -213,49 +213,51 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
 
     if sbi.mount_opts.init {
         // zero bitmaps
-        let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi).zero_bitmap(sbi)?;
-        let data_bitmap = BitmapWrapper::read_data_bitmap(sbi).zero_bitmap(sbi)?;
+        let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi).zero_bitmap()?;
+        let mut data_bitmap = BitmapWrapper::read_data_bitmap(sbi).zero_bitmap()?;
 
         // TODO: we need to zero out pages when we allocate them too (or at least mark metadata
         // that is in them invalid)
 
         // allocate reserved pages
-        let data_bitmap = data_bitmap.alloc_reserved_pages(sbi)?;
-
-        // TODO: should set inode 0 as in use since we don't actually want to allocate that
+        let data_bitmap = set_bits!(
+            data_bitmap,
+            SUPER_BLOCK_PAGE,
+            INODE_BITMAP_PAGE,
+            INODE_PAGE,
+            DATA_BITMAP_PAGE
+        )?
+        .persist();
 
         // initialize super block
         let _sb = SuperBlockWrapper::init(sbi, &data_bitmap);
 
-        // TODO: right now these functions enforce an ordering (inode bitmap before data bitmap)
-        // that is not actually necessary for correctness because it's a little faster to
-        // implement for now
-        let root_ino_wrapper = inode_bitmap.alloc_root_ino(&data_bitmap)?;
-        let root_page_wrapper = data_bitmap.alloc_root_ino_page(&root_ino_wrapper)?;
+        let (page_no, data_bitmap) = data_bitmap.alloc_root_ino_page(&inode_bitmap)?;
+        let (root_ino, inode_bitmap) = inode_bitmap.alloc_root_ino(&data_bitmap)?;
 
-        let (root_ino_wrapper, root_page_wrapper) = fence_all!(root_ino_wrapper, root_page_wrapper);
+        let (data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
 
-        // initialize inode
-        // requires a clean inode wrapper indirectly, since we can only get
-        // inode num from a clean one.
-        // TODO: theoretically could get around that restriction by hard coding
-        // or otherwise making up an inode num. but it makes implementation cleaner.
-        let ino = root_ino_wrapper.get_val().ok_or(Error::ENOENT)?;
-        let inode_wrapper = InodeWrapper::read_inode(sbi, &ino).initialize_inode(ino);
+        // // initialize inode
+        // // requires a clean inode wrapper indirectly, since we can only get
+        // // inode num from a clean one.
+        // // TODO: theoretically could get around that restriction by hard coding
+        // // or otherwise making up an inode num. but it makes implementation cleaner.
+        // let ino = root_ino_wrapper.get_val().ok_or(Error::ENOENT)?;
+        let inode_wrapper = InodeWrapper::read_inode(sbi, &root_ino).initialize_inode(root_ino);
 
-        // initialize root dir page
-        let page_no = root_page_wrapper.get_val().ok_or(Error::ENOENT)?;
+        // // initialize root dir page
+        // let page_no = root_page_wrapper.get_val().ok_or(Error::ENOENT)?;
 
-        let (self_dentry, parent_dentry) =
-            hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, ino, ino)?;
+        // let (self_dentry, parent_dentry) =
+        //     hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, ino, ino)?;
 
-        let (inode_wrapper, self_dentry, parent_dentry) =
-            fence_all!(inode_wrapper, self_dentry, parent_dentry);
+        // let (inode_wrapper, self_dentry, parent_dentry) =
+        //     fence_all!(inode_wrapper, self_dentry, parent_dentry);
 
-        // add page to inode
-        // TODO: how do we enforce the use of the fence?
-        let inode_wrapper =
-            inode_wrapper.add_dir_page_fence(Some(page_no), self_dentry, parent_dentry);
+        // // add page to inode
+        // // TODO: how do we enforce the use of the fence?
+        // let inode_wrapper =
+        //     inode_wrapper.add_dir_page_fence(Some(page_no), self_dentry, parent_dentry);
     } else {
         hayleyfs_recovery(sbi)?;
     }

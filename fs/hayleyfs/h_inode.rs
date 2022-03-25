@@ -121,59 +121,59 @@ fn _hayleyfs_mkdir(
         return Err(Error::ENAMETOOLONG);
     }
 
-    let ino = allocate_inode(sbi)?;
-    let page_no = allocate_data_page(sbi)?;
+    // let ino = allocate_inode(sbi)?;
+    // let page_no = allocate_data_page(sbi)?;
 
-    let (ino, page_no) = fence_all!(ino, page_no);
-    // TODO: ensure we can't panic on the unwraps
-    let ino = ino.get_val().unwrap();
-    let parent_ino = dir.i_ino.try_into().unwrap();
+    // let (ino, page_no) = fence_all!(ino, page_no);
+    // // TODO: ensure we can't panic on the unwraps
+    // let ino = ino.get_val().unwrap();
+    // let parent_ino = dir.i_ino.try_into().unwrap();
 
-    let pi = InodeWrapper::read_inode(sbi, &ino);
-    let pi = pi.initialize_inode(ino);
+    // let pi = InodeWrapper::read_inode(sbi, &ino);
+    // let pi = pi.initialize_inode(ino);
 
-    // initialize dentries
-    // TODO: ensure we can't panic on the unwrap
-    let page_no = page_no.get_val().unwrap();
-    let self_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, page_no)?;
-    let parent_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, page_no)?;
+    // // initialize dentries
+    // // TODO: ensure we can't panic on the unwrap
+    // let page_no = page_no.get_val().unwrap();
+    // let self_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, page_no)?;
+    // let parent_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, page_no)?;
 
-    let (self_dentry, parent_dentry) =
-        hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, ino, parent_ino)?;
+    // let (self_dentry, parent_dentry) =
+    //     hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, ino, parent_ino)?;
 
-    let (pi, self_dentry, parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
+    // let (pi, self_dentry, parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
 
-    // increment parent link count
-    let parent_pi = InodeWrapper::read_inode(sbi, &parent_ino);
-    let parent_pi = parent_pi.inc_links();
+    // // increment parent link count
+    // let parent_pi = InodeWrapper::read_inode(sbi, &parent_ino);
+    // let parent_pi = parent_pi.inc_links();
 
-    // add page with newly initialized dentries to the new inode
-    let pi = pi.add_dir_page(Some(page_no));
+    // // add page with newly initialized dentries to the new inode
+    // let pi = pi.add_dir_page(Some(page_no));
 
-    let (pi, parent_pi) = fence_all!(pi, parent_pi);
+    // let (pi, parent_pi) = fence_all!(pi, parent_pi);
 
-    // add new dentry to parent
-    // we can read the dentry at any time, but we can't actually modify it without methods
-    // that require proof of link inc and new inode init
-    // TODO: handle panic
-    let new_dentry =
-        hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
+    // // add new dentry to parent
+    // // we can read the dentry at any time, but we can't actually modify it without methods
+    // // that require proof of link inc and new inode init
+    // // TODO: handle panic
+    // let new_dentry =
+    //     hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
 
-    // TODO: actually set up the new dentry
+    // // TODO: actually set up the new dentry
 
-    let new_dentry =
-        new_dentry.initialize_mkdir_dentry(ino, dentry_name.to_str()?, &pi, &parent_pi);
+    // let new_dentry =
+    //     new_dentry.initialize_mkdir_dentry(ino, dentry_name.to_str()?, &pi, &parent_pi);
 
-    // set up vfs inode
-    // TODO: what if this fails? need to roll back gracefully
-    // TODO: at what point should this actually happen? doing it early would reduce the amount
-    // of rollback work we need to do; would it cause correctness issues?
-    let inode = hayleyfs_new_vfs_inode(sb, dir, pi, mnt_userns, mode, NewInodeType::Mkdir);
-    unsafe {
-        d_instantiate(dentry, inode);
-        inc_nlink(dir as *mut inode);
-        unlock_new_inode(inode);
-    };
+    // // set up vfs inode
+    // // TODO: what if this fails? need to roll back gracefully
+    // // TODO: at what point should this actually happen? doing it early would reduce the amount
+    // // of rollback work we need to do; would it cause correctness issues?
+    // let inode = hayleyfs_new_vfs_inode(sb, dir, pi, mnt_userns, mode, NewInodeType::Mkdir);
+    // unsafe {
+    //     d_instantiate(dentry, inode);
+    //     inc_nlink(dir as *mut inode);
+    //     unlock_new_inode(inode);
+    // };
 
     Ok(())
 }
@@ -214,14 +214,14 @@ fn hayleyfs_new_vfs_inode<'a, Op>(
     inode
 }
 
-#[no_mangle]
-fn allocate_inode<'a>(sbi: &SbInfo) -> Result<CacheLineWrapper<'a, Flushed, Alloc, InoBmap>> {
-    let bitmap = BitmapWrapper::read_inode_bitmap(sbi);
+// #[no_mangle]
+// fn allocate_inode<'a>(sbi: &SbInfo) -> Result<CacheLineWrapper<'a, Flushed, Alloc, InoBmap>> {
+//     let bitmap = BitmapWrapper::read_inode_bitmap(sbi);
 
-    let ino = bitmap.find_and_set_next_zero_bit()?;
-    // let ino = ino.fence();
-    Ok(ino)
-}
+//     let ino = bitmap.find_and_set_next_zero_bit()?;
+//     // let ino = ino.fence();
+//     Ok(ino)
+// }
 
 #[no_mangle]
 unsafe extern "C" fn hayleyfs_lookup(

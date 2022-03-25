@@ -8,6 +8,7 @@ use kernel::bindings::{
 };
 use kernel::c_types::c_void;
 use kernel::prelude::*;
+use kernel::rbtree::RBTree;
 use kernel::{c_default_struct, fsparam_flag, fsparam_string, fsparam_u32, PAGE_SIZE};
 
 #[repr(C)]
@@ -60,7 +61,7 @@ pub(crate) mod hayleyfs_bitmap {
 
     // persistent cache lines making up a bitmap
     struct CacheLine {
-        bits: [u8; 64],
+        bits: [u64; 8],
     }
 
     // persistent bitmap
@@ -79,17 +80,19 @@ pub(crate) mod hayleyfs_bitmap {
         op: PhantomData<Op>,
         bm_type: PhantomData<Type>,
         bitmap: &'a mut Bitmap,
+        dirty_cache_lines: RBTree<usize, ()>,
     }
 
     impl<'a, State, Op, Type> PmObjWrapper for BitmapWrapper<'a, State, Op, Type> {}
 
     impl<'a, State, Op, Type> BitmapWrapper<'a, State, Op, Type> {
-        fn new(bitmap: &'a mut Bitmap) -> Self {
+        fn new(bitmap: &'a mut Bitmap, dirty_cache_lines: RBTree<usize, ()>) -> Self {
             Self {
                 state: PhantomData,
                 op: PhantomData,
                 bm_type: PhantomData,
                 bitmap,
+                dirty_cache_lines,
             }
         }
 
@@ -103,102 +106,108 @@ pub(crate) mod hayleyfs_bitmap {
 
     impl<'a> BitmapWrapper<'a, Clean, Read, InoBmap> {
         pub(crate) fn read_inode_bitmap(sbi: &SbInfo) -> Self {
-            BitmapWrapper::new(unsafe {
-                &mut *((sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE)) as *mut Bitmap)
-            })
+            BitmapWrapper::new(
+                unsafe {
+                    &mut *((sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE))
+                        as *mut Bitmap)
+                },
+                RBTree::new(),
+            )
         }
     }
 
     impl<'a> BitmapWrapper<'a, Clean, Read, DataBmap> {
         pub(crate) fn read_data_bitmap(sbi: &SbInfo) -> Self {
-            BitmapWrapper::new(unsafe {
-                &mut *((sbi.virt_addr as usize + (DATA_BITMAP_PAGE * PAGE_SIZE)) as *mut Bitmap)
-            })
+            BitmapWrapper::new(
+                unsafe {
+                    &mut *((sbi.virt_addr as usize + (DATA_BITMAP_PAGE * PAGE_SIZE)) as *mut Bitmap)
+                },
+                RBTree::new(),
+            )
         }
     }
 
-    impl<'a> BitmapWrapper<'a, Clean, Zero, DataBmap> {
-        pub(crate) fn alloc_reserved_pages(
-            self,
-            sbi: &SbInfo,
-        ) -> Result<BitmapWrapper<'a, Clean, Alloc, DataBmap>> {
-            // TODO: right now, the set of reserved pages fits on one cache line. that will
-            // PROBABLY always hold, but if it doesn't, make sure this is updated
-            let cache_line = self.get_cacheline_by_line_index(0);
-            let cache_line = cache_line.set_reserved_page_bits()?;
-            // let cache_line = self
-            //     .get_cacheline_by_line_index(0)
-            //     .set_reserved_page_bits()?;
-            let mut vec = Vec::new();
-            vec.try_push(cache_line)?;
-            Ok(BitmapWrapper::<'a, Clean, _, DataBmap>::bitmap_coalesce_persist(vec, sbi))
+    /// sets multiple bits in a bitmap, ultimately returning a dirty bitmap wrapper
+    /// or an error if any of the set bits are invalid
+    /// TODO: need some way to roll back if we've already set some of the other bits
+    #[macro_export]
+    macro_rules! set_bits {
+        ($bitmap:ident, $b:ident) => {
+            $bitmap.set_bit($b)
+        };
+        ($bitmap:ident, $b0:ident, $($b1:ident),+) => { {
+            let res = unsafe { $bitmap.set_bit_unsafe($b0) };
+            match res {
+                Ok(_) => set_bits!{$bitmap, $($b1),+},
+                Err(e) => Err(e)
+            }
+        }
+        };
+    }
+
+    impl<'a, State, Op, Type> BitmapWrapper<'a, State, Op, Type> {
+        /// Safety: only safe to use if you will subsequently call set_bit on another bit,
+        /// as in the set_bits! macro
+        pub(crate) unsafe fn set_bit_unsafe(&mut self, bit: usize) -> Result<()> {
+            if bit > PAGE_SIZE * 8 {
+                return Err(Error::EINVAL);
+            }
+            unsafe { hayleyfs_set_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+            self.dirty_cache_lines
+                .try_insert(get_cacheline_num(bit), ())?;
+            Ok(())
+        }
+
+        pub(crate) fn set_bit(
+            mut self,
+            bit: usize,
+        ) -> Result<BitmapWrapper<'a, Dirty, Alloc, Type>> {
+            if bit > PAGE_SIZE * 8 {
+                return Err(Error::EINVAL);
+            }
+            self.dirty_cache_lines
+                .try_insert(get_cacheline_num(bit), ())?;
+            unsafe { hayleyfs_set_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+
+            Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
         }
     }
 
     impl<'a> BitmapWrapper<'a, Clean, Alloc, DataBmap> {
-        // TODO: this should also be allowed to take a clean zeroed wrapper
+        // TODO: this should also be allowed to take in a clean zeroed wrapper
         pub(crate) fn alloc_root_ino_page(
             self,
-            _: &CacheLineWrapper<'a, Flushed, Alloc, InoBmap>,
-        ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, DataBmap>> {
-            self.find_and_set_next_zero_bit()
+            _: &BitmapWrapper<'a, Clean, Zero, InoBmap>,
+        ) -> Result<(PmPage, BitmapWrapper<'a, Flushed, Alloc, DataBmap>)> {
+            let (page_no, bitmap) = self.find_and_set_next_zero_bit()?;
+            let bitmap = bitmap.flush();
+            Ok((page_no, bitmap))
+        }
+    }
+
+    impl<'a, Op, Type> BitmapWrapper<'a, Flushed, Op, Type> {
+        pub(crate) unsafe fn fence_unsafe(self) -> BitmapWrapper<'a, Clean, Op, Type> {
+            BitmapWrapper::new(self.bitmap, self.dirty_cache_lines)
         }
     }
 
     impl<'a> BitmapWrapper<'a, Clean, Zero, InoBmap> {
-        // TODO: could be extended to allocate other reserved inos
-        // TODO: this should also be allowed to take a flushed allocated data bitmap wrapper
         pub(crate) fn alloc_root_ino(
-            self,
-            _: &BitmapWrapper<'a, Clean, Alloc, DataBmap>,
-        ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, InoBmap>> {
-            let cache_line_num = get_cacheline_num(0);
-            let cache_line = self.get_cacheline_by_line_index(cache_line_num);
-
-            // set the 0th bit to make sure it doesn't accidentally get alloc'ed later
-            let cache_line = cache_line.test_and_set_bit(0)?;
-
-            let offset = 1 & CACHELINE_MASK;
-            // check if the bit is already set in our cache line - return an error if it is
-            let set = cache_line.test_and_set_bit(offset);
-
-            match set {
-                Ok(cache_line) => {
-                    // test_and_set-bit doesn't flush (because sometimes we
-                    // set multiple bits in the same cache line at the same time)
-                    // so we have to manually flush it here
-                    let cache_line = cache_line.flush();
-                    Ok(cache_line)
-                }
-                Err(e) => Err(e),
-            }
+            mut self,
+            _: &BitmapWrapper<'a, Flushed, Alloc, DataBmap>,
+        ) -> Result<(InodeNum, BitmapWrapper<'a, Flushed, Alloc, InoBmap>)> {
+            let reserved_bit = 0;
+            // set bits zero and one
+            let bitmap = set_bits!(self, reserved_bit, ROOT_INO)?.flush();
+            Ok((ROOT_INO, bitmap))
         }
     }
-
     impl<'a, Op, Type> BitmapWrapper<'a, Clean, Op, Type> {
-        // TODO: this should also be implemented for non-clean bitmaps
-
-        /// given a page number or inode number, obtains the cache line that the corresponding bit
-        /// lives on in the bitmap
-        pub(crate) fn get_cacheline(self, index: usize) -> CacheLineWrapper<'a, Clean, Read, Type> {
-            let cacheline_num = get_cacheline_num(index);
-            CacheLineWrapper::new(&mut self.bitmap.lines[cacheline_num], Some(index))
-        }
-
-        /// given a cache line number, returns a cache line wrapper for the specified cache line
-        pub(crate) fn get_cacheline_by_line_index(
-            self,
-            line_index: usize,
-        ) -> CacheLineWrapper<'a, Clean, Read, Type> {
-            CacheLineWrapper::new(&mut self.bitmap.lines[line_index], None)
-        }
-
-        // TODO: may want to relax return value at some point
-        // TODO: this should also be implemented for non-clean bitmaps
+        // TODO: this should probably be allowed for other ops and persistence states
         pub(crate) fn find_and_set_next_zero_bit(
             self,
-        ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, Type>> {
-            let ino = unsafe {
+        ) -> Result<(PmPage, BitmapWrapper<'a, Dirty, Alloc, Type>)> {
+            let bit = unsafe {
                 hayleyfs_find_next_zero_bit(
                     self.bitmap as *mut _ as *mut u64,
                     (PAGE_SIZE * 8).try_into().unwrap(),
@@ -206,235 +215,46 @@ pub(crate) mod hayleyfs_bitmap {
                 )
             };
 
-            if ino == (PAGE_SIZE * 8) {
+            if bit == (PAGE_SIZE * 8) {
                 return Err(Error::ENOSPC);
             }
 
-            let cache_line = self.get_cacheline(ino);
-            pr_info!("cache line addr: {:p}\n", cache_line.line);
-
-            // unsafe { hayleyfs_set_bit(ino, bitmap as *mut _ as *mut c_void) };
-            let cache_line = cache_line.set_bit_flush(ino)?;
-
-            Ok(cache_line)
-        }
-
-        // consumes the bitmap wrapper in return for a set of cacheline wrappers selected
-        // via the filtering closure
-        fn filter_cache_lines<F>(self, f: F) -> Result<Vec<CacheLineWrapper<'a, Clean, Read, Type>>>
-        where
-            F: Fn(&CacheLine) -> bool,
-        {
-            let mut vec = Vec::new();
-            pr_info!("filter cache lines bitmap: {:p}\n", &self.bitmap.lines);
-            for line in self.bitmap.iter_mut() {
-                if f(line) {
-                    vec.try_push(CacheLineWrapper::new(line, None))?;
-                }
-            }
-            Ok(vec)
+            Ok((bit, self.set_bit(bit)?))
         }
     }
 
-    impl<'a, Op> BitmapWrapper<'a, Clean, Op, DataBmap> {
-        pub(crate) fn bitmap_coalesce_persist(
-            cache_lines: Vec<CacheLineWrapper<'a, Dirty, Op, DataBmap>>,
-            sbi: &SbInfo,
-        ) -> Self {
-            for line in cache_lines {
-                line.flush();
-            }
-            sfence();
-            BitmapWrapper::new(unsafe {
-                &mut *((sbi.virt_addr as usize + (DATA_BITMAP_PAGE * PAGE_SIZE)) as *mut Bitmap)
-            })
-        }
-
-        pub(crate) fn zero_bitmap(
-            self,
-            sbi: &SbInfo,
-        ) -> Result<BitmapWrapper<'a, Clean, Zero, DataBmap>> {
-            let mut modified_cache_lines =
-                Vec::<CacheLineWrapper<'a, Dirty, Zero, DataBmap>>::new();
-            // figure out which cache lines have non-zero values
-            let filter_closure = |c: &CacheLine| {
-                for byte in c.bits.iter() {
-                    if *byte != 0 {
-                        return true;
+    impl<'a, Type> BitmapWrapper<'a, Clean, Read, Type> {
+        pub(crate) fn zero_bitmap(mut self) -> Result<BitmapWrapper<'a, Clean, Zero, Type>> {
+            for (i, cache_line) in self.bitmap.iter_mut().enumerate() {
+                for j in 0..8 {
+                    if cache_line.bits[j] != 0 {
+                        cache_line.bits[j] = 0;
+                        self.dirty_cache_lines.try_insert(i, ())?;
                     }
                 }
-                false
-            };
-            let mut cache_lines = self.filter_cache_lines(filter_closure)?;
-            // set the cachelines to zero and save them in the modified lines vector
-            for line in cache_lines.drain(..) {
-                let line = line.zero();
-                modified_cache_lines.try_push(line)?;
             }
-            let new_wrapper = BitmapWrapper::<'a, Clean, _, DataBmap>::bitmap_coalesce_persist(
-                modified_cache_lines,
-                sbi,
-            );
-            Ok(new_wrapper)
-        }
-    }
-
-    impl<'a, Op> BitmapWrapper<'a, Clean, Op, InoBmap> {
-        pub(crate) fn bitmap_coalesce_persist(
-            cache_lines: Vec<CacheLineWrapper<'a, Dirty, Op, InoBmap>>,
-            sbi: &SbInfo,
-        ) -> Self {
-            for line in cache_lines {
-                line.flush();
+            for num in self.dirty_cache_lines.keys() {
+                clwb(&self.bitmap.lines[*num], CACHELINE_SIZE, false);
             }
             sfence();
-            BitmapWrapper::new(unsafe {
-                &mut *((sbi.virt_addr as usize + (INODE_BITMAP_PAGE * PAGE_SIZE)) as *mut Bitmap)
-            })
+            Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
         }
+    }
 
-        pub(crate) fn zero_bitmap(
-            self,
-            sbi: &SbInfo,
-        ) -> Result<BitmapWrapper<'a, Clean, Zero, InoBmap>> {
-            let mut modified_cache_lines = Vec::<CacheLineWrapper<'a, Dirty, Zero, InoBmap>>::new();
-            // figure out which cache lines have non-zero values
-            let filter_closure = |c: &CacheLine| {
-                for byte in c.bits.iter() {
-                    if *byte != 0 {
-                        return true;
-                    }
-                }
-                false
-            };
-            let mut cache_lines = self.filter_cache_lines(filter_closure)?;
-            // set the cachelines to zero and save them in the modified lines vector
-            for line in cache_lines.drain(..) {
-                let line = line.zero();
-                modified_cache_lines.try_push(line)?;
+    impl<'a, Op, Type> BitmapWrapper<'a, Dirty, Op, Type> {
+        pub(crate) fn flush(self) -> BitmapWrapper<'a, Flushed, Op, Type> {
+            for num in self.dirty_cache_lines.keys() {
+                clwb(&self.bitmap.lines[*num], CACHELINE_SIZE, false);
             }
-            let new_wrapper = BitmapWrapper::<'a, Clean, _, InoBmap>::bitmap_coalesce_persist(
-                modified_cache_lines,
-                sbi,
-            );
-            Ok(new_wrapper)
+            BitmapWrapper::new(self.bitmap, self.dirty_cache_lines)
         }
-    }
 
-    // TODO: extend to allow allocation/deallocation of multiple inodes
-    // that reside on the same cache line
-    // TODO: we might want to use a combo token/generic type thing; sometimes
-    // use tokens as proof of small operations, plus generic types for larger
-    // persistent objects. because this whole thing with the cache lines is kind of weird
-    pub(crate) struct CacheLineWrapper<'a, State, Op, Type> {
-        state: PhantomData<State>,
-        op: PhantomData<Op>,
-        bmap_type: PhantomData<Type>,
-        line: &'a mut CacheLine,
-        val: Option<usize>, // TODO: this could also be page; might need to be a set/vector?
-    }
-
-    impl<'a, State, Op, Type> PmObjWrapper for CacheLineWrapper<'a, State, Op, Type> {}
-
-    impl<'a, State, Op, Type> CacheLineWrapper<'a, State, Op, Type> {
-        fn new(line: &'a mut CacheLine, val: Option<usize>) -> Self {
-            Self {
-                state: PhantomData,
-                op: PhantomData,
-                bmap_type: PhantomData,
-                line,
-                val,
+        pub(crate) fn persist(self) -> BitmapWrapper<'a, Clean, Op, Type> {
+            for num in self.dirty_cache_lines.keys() {
+                clwb(&self.bitmap.lines[*num], CACHELINE_SIZE, false);
             }
-        }
-    }
-
-    // methods that can be called on any cache line regardless of state
-    impl<'a, State, Op, Type> CacheLineWrapper<'a, State, Op, Type> {
-        // TODO: could also be pm page, not just inode num
-        pub(crate) fn test_and_set_bit(
-            self,
-            bit: usize,
-        ) -> Result<CacheLineWrapper<'a, Dirty, Alloc, Type>> {
-            // THIS IS NOT WORKING
-            let offset = bit & CACHELINE_MASK;
-            let bit_test = unsafe { hayleyfs_set_bit(offset, self.line as *mut _ as *mut c_void) };
-            if bit_test == 1 {
-                Err(Error::EEXIST)
-            } else {
-                Ok(CacheLineWrapper::new(self.line, Some(bit)))
-            }
-        }
-
-        pub(crate) fn zero(self) -> CacheLineWrapper<'a, Dirty, Zero, Type> {
-            for byte in self.line.bits.iter_mut() {
-                if *byte != 0 {
-                    *byte = 0;
-                }
-            }
-            CacheLineWrapper::new(self.line, None)
-        }
-
-        pub(crate) fn set_bit_persist(
-            self,
-            bit: InodeNum,
-        ) -> Result<CacheLineWrapper<'a, Clean, Alloc, Type>> {
-            // TODO: is it faster to re-implement with flush and fence, or to call
-            // the existing set bit and then flush and fence?
-            let wrapper = self.test_and_set_bit(bit)?;
-            clwb(wrapper.line, CACHELINE_SIZE, true);
-            Ok(CacheLineWrapper::new(wrapper.line, Some(bit)))
-        }
-
-        pub(crate) fn set_bit_flush(
-            self,
-            bit: InodeNum,
-        ) -> Result<CacheLineWrapper<'a, Flushed, Alloc, Type>> {
-            // TODO: is it faster to re-implement with flush and fence, or to call
-            // the existing set bit and then flush and fence?
-            let wrapper = self.test_and_set_bit(bit)?;
-            clwb(wrapper.line, CACHELINE_SIZE, false);
-            Ok(CacheLineWrapper::new(wrapper.line, Some(bit)))
-        }
-    }
-
-    impl<'a, Op, Type> CacheLineWrapper<'a, Dirty, Op, Type> {
-        pub(crate) fn flush(self) -> CacheLineWrapper<'a, Flushed, Op, Type> {
-            clwb(&self.line, CACHELINE_SIZE, false);
-            CacheLineWrapper::new(self.line, self.val)
-        }
-    }
-
-    impl<'a, Op, Type> CacheLineWrapper<'a, Flushed, Op, Type> {
-        pub(crate) fn fence(self) -> CacheLineWrapper<'a, Clean, Op, Type> {
             sfence();
-            CacheLineWrapper::new(self.line, self.val)
-        }
-
-        /// should only be used in the fence macro, since we know that we have issued
-        /// a store fence in that context. Unsafe anywhere else, since it allows us to
-        /// create an object that is marked Clean without making a fence
-        pub(crate) unsafe fn fence_unsafe(self) -> CacheLineWrapper<'a, Clean, Op, Type> {
-            CacheLineWrapper::new(self.line, self.val)
-        }
-    }
-
-    impl<'a, Op, Type> CacheLineWrapper<'a, Clean, Op, Type> {
-        pub(crate) fn get_val(&self) -> Option<usize> {
-            self.val
-        }
-    }
-
-    impl<'a> CacheLineWrapper<'a, Clean, Read, DataBmap> {
-        // TODO: if we reserve more pages, add them here
-        pub(crate) fn set_reserved_page_bits(
-            self,
-        ) -> Result<CacheLineWrapper<'a, Dirty, Alloc, DataBmap>> {
-            let res = self
-                .test_and_set_bit(SUPER_BLOCK_PAGE)?
-                .test_and_set_bit(INODE_BITMAP_PAGE)?
-                .test_and_set_bit(INODE_PAGE)?
-                .test_and_set_bit(DATA_BITMAP_PAGE);
-            res
+            BitmapWrapper::new(self.bitmap, self.dirty_cache_lines)
         }
     }
 }
@@ -486,15 +306,15 @@ pub(crate) mod hayleyfs_sb {
     }
 }
 
-// TODO: this should probably live somewhere else
-pub(crate) fn allocate_data_page<'a>(
-    sbi: &SbInfo,
-) -> Result<hayleyfs_bitmap::CacheLineWrapper<'a, Flushed, Alloc, DataBmap>> {
-    let bitmap = hayleyfs_bitmap::BitmapWrapper::read_data_bitmap(sbi);
+// // TODO: this should probably live somewhere else
+// pub(crate) fn allocate_data_page<'a>(
+//     sbi: &SbInfo,
+// ) -> Result<hayleyfs_bitmap::CacheLineWrapper<'a, Flushed, Alloc, DataBmap>> {
+//     let bitmap = hayleyfs_bitmap::BitmapWrapper::read_data_bitmap(sbi);
 
-    let page_no = bitmap.find_and_set_next_zero_bit()?;
-    Ok(page_no)
-}
+//     let page_no = bitmap.find_and_set_next_zero_bit()?;
+//     Ok(page_no)
+// }
 
 pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {
     let sbi: &mut SbInfo = unsafe { &mut *((*sb).s_fs_info as *mut SbInfo) };
