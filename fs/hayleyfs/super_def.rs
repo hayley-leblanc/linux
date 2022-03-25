@@ -206,7 +206,7 @@ pub(crate) mod hayleyfs_bitmap {
         // TODO: this should probably be allowed for other ops and persistence states
         pub(crate) fn find_and_set_next_zero_bit(
             self,
-        ) -> Result<(PmPage, BitmapWrapper<'a, Dirty, Alloc, Type>)> {
+        ) -> Result<(usize, BitmapWrapper<'a, Dirty, Alloc, Type>)> {
             let bit = unsafe {
                 hayleyfs_find_next_zero_bit(
                     self.bitmap as *mut _ as *mut u64,

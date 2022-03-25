@@ -1,6 +1,7 @@
 use crate::def::*;
 use crate::dir::hayleyfs_dir::*;
 use crate::pm::*;
+use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
@@ -126,7 +127,11 @@ pub(crate) mod hayleyfs_inode {
         }
 
         // TODO: add arguments for different types of files; right now this only does dirs
-        pub(crate) fn initialize_inode(self, ino: InodeNum) -> InodeWrapper<'a, Flushed, Init> {
+        pub(crate) fn initialize_inode(
+            self,
+            ino: InodeNum,
+            _: &BitmapWrapper<'_, Clean, Alloc, InoBmap>,
+        ) -> InodeWrapper<'a, Flushed, Init> {
             self.inode.set_up(ino, None, S_IFDIR, 2);
             clwb(self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)

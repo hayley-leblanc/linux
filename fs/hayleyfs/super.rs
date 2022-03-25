@@ -212,12 +212,21 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
     let mut root_i = unsafe { &mut *(root_i as *mut inode) };
 
     if sbi.mount_opts.init {
+        // TODO: we probably shouldn't actually do this. very slow. but it will let
+        // me procrastinate on how to actually make sure data from old mounts doesn't
+        // stick around. unless this ends up being incredibly slow
+        // if you wanted to be fancy about it you could use nontemporal stores
+        // but then you'd have to implement that and that would defeat the point of this
+        // janky quick workaround
+        unsafe {
+            ptr::write_bytes(sbi.virt_addr, 0, sbi.pm_size.try_into().unwrap());
+            clwb(sbi.virt_addr, sbi.pm_size.try_into().unwrap(), true);
+        }
+        // TODO: for some reason there are extra fences here
+
         // zero bitmaps
         let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi).zero_bitmap()?;
         let mut data_bitmap = BitmapWrapper::read_data_bitmap(sbi).zero_bitmap()?;
-
-        // TODO: we need to zero out pages when we allocate them too (or at least mark metadata
-        // that is in them invalid)
 
         // allocate reserved pages
         let data_bitmap = set_bits!(
@@ -237,27 +246,21 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
 
         let (data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
 
-        // // initialize inode
-        // // requires a clean inode wrapper indirectly, since we can only get
-        // // inode num from a clean one.
-        // // TODO: theoretically could get around that restriction by hard coding
-        // // or otherwise making up an inode num. but it makes implementation cleaner.
-        // let ino = root_ino_wrapper.get_val().ok_or(Error::ENOENT)?;
-        let inode_wrapper = InodeWrapper::read_inode(sbi, &root_ino).initialize_inode(root_ino);
+        // initialize inode
+        let inode_wrapper =
+            InodeWrapper::read_inode(sbi, &root_ino).initialize_inode(root_ino, &inode_bitmap);
 
-        // // initialize root dir page
-        // let page_no = root_page_wrapper.get_val().ok_or(Error::ENOENT)?;
+        // initialize root dir page
+        let (self_dentry, parent_dentry) =
+            hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, root_ino, root_ino)?;
 
-        // let (self_dentry, parent_dentry) =
-        //     hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, ino, ino)?;
+        let (inode_wrapper, self_dentry, parent_dentry) =
+            fence_all!(inode_wrapper, self_dentry, parent_dentry);
 
-        // let (inode_wrapper, self_dentry, parent_dentry) =
-        //     fence_all!(inode_wrapper, self_dentry, parent_dentry);
-
-        // // add page to inode
-        // // TODO: how do we enforce the use of the fence?
-        // let inode_wrapper =
-        //     inode_wrapper.add_dir_page_fence(Some(page_no), self_dentry, parent_dentry);
+        // add page to inode
+        // TODO: how do we enforce the use of the fence?
+        let inode_wrapper =
+            inode_wrapper.add_dir_page_fence(Some(page_no), self_dentry, parent_dentry);
     } else {
         hayleyfs_recovery(sbi)?;
     }
