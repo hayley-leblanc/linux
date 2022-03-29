@@ -22,11 +22,21 @@ pub(crate) static mut HayleyfsFileOps: file_operations = file_operations {
 pub(crate) mod hayleyfs_dir {
     use super::*;
 
-    struct DirPage {
+    pub(crate) struct DirPage {
         dentries: [HayleyfsDentry; DENTRIES_PER_PAGE],
     }
 
     impl<'a> DirPage {
+        pub(crate) fn read_dir_page(sbi: &SbInfo, page_no: PmPage) -> Result<&mut DirPage> {
+            // TODO: check that it's actually a dir page
+            let max_pages = sbi.pm_size / PAGE_SIZE as u64;
+            if page_no >= max_pages.try_into()? {
+                return Err(Error::EINVAL);
+            }
+            let addr = (sbi.virt_addr as usize) + (PAGE_SIZE * page_no);
+            Ok(unsafe { &mut *(addr as *mut DirPage) })
+        }
+
         fn lookup_name(&self, name: &[u8]) -> Result<InodeNum> {
             for dentry in self.dentries.iter() {
                 if !dentry.is_valid() {
@@ -38,7 +48,7 @@ pub(crate) mod hayleyfs_dir {
             Err(Error::ENOENT)
         }
 
-        fn iter_mut(&'a mut self) -> DirPageIterator<'a> {
+        pub(crate) fn iter_mut(&'a mut self) -> DirPageIterator<'a> {
             DirPageIterator {
                 iter: self.dentries.as_mut_slice()[..].iter_mut(),
             }
@@ -66,78 +76,78 @@ pub(crate) mod hayleyfs_dir {
         unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) }
     }
 
-    pub(crate) struct DirPageWrapper<'a, State, Op> {
-        state: PhantomData<State>,
-        op: PhantomData<Op>,
-        dir_page: &'a mut DirPage,
-    }
+    // pub(crate) struct DirPageWrapper<'a, State, Op> {
+    //     state: PhantomData<State>,
+    //     op: PhantomData<Op>,
+    //     dir_page: &'a mut DirPage,
+    // }
 
-    impl<'a, State, Op> DirPageWrapper<'a, State, Op> {
-        fn new(dir_page: &'a mut DirPage) -> Self {
-            Self {
-                state: PhantomData,
-                op: PhantomData,
-                dir_page,
-            }
-        }
+    // impl<'a, State, Op> DirPageWrapper<'a, State, Op> {
+    //     fn new(dir_page: &'a mut DirPage) -> Self {
+    //         Self {
+    //             state: PhantomData,
+    //             op: PhantomData,
+    //             dir_page,
+    //         }
+    //     }
 
-        pub(crate) fn iter_mut(&'a mut self) -> DirPageIterator<'a> {
-            self.dir_page.iter_mut()
-        }
-    }
+    //     pub(crate) fn iter_mut(&'a mut self) -> DirPageIterator<'a> {
+    //         self.dir_page.iter_mut()
+    //     }
+    // }
 
-    impl<'a> DirPageWrapper<'a, Clean, Read> {
-        pub(crate) fn read_dir_page(sbi: &SbInfo, page_no: PmPage) -> Self {
-            // TODO: some kind of check that it's actually a dir page
-            let addr = (sbi.virt_addr as usize) + (PAGE_SIZE * page_no);
-            let dir_page = unsafe { &mut *(addr as *mut DirPage) };
-            Self {
-                state: PhantomData,
-                op: PhantomData,
-                dir_page,
-            }
-        }
+    // impl<'a> DirPageWrapper<'a, Clean, Read> {
+    //     pub(crate) fn read_dir_page(sbi: &SbInfo, page_no: PmPage) -> Self {
+    //         // TODO: some kind of check that it's actually a dir page
+    //         let addr = (sbi.virt_addr as usize) + (PAGE_SIZE * page_no);
+    //         let dir_page = unsafe { &mut *(addr as *mut DirPage) };
+    //         Self {
+    //             state: PhantomData,
+    //             op: PhantomData,
+    //             dir_page,
+    //         }
+    //     }
 
-        // TODO: include the page number in a structure somewhere - dir page wrapper itself?
-        // dentry wrapper? so we don't have to pass it around here
-        pub(crate) fn invalidate_dentries(
-            self,
-            sbi: &SbInfo,
-            page_no: PmPage,
-        ) -> Result<DirPageWrapper<'a, Clean, Zero>> {
-            let mut dentry_vec = Vec::new();
+    //     // TODO: include the page number in a structure somewhere - dir page wrapper itself?
+    //     // dentry wrapper? so we don't have to pass it around here
+    //     pub(crate) fn invalidate_dentries(
+    //         self,
+    //         sbi: &SbInfo,
+    //         page_no: PmPage,
+    //     ) -> Result<DirPageWrapper<'a, Clean, Zero>> {
+    //         let mut dentry_vec = Vec::new();
 
-            for dentry in self.dir_page.iter_mut() {
-                if dentry.is_valid() {
-                    let dentry = unsafe { dentry.set_invalid() };
-                    dentry_vec.try_push(dentry)?;
-                }
-            }
+    //         for dentry in self.dir_page.iter_mut() {
+    //             if dentry.is_valid() {
+    //                 let dentry = unsafe { dentry.set_invalid() };
+    //                 dentry_vec.try_push(dentry)?;
+    //             }
+    //         }
 
-            // turn vector of flushed dentries into a clean dir page wrapper
-            Ok(DirPageWrapper::dir_page_coalesce_persist(
-                sbi, dentry_vec, page_no,
-            ))
-        }
-    }
+    //         // turn vector of flushed dentries into a clean dir page wrapper
+    //         Ok(DirPageWrapper::dir_page_coalesce_persist(
+    //             sbi, dentry_vec, page_no,
+    //         ))
+    //     }
+    // }
 
-    // TODO: should potentially allow coalescing more types of op
-    impl<'a> DirPageWrapper<'a, Clean, Zero> {
-        // TODO: should make it harder/impossible to provide an incorrect page no. would work better
-        // to check which page the dentries live on and get page number(s) that way
-        // TODO: this assumes that the dentries are all on the same page, which in the
-        // future they may not be
-        // TODO: the caller could provide an empty directory and obtain a clean dir page wrapper
-        // when they have not actually flushed the necessary things.....
-        pub(crate) fn dir_page_coalesce_persist(
-            sbi: &SbInfo,
-            _: Vec<DentryWrapper<'a, Flushed, Zero>>,
-            page_no: PmPage,
-        ) -> Self {
-            sfence();
-            DirPageWrapper::new(get_dir_page(sbi, page_no))
-        }
-    }
+    // // TODO: should potentially allow coalescing more types of op
+    // impl<'a> DirPageWrapper<'a, Clean, Zero> {
+    //     // TODO: should make it harder/impossible to provide an incorrect page no. would work better
+    //     // to check which page the dentries live on and get page number(s) that way
+    //     // TODO: this assumes that the dentries are all on the same page, which in the
+    //     // future they may not be
+    //     // TODO: the caller could provide an empty directory and obtain a clean dir page wrapper
+    //     // when they have not actually flushed the necessary things.....
+    //     pub(crate) fn dir_page_coalesce_persist(
+    //         sbi: &SbInfo,
+    //         _: Vec<DentryWrapper<'a, Flushed, Zero>>,
+    //         page_no: PmPage,
+    //     ) -> Self {
+    //         sfence();
+    //         DirPageWrapper::new(get_dir_page(sbi, page_no))
+    //     }
+    // }
 
     #[no_mangle]
     pub(crate) unsafe extern "C" fn hayleyfs_readdir(

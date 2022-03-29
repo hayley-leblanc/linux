@@ -2,6 +2,8 @@
 #![deny(unused_variables)]
 #![deny(clippy::let_underscore_must_use)]
 
+use crate::data::hayleyfs_data::*;
+use crate::data::*;
 use crate::def::*;
 use crate::dir::hayleyfs_dir::*;
 use crate::dir::*;
@@ -52,6 +54,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
         // add them to the search stack if they aren't already marked valid
         let ino = search_stack.pop().unwrap();
         let pi = InodeWrapper::read_inode(sbi, &ino);
+        // TODO: handle data and reserved pages
         if pi.is_dir() {
             let page_no = pi.get_data_page_no();
             match page_no {
@@ -61,7 +64,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
                     // if they aren't, indicates a bug
                     if valid_pages.get(&page_no).is_none() {
                         valid_pages.try_insert(page_no, ())?;
-                        let mut dir_page = DirPageWrapper::read_dir_page(sbi, page_no);
+                        let dir_page = DirPage::read_dir_page(sbi, page_no)?;
                         // used to sanity check that there is exactly one . and exactly one .. in each directory
                         let mut self_dentry = false;
                         let mut parent_dentry = false;
@@ -118,6 +121,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
     // TODO: do you have to do that for correctness?
 
     let mut zeroed_inodes = Vec::new();
+    let mut zeroed_pages = Vec::new();
 
     for ino in in_use_inos.keys() {
         if valid_inos.get(ino).is_none() {
@@ -128,6 +132,24 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
             zeroed_inodes.try_push(pi)?;
         }
     }
+
+    // zero out invalid pages
+    // have to be extremely general here because in some cases we won't have any way
+    // to tell what the page was meant to contain
+    for page_no in in_use_pages.keys() {
+        if valid_pages.get(page_no).is_none() {
+            let page = DataPageWrapper::read_data_page(sbi, *page_no)?;
+            let page = page.zero_page();
+            zeroed_pages.try_push(page)?;
+        }
+    }
+
+    // TODO: need a macro for fencing all objects in a vector
+    // so that we can pass the clean vectors off to the next step
+    // it would probably be useful to have runtime checks to make sure that
+    // the bits being cleared are actually associated with zeroed inodes/pages?
+
+    // now we can clear invalid bits in the bitmaps
 
     Ok(())
 }

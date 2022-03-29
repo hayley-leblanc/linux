@@ -7,6 +7,7 @@
 #![deny(unused_variables)]
 #![deny(clippy::let_underscore_must_use)]
 
+mod data;
 mod def;
 mod dir;
 mod h_inode;
@@ -15,6 +16,7 @@ mod pm;
 mod recovery;
 mod super_def;
 
+use crate::data::*;
 use crate::def::*;
 use crate::dir::*;
 use crate::h_inode::*;
@@ -36,7 +38,7 @@ use kernel::bindings::{
 };
 use kernel::c_types::{c_int, c_void};
 use kernel::prelude::*;
-use kernel::{c_default_struct, c_str, to_result, PAGE_SIZE};
+use kernel::{c_default_struct, c_str, PAGE_SIZE};
 
 module! {
     type: HayleyFS,

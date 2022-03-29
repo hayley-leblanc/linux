@@ -2,11 +2,13 @@
 #![deny(unused_variables)]
 #![deny(clippy::let_underscore_must_use)]
 
+use crate::super_def::SbInfo;
 use kernel::bindings::{
     dax_device, dir_context, file, fs_context, fs_parameter, fs_parameter_spec, fs_parse_result,
     inode, kgid_t, kuid_t, pfn_t,
 };
 use kernel::c_types::{c_char, c_int, c_ulong, c_void};
+use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
 pub(crate) const __LOG_PREFIX: &[u8] = b"hayleyfs\0";
@@ -17,7 +19,7 @@ pub(crate) const SUPER_BLOCK_PAGE: usize = 0;
 pub(crate) const INODE_BITMAP_PAGE: usize = 1;
 pub(crate) const INODE_PAGE: usize = 2;
 pub(crate) const DATA_BITMAP_PAGE: usize = 3;
-pub(crate) const DATA_START: usize = 4;
+// pub(crate) const DATA_START: usize = 4;
 
 pub(crate) const MAX_FILENAME_LEN: usize = 32;
 pub(crate) const DENTRIES_PER_PAGE: usize = 32;
@@ -53,6 +55,15 @@ pub(crate) struct DataBmap;
 pub(crate) trait PmObjWrapper {}
 
 pub(crate) type PmPage = usize; // TODO: move this somewhere else
+
+pub(crate) fn check_page_no(sbi: &SbInfo, page_no: PmPage) -> Result<()> {
+    let max_pages = sbi.pm_size / PAGE_SIZE as u64;
+    if page_no >= max_pages.try_into()? {
+        Err(Error::EINVAL)
+    } else {
+        Ok(())
+    }
+}
 
 pub(crate) trait Flatten {
     type Output;
