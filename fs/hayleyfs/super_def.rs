@@ -1,3 +1,7 @@
+#![deny(unused_must_use)]
+#![deny(unused_variables)]
+#![deny(clippy::let_underscore_must_use)]
+
 use crate::def::*;
 use crate::inode_def::*;
 use crate::pm::*;
@@ -75,6 +79,7 @@ pub(crate) mod hayleyfs_bitmap {
         }
     }
 
+    #[must_use]
     pub(crate) struct BitmapWrapper<'a, State, Op, Type> {
         state: PhantomData<State>,
         op: PhantomData<Op>,

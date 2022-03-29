@@ -1,3 +1,7 @@
+#![deny(unused_must_use)]
+#![deny(unused_variables)]
+#![deny(clippy::let_underscore_must_use)]
+
 use crate::def::*;
 use crate::dir::*;
 use crate::inode_def::hayleyfs_inode::*;
@@ -128,20 +132,15 @@ fn _hayleyfs_mkdir(
     let (page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
     let inode_bitmap = inode_bitmap.flush();
     let data_bitmap = data_bitmap.flush();
-    let (inode_bitmap, data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
+    // TODO: do we need to use data bitmap again?
+    let (inode_bitmap, _data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
 
     let pi = InodeWrapper::read_inode(sbi, &ino);
     let pi = pi.initialize_inode(ino, &inode_bitmap);
 
-    // initialize dentries
-    // TODO: ensure we can't panic on the unwrap
-    let self_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, page_no)?;
-    let parent_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, page_no)?;
-
-    let parent_ino = dir.i_ino.try_into().unwrap();
-    let (self_dentry, parent_dentry) =
-        hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, ino, parent_ino)?;
-
+    let parent_ino: InodeNum = dir.i_ino.try_into()?;
+    let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, ino)?;
+    let parent_dentry = hayleyfs_dir::initialize_parent_dentry(sbi, page_no, ino)?;
     let (pi, self_dentry, parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
 
     // increment parent link count
@@ -149,7 +148,7 @@ fn _hayleyfs_mkdir(
     let parent_pi = parent_pi.inc_links();
 
     // add page with newly initialized dentries to the new inode
-    let pi = pi.add_dir_page(Some(page_no));
+    let pi = pi.add_dir_page(Some(page_no), self_dentry, parent_dentry);
 
     let (pi, parent_pi) = fence_all!(pi, parent_pi);
 
@@ -160,9 +159,8 @@ fn _hayleyfs_mkdir(
     let new_dentry =
         hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
 
-    // TODO: actually set up the new dentry
-
-    let new_dentry =
+    // TODO: do something with last new_dentry variable
+    let _new_dentry =
         new_dentry.initialize_mkdir_dentry(ino, dentry_name.to_str()?, &pi, &parent_pi);
 
     // set up vfs inode

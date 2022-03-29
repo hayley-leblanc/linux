@@ -1,6 +1,9 @@
 #![allow(non_camel_case_types)]
 #![allow(missing_docs)]
 #![allow(non_upper_case_globals)]
+#![deny(unused_must_use)]
+#![deny(unused_variables)]
+#![deny(clippy::let_underscore_must_use)]
 
 use crate::def::*;
 use kernel::prelude::*;

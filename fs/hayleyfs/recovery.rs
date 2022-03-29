@@ -1,3 +1,7 @@
+#![deny(unused_must_use)]
+#![deny(unused_variables)]
+#![deny(clippy::let_underscore_must_use)]
+
 use crate::def::*;
 use crate::dir::hayleyfs_dir::*;
 use crate::dir::*;
@@ -113,12 +117,15 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
     // zero out invalid inodes
     // TODO: do you have to do that for correctness?
 
+    let mut zeroed_inodes = Vec::new();
+
     for ino in in_use_inos.keys() {
         if valid_inos.get(ino).is_none() {
             let pi = InodeWrapper::read_inode(sbi, ino);
-            pi.zero_inode();
+            let pi = pi.zero_inode();
             // TODO: we need a way to make sure we don't clear the bits
             // in the bitmap until after this has been done
+            zeroed_inodes.try_push(pi)?;
         }
     }
 

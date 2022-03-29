@@ -1,3 +1,7 @@
+#![deny(unused_must_use)]
+#![deny(unused_variables)]
+#![deny(clippy::let_underscore_must_use)]
+
 use crate::def::*;
 use crate::dir::hayleyfs_dir::*;
 use crate::pm::*;
@@ -50,6 +54,7 @@ pub(crate) mod hayleyfs_inode {
     // we should only be able to modify inodes via an InodeWrapper that
     // handles flushing it and keeping track of the last operation
     // so the private/public stuff has to be set up so the compiler enforces that
+    #[must_use]
     pub(crate) struct InodeWrapper<'a, State, Op> {
         state: PhantomData<State>,
         op: PhantomData<Op>,
@@ -92,7 +97,12 @@ pub(crate) mod hayleyfs_inode {
     impl<'a> InodeWrapper<'a, Clean, Init> {
         // TODO: this should have a different soft updates indicator than Valid
         // but it works for mkdir since we can't use the inode until it points to a valid page
-        pub(crate) fn add_dir_page(self, page: Option<PmPage>) -> InodeWrapper<'a, Flushed, Valid> {
+        pub(crate) fn add_dir_page(
+            self,
+            page: Option<PmPage>,
+            _self_dentry: DentryWrapper<'a, Clean, Init>,
+            _parent_dentry: DentryWrapper<'a, Clean, Init>,
+        ) -> InodeWrapper<'a, Flushed, Valid> {
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
             self.inode.set_page(page);

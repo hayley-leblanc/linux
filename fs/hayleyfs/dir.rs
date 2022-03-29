@@ -1,3 +1,7 @@
+#![deny(unused_must_use)]
+#![deny(unused_variables)]
+#![deny(clippy::let_underscore_must_use)]
+
 use crate::def::*;
 use crate::inode_def::*;
 use crate::pm::*;
@@ -236,6 +240,7 @@ pub(crate) mod hayleyfs_dir {
         }
     }
 
+    #[must_use]
     pub(crate) struct DentryWrapper<'a, State, Op> {
         state: PhantomData<State>,
         op: PhantomData<Op>,
@@ -312,29 +317,20 @@ pub(crate) mod hayleyfs_dir {
         }
     }
 
-    pub(crate) fn initialize_self_and_parent_dentries<'a>(
+    pub(crate) fn initialize_self_dentry<'a>(
         sbi: &SbInfo,
         page_no: PmPage,
         self_ino: InodeNum,
+    ) -> Result<DentryWrapper<'a, Flushed, Init>> {
+        Ok(DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(self_ino, "."))
+    }
+
+    pub(crate) fn initialize_parent_dentry<'a>(
+        sbi: &SbInfo,
+        page_no: PmPage,
         parent_ino: InodeNum,
-    ) -> Result<(
-        DentryWrapper<'a, Flushed, Init>,
-        DentryWrapper<'a, Flushed, Init>,
-    )> {
-        // 1. invalidate all existing dentries in the page
-        let dir_page =
-            DirPageWrapper::read_dir_page(sbi, page_no).invalidate_dentries(sbi, page_no);
-
-        // 2. set up self and parent dentries
-        // since we just invalidated all of the dentries in the page, we don't need to
-        // do anything special to obtain these
-        let self_dentry =
-            DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(self_ino, ".");
-        let parent_dentry =
-            DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(parent_ino, "..");
-
-        // 4. return them
-        Ok((self_dentry, parent_dentry))
+    ) -> Result<DentryWrapper<'a, Flushed, Init>> {
+        Ok(DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(parent_ino, ".."))
     }
 
     impl<'a, Op> DentryWrapper<'a, Flushed, Op> {

@@ -1,3 +1,7 @@
+#![deny(unused_must_use)]
+#![deny(unused_variables)]
+#![deny(clippy::let_underscore_must_use)]
+
 use kernel::bindings::{
     dax_device, dir_context, file, fs_context, fs_parameter, fs_parameter_spec, fs_parse_result,
     inode, kgid_t, kuid_t, pfn_t,

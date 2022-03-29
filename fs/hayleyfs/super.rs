@@ -3,6 +3,9 @@
 #![allow(non_upper_case_globals)]
 #![feature(new_uninit)]
 #![allow(clippy::missing_safety_doc)] // TODO: remove
+#![deny(unused_must_use)]
+#![deny(unused_variables)]
+#![deny(clippy::let_underscore_must_use)]
 
 mod def;
 mod dir;
@@ -33,7 +36,7 @@ use kernel::bindings::{
 };
 use kernel::c_types::{c_int, c_void};
 use kernel::prelude::*;
-use kernel::{c_default_struct, c_str, PAGE_SIZE};
+use kernel::{c_default_struct, c_str, to_result, PAGE_SIZE};
 
 module! {
     type: HayleyFS,
@@ -244,22 +247,24 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         let (page_no, data_bitmap) = data_bitmap.alloc_root_ino_page(&inode_bitmap)?;
         let (root_ino, inode_bitmap) = inode_bitmap.alloc_root_ino(&data_bitmap)?;
 
-        let (data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
+        // TODO: do we need to use data bitmap again?
+        let (_data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
 
         // initialize inode
         let inode_wrapper =
             InodeWrapper::read_inode(sbi, &root_ino).initialize_inode(root_ino, &inode_bitmap);
 
         // initialize root dir page
-        let (self_dentry, parent_dentry) =
-            hayleyfs_dir::initialize_self_and_parent_dentries(sbi, page_no, root_ino, root_ino)?;
+        let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, root_ino)?;
+        let parent_dentry = hayleyfs_dir::initialize_parent_dentry(sbi, page_no, root_ino)?;
 
         let (inode_wrapper, self_dentry, parent_dentry) =
             fence_all!(inode_wrapper, self_dentry, parent_dentry);
 
         // add page to inode
         // TODO: how do we enforce the use of the fence?
-        let inode_wrapper =
+        // TODO: finalize inode wrapper more explicitly
+        let _inode_wrapper =
             inode_wrapper.add_dir_page_fence(Some(page_no), self_dentry, parent_dentry);
     } else {
         hayleyfs_recovery(sbi)?;
@@ -381,6 +386,10 @@ impl KernelModule for HayleyFS {
         pr_info!("Hello! This is Hayley's Rust module!\n");
 
         let ret = init_hayleyfs();
+        if ret < 0 {
+            // TODO: convert and return the actual error
+            return Err(Error::EINVAL);
+        }
 
         Ok(HayleyFS {})
     }
