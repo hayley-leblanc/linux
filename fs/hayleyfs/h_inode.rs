@@ -1,6 +1,7 @@
 #![deny(unused_must_use)]
 #![deny(unused_variables)]
 #![deny(clippy::let_underscore_must_use)]
+#![deny(clippy::used_underscore_binding)]
 
 use crate::def::*;
 use crate::dir::*;
@@ -115,6 +116,7 @@ fn _hayleyfs_mkdir(
     mode: umode_t,
 ) -> Result<()> {
     pr_info!("creating a new directory\n");
+    // TODO: more graceful way of checking crashes. find a way that doesn't introduce so much redundant code
 
     let sb = unsafe { &mut *(dir.i_sb as *mut super_block) };
     let sbi = hayleyfs_get_sbi(sb);
@@ -129,28 +131,58 @@ fn _hayleyfs_mkdir(
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi);
     let data_bitmap = BitmapWrapper::read_data_bitmap(sbi);
     let (ino, inode_bitmap) = inode_bitmap.find_and_set_next_zero_bit()?;
-    let (page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
     let inode_bitmap = inode_bitmap.flush();
+    if sbi.mount_opts.crash_point == 1 {
+        return Err(Error::EINVAL);
+    }
+    let (page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
     let data_bitmap = data_bitmap.flush();
+    if sbi.mount_opts.crash_point == 2 {
+        return Err(Error::EINVAL);
+    }
     // TODO: do we need to use data bitmap again?
     let (inode_bitmap, _data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
+    if sbi.mount_opts.crash_point == 3 {
+        return Err(Error::EINVAL);
+    }
 
     let pi = InodeWrapper::read_inode(sbi, &ino);
     let pi = pi.initialize_inode(ino, &inode_bitmap);
+    if sbi.mount_opts.crash_point == 4 {
+        return Err(Error::EINVAL);
+    }
 
     let parent_ino: InodeNum = dir.i_ino.try_into()?;
     let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, ino)?;
+    if sbi.mount_opts.crash_point == 5 {
+        return Err(Error::EINVAL);
+    }
     let parent_dentry = hayleyfs_dir::initialize_parent_dentry(sbi, page_no, ino)?;
+    if sbi.mount_opts.crash_point == 6 {
+        return Err(Error::EINVAL);
+    }
     let (pi, self_dentry, parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
+    if sbi.mount_opts.crash_point == 7 {
+        return Err(Error::EINVAL);
+    }
 
     // increment parent link count
     let parent_pi = InodeWrapper::read_inode(sbi, &parent_ino);
     let parent_pi = parent_pi.inc_links();
+    if sbi.mount_opts.crash_point == 8 {
+        return Err(Error::EINVAL);
+    }
 
     // add page with newly initialized dentries to the new inode
     let pi = pi.add_dir_page(Some(page_no), self_dentry, parent_dentry);
+    if sbi.mount_opts.crash_point == 9 {
+        return Err(Error::EINVAL);
+    }
 
     let (pi, parent_pi) = fence_all!(pi, parent_pi);
+    if sbi.mount_opts.crash_point == 10 {
+        return Err(Error::EINVAL);
+    }
 
     // add new dentry to parent
     // we can read the dentry at any time, but we can't actually modify it without methods
@@ -158,10 +190,16 @@ fn _hayleyfs_mkdir(
     // TODO: handle panic
     let new_dentry =
         hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
+    if sbi.mount_opts.crash_point == 11 {
+        return Err(Error::EINVAL);
+    }
 
     // TODO: do something with last new_dentry variable
     let _new_dentry =
         new_dentry.initialize_mkdir_dentry(ino, dentry_name.to_str()?, &pi, &parent_pi);
+    if sbi.mount_opts.crash_point == 12 {
+        return Err(Error::EINVAL);
+    }
 
     // set up vfs inode
     // TODO: what if this fails? need to roll back gracefully

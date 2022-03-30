@@ -4,6 +4,7 @@
 #![deny(unused_must_use)]
 #![deny(unused_variables)]
 #![deny(clippy::let_underscore_must_use)]
+#![deny(clippy::used_underscore_binding)]
 
 use crate::def::*;
 use kernel::prelude::*;
