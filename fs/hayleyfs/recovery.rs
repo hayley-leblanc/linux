@@ -18,8 +18,6 @@ use kernel::rbtree::RBTree;
 use kernel::PAGE_SIZE;
 
 pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
-    // trying out using rbtrees, rather than vectors, to store info here
-
     let mut in_use_inos = RBTree::<InodeNum, ()>::new();
     let mut in_use_pages = RBTree::<PmPage, ()>::new();
 
@@ -133,8 +131,6 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
         if valid_inos.get(ino).is_none() {
             let pi = InodeWrapper::read_inode(sbi, ino);
             let pi = pi.zero_inode();
-            // TODO: we need a way to make sure we don't clear the bits
-            // in the bitmap until after this has been done
             zeroed_inodes.try_push(pi)?;
             invalid_inos.try_push(*ino)?;
         }
@@ -158,7 +154,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
     let inode_bitmap = inode_bitmap.clear_invalid_ino_bits(invalid_inos, zeroed_inodes)?;
     let data_bitmap = data_bitmap.clear_invalid_page_bits(invalid_pages, zeroed_pages)?;
 
-    // TODO: use these?
+    // TODO: use these (?)
     let (_inode_bitmap, _data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
 
     Ok(())
