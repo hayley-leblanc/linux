@@ -84,3 +84,28 @@ macro_rules! fence_obj {
         (fence_obj!{$p_obj0}, fence_obj!{$($p_obj1),+})
     };
 }
+
+#[macro_export]
+macro_rules! fence_all_vecs {
+    ($($args:tt),+) => { {
+        sfence();
+        fence_vec!($($args),+).flatten_tuple()
+    }
+    }
+}
+
+#[macro_export]
+macro_rules! fence_vec {
+    ($p_vec:ident) => {{
+        let mut fence_vec = Vec::new();
+        for p in $p_vec {
+            let p = unsafe { p.fence_unsafe() };
+            fence_vec.try_push(p).unwrap(); // TODO: ACTUALLY HANDLE ERROR!
+        }
+        fence_vec
+    }};
+
+    ($p_vec0:ident, $($p_vec1:ident),+) => {
+        (fence_vec!{$p_vec0}, fence_vec!{$($p_vec1),+})
+    }
+}

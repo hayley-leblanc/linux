@@ -9,8 +9,10 @@ use crate::dir::hayleyfs_dir::*;
 use crate::dir::*;
 use crate::inode_def::hayleyfs_inode::*;
 use crate::inode_def::*;
+use crate::pm::*;
 use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::*;
+use crate::{fence_all, fence_all_vecs, fence_obj, fence_vec};
 use kernel::prelude::*;
 use kernel::rbtree::RBTree;
 use kernel::PAGE_SIZE;
@@ -122,6 +124,10 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
 
     let mut zeroed_inodes = Vec::new();
     let mut zeroed_pages = Vec::new();
+    // invalid inos and pages can be vecs, not rb trees, because we don't
+    // need to do random lookups
+    let mut invalid_inos = Vec::new();
+    let mut invalid_pages = Vec::new();
 
     for ino in in_use_inos.keys() {
         if valid_inos.get(ino).is_none() {
@@ -130,6 +136,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
             // TODO: we need a way to make sure we don't clear the bits
             // in the bitmap until after this has been done
             zeroed_inodes.try_push(pi)?;
+            invalid_inos.try_push(*ino)?;
         }
     }
 
@@ -141,15 +148,18 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
             let page = DataPageWrapper::read_data_page(sbi, *page_no)?;
             let page = page.zero_page();
             zeroed_pages.try_push(page)?;
+            invalid_pages.try_push(*page_no)?
         }
     }
 
-    // TODO: need a macro for fencing all objects in a vector
-    // so that we can pass the clean vectors off to the next step
-    // it would probably be useful to have runtime checks to make sure that
-    // the bits being cleared are actually associated with zeroed inodes/pages?
+    let (zeroed_inodes, zeroed_pages) = fence_all_vecs!(zeroed_inodes, zeroed_pages);
 
     // now we can clear invalid bits in the bitmaps
+    let inode_bitmap = inode_bitmap.clear_invalid_ino_bits(invalid_inos, zeroed_inodes)?;
+    let data_bitmap = data_bitmap.clear_invalid_page_bits(invalid_pages, zeroed_pages)?;
+
+    // TODO: use these?
+    let (_inode_bitmap, _data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
 
     Ok(())
 }

@@ -10,6 +10,7 @@ use crate::super_def::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use kernel::bindings::S_IFDIR;
+use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
 pub(crate) type InodeNum = usize;
@@ -63,6 +64,8 @@ pub(crate) mod hayleyfs_inode {
 
     impl<'a, State, Op> PmObjWrapper for InodeWrapper<'a, State, Op> {}
 
+    impl<'a, State, Op> PmObjWrapper for Vec<InodeWrapper<'a, State, Op>> {}
+
     impl<'a, State, Op> InodeWrapper<'a, State, Op> {
         fn new(inode: &'a mut HayleyfsInode) -> Self {
             Self {
@@ -84,12 +87,12 @@ pub(crate) mod hayleyfs_inode {
             (self.inode.mode & S_IFDIR) != 0
         }
 
-        pub(crate) fn zero_inode(self) -> InodeWrapper<'a, Clean, Zero> {
+        pub(crate) fn zero_inode(self) -> InodeWrapper<'a, Flushed, Zero> {
             self.inode.ino = 0;
             self.inode.data0 = None;
             self.inode.mode = 0;
             self.inode.link_count = 0;
-            clwb(&self.inode, size_of::<HayleyfsInode>(), true);
+            clwb(&self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }
     }

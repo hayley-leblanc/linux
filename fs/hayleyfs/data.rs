@@ -25,6 +25,10 @@ pub(crate) mod hayleyfs_data {
         data_page: &'a mut DataPage,
     }
 
+    impl<'a, State, Op> PmObjWrapper for DataPageWrapper<'a, State, Op> {}
+
+    impl<'a, State, Op> PmObjWrapper for Vec<DataPageWrapper<'a, State, Op>> {}
+
     impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
         fn new(data_page: &'a mut DataPage) -> Self {
             Self {
@@ -52,19 +56,10 @@ pub(crate) mod hayleyfs_data {
             DataPageWrapper::new(self.data_page)
         }
     }
+
+    impl<'a, Op> DataPageWrapper<'a, Flushed, Op> {
+        pub(crate) unsafe fn fence_unsafe(self) -> DataPageWrapper<'a, Clean, Op> {
+            DataPageWrapper::new(self.data_page)
+        }
+    }
 }
-
-// #[derive(Ord, PartialOrd, Eq, PartialEq)]
-// pub(crate) enum PageType {
-//     Dir(PmPage),
-//     Data(PmPage),
-//     Reserved(PmPage),
-// }
-
-// pub(crate) fn get_page_no(page: PageType) -> PmPage {
-//     match page {
-//         PageType::Dir(page) => page,
-//         PageType::Data(page) => page,
-//         PageType::Reserved(page) => page,
-//     }
-// }

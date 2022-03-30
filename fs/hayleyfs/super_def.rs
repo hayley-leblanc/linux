@@ -2,7 +2,9 @@
 #![deny(unused_variables)]
 #![deny(clippy::let_underscore_must_use)]
 
+use crate::data::hayleyfs_data::*;
 use crate::def::*;
+use crate::inode_def::hayleyfs_inode::*;
 use crate::inode_def::*;
 use crate::pm::*;
 use core::marker::PhantomData;
@@ -107,6 +109,72 @@ pub(crate) mod hayleyfs_bitmap {
             return unsafe { hayleyfs_test_bit(bit, self.bitmap as *const _ as *const c_void) }
                 == 1;
         }
+
+        /// Safety: only safe to use if you will subsequently call set_bit on another bit,
+        /// as in the set_bits! macro
+        pub(crate) unsafe fn set_bit_unsafe(&mut self, bit: usize) -> Result<()> {
+            if bit > PAGE_SIZE * 8 {
+                return Err(Error::EINVAL);
+            }
+            unsafe { hayleyfs_set_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+            self.dirty_cache_lines
+                .try_insert(get_cacheline_num(bit), ())?;
+            Ok(())
+        }
+
+        pub(crate) fn set_bit(
+            mut self,
+            bit: usize,
+        ) -> Result<BitmapWrapper<'a, Dirty, Alloc, Type>> {
+            if bit > PAGE_SIZE * 8 {
+                return Err(Error::EINVAL);
+            }
+            self.dirty_cache_lines
+                .try_insert(get_cacheline_num(bit), ())?;
+            unsafe { hayleyfs_set_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+
+            Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
+        }
+    }
+
+    impl<'a, State, Op> BitmapWrapper<'a, State, Op, InoBmap> {
+        pub(crate) fn clear_invalid_ino_bits(
+            self,
+            invalid_inos: Vec<InodeNum>,
+            _: Vec<InodeWrapper<'a, Clean, Zero>>,
+        ) -> Result<BitmapWrapper<'a, Flushed, Zero, InoBmap>> {
+            if invalid_inos.len() == 0 {
+                return Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines));
+            }
+            for ino in invalid_inos.iter() {
+                unsafe { hayleyfs_set_bit(*ino, self.bitmap as *mut _ as *mut c_void) };
+            }
+            // redundant, but make sure that we get a dirty bitmap out of this without re-creating
+            // it every time we set a bit
+            let bitmap = self.set_bit(*(invalid_inos.last()).unwrap())?;
+            let bitmap = bitmap.flush();
+            Ok(BitmapWrapper::new(bitmap.bitmap, bitmap.dirty_cache_lines))
+        }
+    }
+
+    impl<'a, State, Op> BitmapWrapper<'a, State, Op, DataBmap> {
+        pub(crate) fn clear_invalid_page_bits(
+            self,
+            invalid_pages: Vec<PmPage>,
+            _: Vec<DataPageWrapper<'a, Clean, Zero>>,
+        ) -> Result<BitmapWrapper<'a, Flushed, Zero, DataBmap>> {
+            if invalid_pages.len() == 0 {
+                return Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines));
+            }
+            for ino in invalid_pages.iter() {
+                unsafe { hayleyfs_set_bit(*ino, self.bitmap as *mut _ as *mut c_void) };
+            }
+            // redundant, but make sure that we get a dirty bitmap out of this without re-creating
+            // it every time we set a bit
+            let bitmap = self.set_bit(*(invalid_pages.last()).unwrap())?;
+            let bitmap = bitmap.flush();
+            Ok(BitmapWrapper::new(bitmap.bitmap, bitmap.dirty_cache_lines))
+        }
     }
 
     impl<'a> BitmapWrapper<'a, Clean, Read, InoBmap> {
@@ -148,34 +216,6 @@ pub(crate) mod hayleyfs_bitmap {
             }
         }
         };
-    }
-
-    impl<'a, State, Op, Type> BitmapWrapper<'a, State, Op, Type> {
-        /// Safety: only safe to use if you will subsequently call set_bit on another bit,
-        /// as in the set_bits! macro
-        pub(crate) unsafe fn set_bit_unsafe(&mut self, bit: usize) -> Result<()> {
-            if bit > PAGE_SIZE * 8 {
-                return Err(Error::EINVAL);
-            }
-            unsafe { hayleyfs_set_bit(bit, self.bitmap as *mut _ as *mut c_void) };
-            self.dirty_cache_lines
-                .try_insert(get_cacheline_num(bit), ())?;
-            Ok(())
-        }
-
-        pub(crate) fn set_bit(
-            mut self,
-            bit: usize,
-        ) -> Result<BitmapWrapper<'a, Dirty, Alloc, Type>> {
-            if bit > PAGE_SIZE * 8 {
-                return Err(Error::EINVAL);
-            }
-            self.dirty_cache_lines
-                .try_insert(get_cacheline_num(bit), ())?;
-            unsafe { hayleyfs_set_bit(bit, self.bitmap as *mut _ as *mut c_void) };
-
-            Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
-        }
     }
 
     impl<'a> BitmapWrapper<'a, Clean, Alloc, DataBmap> {
