@@ -54,9 +54,10 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
         // pop an inode off the stack; if it's a directory, read its dentries and
         // add them to the search stack if they aren't already marked valid
         let ino = search_stack.pop().unwrap();
-        let pi = InodeWrapper::read_inode(sbi, &ino);
+        let pi = InodeWrapper::read_unknown_inode(sbi, &ino);
         // TODO: handle data and reserved pages
         if pi.is_dir() {
+            let pi = unsafe { pi.unknown_to_dir() };
             let page_no = pi.get_data_page_no();
             match page_no {
                 Some(page_no) => {
@@ -130,7 +131,7 @@ pub(crate) fn hayleyfs_recovery(sbi: &mut SbInfo) -> Result<()> {
 
     for ino in in_use_inos.keys() {
         if valid_inos.get(ino).is_none() {
-            let pi = InodeWrapper::read_inode(sbi, ino);
+            let pi = InodeWrapper::read_unknown_inode(sbi, ino);
             let pi = pi.zero_inode();
             zeroed_inodes.try_push(pi)?;
             invalid_inos.try_push(*ino)?;

@@ -254,8 +254,13 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         let (_data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
 
         // initialize inode
-        let inode_wrapper =
-            InodeWrapper::read_inode(sbi, &root_ino).initialize_inode(root_ino, &inode_bitmap);
+        let inode_wrapper = InodeWrapper::read_dir_inode(sbi, &root_ino).initialize_inode(
+            root_ino,
+            None,
+            S_IFDIR,
+            2, // TODO: should link count be 1 or 2 for root directory?
+            &inode_bitmap,
+        );
 
         // initialize root dir page
         let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, root_ino)?;

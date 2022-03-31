@@ -57,21 +57,23 @@ pub(crate) mod hayleyfs_inode {
     // handles flushing it and keeping track of the last operation
     // so the private/public stuff has to be set up so the compiler enforces that
     #[must_use]
-    pub(crate) struct InodeWrapper<'a, State, Op> {
+    pub(crate) struct InodeWrapper<'a, State, Op, Type: ?Sized> {
         state: PhantomData<State>,
         op: PhantomData<Op>,
+        inode_type: PhantomData<Type>,
         inode: &'a mut HayleyfsInode,
     }
 
-    impl<'a, State, Op> PmObjWrapper for InodeWrapper<'a, State, Op> {}
+    impl<'a, State, Op, Type> PmObjWrapper for InodeWrapper<'a, State, Op, Type> {}
 
-    impl<'a, State, Op> PmObjWrapper for Vec<InodeWrapper<'a, State, Op>> {}
+    impl<'a, State, Op, Type> PmObjWrapper for Vec<InodeWrapper<'a, State, Op, Type>> {}
 
-    impl<'a, State, Op> InodeWrapper<'a, State, Op> {
+    impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
         fn new(inode: &'a mut HayleyfsInode) -> Self {
             Self {
                 state: PhantomData,
                 op: PhantomData,
+                inode_type: PhantomData,
                 inode,
             }
         }
@@ -88,7 +90,7 @@ pub(crate) mod hayleyfs_inode {
             (self.inode.mode & S_IFDIR) != 0
         }
 
-        pub(crate) fn zero_inode(self) -> InodeWrapper<'a, Flushed, Zero> {
+        pub(crate) fn zero_inode(self) -> InodeWrapper<'a, Flushed, Zero, Type> {
             self.inode.ino = 0;
             self.inode.data0 = None;
             self.inode.mode = 0;
@@ -98,15 +100,13 @@ pub(crate) mod hayleyfs_inode {
         }
     }
 
-    impl<'a> InodeWrapper<'a, Clean, Init> {
-        // TODO: this should have a different soft updates indicator than Valid
-        // but it works for mkdir since we can't use the inode until it points to a valid page
+    impl<'a> InodeWrapper<'a, Clean, Init, Dir> {
         pub(crate) fn add_dir_page(
             self,
             page: Option<PmPage>,
             _self_dentry: DentryWrapper<'a, Clean, Init>,
             _parent_dentry: DentryWrapper<'a, Clean, Init>,
-        ) -> InodeWrapper<'a, Flushed, Valid> {
+        ) -> InodeWrapper<'a, Flushed, Valid, Dir> {
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
             self.inode.set_page(page);
@@ -119,7 +119,7 @@ pub(crate) mod hayleyfs_inode {
             page: Option<PmPage>,
             _: DentryWrapper<'a, Clean, Init>,
             _: DentryWrapper<'a, Clean, Init>,
-        ) -> InodeWrapper<'a, Clean, Valid> {
+        ) -> InodeWrapper<'a, Clean, Valid, Dir> {
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
             self.inode.set_page(page);
@@ -128,42 +128,93 @@ pub(crate) mod hayleyfs_inode {
         }
     }
 
-    impl<'a> InodeWrapper<'a, Clean, Read> {
-        pub(crate) fn read_inode(sbi: &SbInfo, ino: &InodeNum) -> Self {
+    // TODO: some redundant code here because we need different read methods
+    // for different types of indoes. Can we get rid of that/reuse the code somehow?
+    impl<'a> InodeWrapper<'a, Clean, Read, Data> {
+        pub(crate) fn read_file_inode(sbi: &SbInfo, ino: &InodeNum) -> Self {
             let addr = (PAGE_SIZE * INODE_PAGE) + (ino * size_of::<HayleyfsInode>());
             let addr = sbi.virt_addr as usize + addr;
             let inode = unsafe { &mut *(addr as *mut HayleyfsInode) };
             Self {
                 state: PhantomData,
                 op: PhantomData,
+                inode_type: PhantomData,
+                inode,
+            }
+        }
+    }
+
+    impl<'a> InodeWrapper<'a, Clean, Read, Dir> {
+        pub(crate) fn read_dir_inode(sbi: &SbInfo, ino: &InodeNum) -> Self {
+            let addr = (PAGE_SIZE * INODE_PAGE) + (ino * size_of::<HayleyfsInode>());
+            let addr = sbi.virt_addr as usize + addr;
+            let inode = unsafe { &mut *(addr as *mut HayleyfsInode) };
+            Self {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                inode,
+            }
+        }
+    }
+
+    impl<'a> InodeWrapper<'a, Clean, Read, Unknown> {
+        pub(crate) fn read_unknown_inode(sbi: &SbInfo, ino: &InodeNum) -> Self {
+            let addr = (PAGE_SIZE * INODE_PAGE) + (ino * size_of::<HayleyfsInode>());
+            let addr = sbi.virt_addr as usize + addr;
+            let inode = unsafe { &mut *(addr as *mut HayleyfsInode) };
+            Self {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
                 inode,
             }
         }
 
-        // TODO: add arguments for different types of files; right now this only does dirs
+        // these are unsafe because they should only be called if you are absolutely
+        // sure of the type of an unknown inode. using the wrong one could cause weird
+        // memory issues
+        pub(crate) unsafe fn unknown_to_file(self) -> InodeWrapper<'a, Clean, Read, Data> {
+            InodeWrapper::new(self.inode)
+        }
+
+        pub(crate) unsafe fn unknown_to_dir(self) -> InodeWrapper<'a, Clean, Read, Dir> {
+            InodeWrapper::new(self.inode)
+        }
+    }
+
+    impl<'a, Type> InodeWrapper<'a, Clean, Read, Type> {
         pub(crate) fn initialize_inode(
             self,
             ino: InodeNum,
-            _: &BitmapWrapper<'_, Clean, Alloc, InoBmap>,
-        ) -> InodeWrapper<'a, Flushed, Init> {
-            self.inode.set_up(ino, None, S_IFDIR, 2);
+            page: Option<PmPage>,
+            mode: u32,
+            link_count: u16,
+            _: &BitmapWrapper<'_, Clean, Alloc, Inode>,
+        ) -> InodeWrapper<'a, Flushed, Init, Type> {
+            self.inode.set_up(ino, page, mode, link_count);
             clwb(self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }
 
         // TODO: this might need to go in a different impl
-        pub(crate) fn inc_links(self) -> InodeWrapper<'a, Flushed, Link> {
+        pub(crate) fn inc_links(self) -> InodeWrapper<'a, Flushed, Link, Type> {
             self.inode.inc_links();
             clwb(self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }
     }
 
-    impl<'a, Op> InodeWrapper<'a, Flushed, Op> {
+    impl<'a, Op, Type> InodeWrapper<'a, Flushed, Op, Type> {
         // intentionally does NOT call fence here; this is an unsafe function that
         // should only be used when fencing multiple objects on a single fence call
         // using the batch fence function/macro(whatever you end up using)
-        pub(crate) unsafe fn fence_unsafe(self) -> InodeWrapper<'a, Clean, Op> {
+        pub(crate) unsafe fn fence_unsafe(self) -> InodeWrapper<'a, Clean, Op, Type> {
+            InodeWrapper::new(self.inode)
+        }
+
+        pub(crate) fn fence(self) -> InodeWrapper<'a, Clean, Op, Type> {
+            sfence();
             InodeWrapper::new(self.inode)
         }
     }

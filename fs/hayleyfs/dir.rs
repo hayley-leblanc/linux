@@ -162,7 +162,8 @@ pub(crate) mod hayleyfs_dir {
         let inode = unsafe { &mut *(hayleyfs_file_inode(file) as *mut inode) };
         let sb = inode.i_sb;
         let sbi = hayleyfs_get_sbi(sb);
-        let pi = hayleyfs_inode::InodeWrapper::read_inode(sbi, &(inode.i_ino.try_into().unwrap()));
+        let pi =
+            hayleyfs_inode::InodeWrapper::read_dir_inode(sbi, &(inode.i_ino.try_into().unwrap()));
         let ctx = unsafe { &mut *(ctx_raw as *mut dir_context) };
 
         if ctx.pos == READDIR_END {
@@ -293,6 +294,8 @@ pub(crate) mod hayleyfs_dir {
     }
 
     impl<'a> DentryWrapper<'a, Clean, Alloc> {
+        // TODO: should this state be read or alloc?
+
         /// returns the next unused dentry on the given page
         pub(crate) fn get_new_dentry(sbi: &SbInfo, page_no: PmPage) -> Result<Self> {
             let page_addr = sbi.virt_addr as usize + (page_no * PAGE_SIZE);
@@ -320,14 +323,23 @@ pub(crate) mod hayleyfs_dir {
             self,
             ino: InodeNum,
             name: &str,
-            _: &hayleyfs_inode::InodeWrapper<'a, Clean, Valid>,
-            _: &hayleyfs_inode::InodeWrapper<'a, Clean, Link>,
+            _: &hayleyfs_inode::InodeWrapper<'a, Clean, Valid, Dir>,
+            _: &hayleyfs_inode::InodeWrapper<'a, Clean, Link, Dir>,
         ) -> DentryWrapper<'a, Flushed, Init> {
-            self.dentry.set_up(ino, name);
-            DentryWrapper::new(self.dentry)
+            self.initialize_dentry(ino, name)
+        }
+
+        pub(crate) fn initialize_file_dentry(
+            self,
+            ino: InodeNum,
+            name: &str,
+            _: &hayleyfs_inode::InodeWrapper<'a, Clean, Init, Data>,
+        ) -> DentryWrapper<'a, Flushed, Init> {
+            self.initialize_dentry(ino, name)
         }
     }
 
+    // TODO: should require dir inode wrapper?
     pub(crate) fn initialize_self_dentry<'a>(
         sbi: &SbInfo,
         page_no: PmPage,
@@ -336,6 +348,7 @@ pub(crate) mod hayleyfs_dir {
         Ok(DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(self_ino, "."))
     }
 
+    // TODO: should require dir inode wrapper?
     pub(crate) fn initialize_parent_dentry<'a>(
         sbi: &SbInfo,
         page_no: PmPage,
@@ -346,6 +359,11 @@ pub(crate) mod hayleyfs_dir {
 
     impl<'a, Op> DentryWrapper<'a, Flushed, Op> {
         pub(crate) unsafe fn fence_unsafe(self) -> DentryWrapper<'a, Clean, Op> {
+            DentryWrapper::new(self.dentry)
+        }
+
+        pub(crate) fn fence(self) -> DentryWrapper<'a, Clean, Op> {
+            sfence();
             DentryWrapper::new(self.dentry)
         }
     }

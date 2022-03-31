@@ -138,12 +138,12 @@ pub(crate) mod hayleyfs_bitmap {
         }
     }
 
-    impl<'a, State, Op> BitmapWrapper<'a, State, Op, InoBmap> {
+    impl<'a, State, Op> BitmapWrapper<'a, State, Op, Inode> {
         pub(crate) fn clear_invalid_ino_bits(
             self,
             invalid_inos: Vec<InodeNum>,
-            _: Vec<InodeWrapper<'a, Clean, Zero>>,
-        ) -> Result<BitmapWrapper<'a, Flushed, Zero, InoBmap>> {
+            _: Vec<InodeWrapper<'a, Clean, Zero, Unknown>>,
+        ) -> Result<BitmapWrapper<'a, Flushed, Zero, Inode>> {
             if invalid_inos.len() == 0 {
                 return Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines));
             }
@@ -158,12 +158,12 @@ pub(crate) mod hayleyfs_bitmap {
         }
     }
 
-    impl<'a, State, Op> BitmapWrapper<'a, State, Op, DataBmap> {
+    impl<'a, State, Op> BitmapWrapper<'a, State, Op, Data> {
         pub(crate) fn clear_invalid_page_bits(
             self,
             invalid_pages: Vec<PmPage>,
             _: Vec<DataPageWrapper<'a, Clean, Zero>>,
-        ) -> Result<BitmapWrapper<'a, Flushed, Zero, DataBmap>> {
+        ) -> Result<BitmapWrapper<'a, Flushed, Zero, Data>> {
             if invalid_pages.len() == 0 {
                 return Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines));
             }
@@ -178,7 +178,7 @@ pub(crate) mod hayleyfs_bitmap {
         }
     }
 
-    impl<'a> BitmapWrapper<'a, Clean, Read, InoBmap> {
+    impl<'a> BitmapWrapper<'a, Clean, Read, Inode> {
         pub(crate) fn read_inode_bitmap(sbi: &SbInfo) -> Self {
             BitmapWrapper::new(
                 unsafe {
@@ -190,7 +190,7 @@ pub(crate) mod hayleyfs_bitmap {
         }
     }
 
-    impl<'a> BitmapWrapper<'a, Clean, Read, DataBmap> {
+    impl<'a> BitmapWrapper<'a, Clean, Read, Data> {
         pub(crate) fn read_data_bitmap(sbi: &SbInfo) -> Self {
             BitmapWrapper::new(
                 unsafe {
@@ -219,12 +219,12 @@ pub(crate) mod hayleyfs_bitmap {
         };
     }
 
-    impl<'a> BitmapWrapper<'a, Clean, Alloc, DataBmap> {
+    impl<'a> BitmapWrapper<'a, Clean, Alloc, Data> {
         // TODO: this should also be allowed to take in a clean zeroed wrapper
         pub(crate) fn alloc_root_ino_page(
             self,
-            _: &BitmapWrapper<'a, Clean, Zero, InoBmap>,
-        ) -> Result<(PmPage, BitmapWrapper<'a, Flushed, Alloc, DataBmap>)> {
+            _: &BitmapWrapper<'a, Clean, Zero, Inode>,
+        ) -> Result<(PmPage, BitmapWrapper<'a, Flushed, Alloc, Data>)> {
             let (page_no, bitmap) = self.find_and_set_next_zero_bit()?;
             let bitmap = bitmap.flush();
             Ok((page_no, bitmap))
@@ -235,13 +235,17 @@ pub(crate) mod hayleyfs_bitmap {
         pub(crate) unsafe fn fence_unsafe(self) -> BitmapWrapper<'a, Clean, Op, Type> {
             BitmapWrapper::new(self.bitmap, self.dirty_cache_lines)
         }
+        pub(crate) fn fence(self) -> BitmapWrapper<'a, Clean, Op, Type> {
+            sfence();
+            BitmapWrapper::new(self.bitmap, self.dirty_cache_lines)
+        }
     }
 
-    impl<'a> BitmapWrapper<'a, Clean, Zero, InoBmap> {
+    impl<'a> BitmapWrapper<'a, Clean, Zero, Inode> {
         pub(crate) fn alloc_root_ino(
             mut self,
-            _: &BitmapWrapper<'a, Flushed, Alloc, DataBmap>,
-        ) -> Result<(InodeNum, BitmapWrapper<'a, Flushed, Alloc, InoBmap>)> {
+            _: &BitmapWrapper<'a, Flushed, Alloc, Data>,
+        ) -> Result<(InodeNum, BitmapWrapper<'a, Flushed, Alloc, Inode>)> {
             let reserved_bit = 0;
             // set bits zero and one
             let bitmap = set_bits!(self, reserved_bit, ROOT_INO)?.flush();
@@ -341,7 +345,7 @@ pub(crate) mod hayleyfs_sb {
     impl<'a> SuperBlockWrapper<'a, Clean, Read> {
         pub(crate) fn init(
             sbi: &SbInfo,
-            _: &hayleyfs_bitmap::BitmapWrapper<'a, Clean, Alloc, DataBmap>,
+            _: &hayleyfs_bitmap::BitmapWrapper<'a, Clean, Alloc, Data>,
         ) -> SuperBlockWrapper<'a, Clean, Alloc> {
             let sb = unsafe { &mut *(sbi.virt_addr as *mut HayleyfsSuperBlock) };
             sb.size = sbi.pm_size;
@@ -355,7 +359,7 @@ pub(crate) mod hayleyfs_sb {
 // // TODO: this should probably live somewhere else
 // pub(crate) fn allocate_data_page<'a>(
 //     sbi: &SbInfo,
-// ) -> Result<hayleyfs_bitmap::CacheLineWrapper<'a, Flushed, Alloc, DataBmap>> {
+// ) -> Result<hayleyfs_bitmap::CacheLineWrapper<'a, Flushed, Alloc, Data>> {
 //     let bitmap = hayleyfs_bitmap::BitmapWrapper::read_data_bitmap(sbi);
 
 //     let page_no = bitmap.find_and_set_next_zero_bit()?;

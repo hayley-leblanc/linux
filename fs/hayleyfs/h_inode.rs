@@ -15,7 +15,7 @@ use core::ptr::{eq, null_mut};
 use kernel::bindings::{
     d_instantiate, d_splice_alias, dentry, iget_failed, iget_locked, inc_nlink, inode,
     inode_init_owner, inode_operations, insert_inode_locked, new_inode, set_nlink, simple_lookup,
-    super_block, umode_t, unlock_new_inode, user_namespace, I_NEW, S_IFDIR,
+    super_block, umode_t, unlock_new_inode, user_namespace, I_NEW, S_IFDIR, S_IFREG,
 };
 use kernel::c_default_struct;
 use kernel::c_types::c_char;
@@ -24,6 +24,7 @@ use kernel::prelude::*;
 pub(crate) static HayleyfsDirInodeOps: inode_operations = inode_operations {
     mkdir: Some(hayleyfs_mkdir),
     lookup: Some(hayleyfs_lookup),
+    create: Some(hayleyfs_create),
     ..c_default_struct!(inode_operations)
 };
 
@@ -60,7 +61,6 @@ unsafe extern "C" fn hayleyfs_mkdir(
     mode: umode_t,
 ) -> i32 {
     // convert arguments to mutable references rather than raw pointers
-    // TODO: I bet you could write a macro to do this a bit more cleanly?
     let mnt_userns = unsafe { &mut *(mnt_userns_raw as *mut user_namespace) };
     let dir = unsafe { &mut *(dir_raw as *mut inode) };
     let dentry = unsafe { &mut *(dentry_raw as *mut dentry) };
@@ -116,6 +116,7 @@ fn _hayleyfs_mkdir(
     mode: umode_t,
 ) -> Result<()> {
     pr_info!("creating a new directory\n");
+    // TODO: configure permissions
     // TODO: more graceful way of checking crashes. find a way that doesn't introduce so much redundant code
 
     let sb = unsafe { &mut *(dir.i_sb as *mut super_block) };
@@ -123,7 +124,7 @@ fn _hayleyfs_mkdir(
 
     let dentry_name = unsafe { CStr::from_char_ptr((*dentry).d_name.name as *const c_char) };
     if dentry_name.len() > MAX_FILENAME_LEN {
-        pr_info!("dentry name {:?} is too long", dentry_name);
+        pr_info!("dentry name {:?} is too long\n", dentry_name);
         return Err(Error::ENAMETOOLONG);
     }
 
@@ -146,8 +147,8 @@ fn _hayleyfs_mkdir(
         return Err(Error::EINVAL);
     }
 
-    let pi = InodeWrapper::read_inode(sbi, &ino);
-    let pi = pi.initialize_inode(ino, &inode_bitmap);
+    let pi = InodeWrapper::read_dir_inode(sbi, &ino);
+    let pi = pi.initialize_inode(ino, None, S_IFDIR, 2, &inode_bitmap);
     if sbi.mount_opts.crash_point == 4 {
         return Err(Error::EINVAL);
     }
@@ -167,7 +168,7 @@ fn _hayleyfs_mkdir(
     }
 
     // increment parent link count
-    let parent_pi = InodeWrapper::read_inode(sbi, &parent_ino);
+    let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
     let parent_pi = parent_pi.inc_links();
     if sbi.mount_opts.crash_point == 8 {
         return Err(Error::EINVAL);
@@ -207,7 +208,7 @@ fn _hayleyfs_mkdir(
     // of rollback work we need to do; would it cause correctness issues?
     let inode = hayleyfs_new_vfs_inode(sb, dir, pi, mnt_userns, mode, NewInodeType::Mkdir);
     unsafe {
-        d_instantiate(dentry, inode);
+        d_instantiate(dentry, inode); // instantiate VFS dentry with the inode
         inc_nlink(dir as *mut inode);
         unlock_new_inode(inode);
     };
@@ -215,10 +216,10 @@ fn _hayleyfs_mkdir(
     Ok(())
 }
 
-fn hayleyfs_new_vfs_inode<'a, Op>(
+fn hayleyfs_new_vfs_inode<'a, Op, Type>(
     sb: &mut super_block,
     dir: &inode,
-    pi: InodeWrapper<'a, Clean, Op>,
+    pi: InodeWrapper<'a, Clean, Op, Type>,
     mnt_userns: &mut user_namespace,
     mode: umode_t,
     new_type: NewInodeType,
@@ -275,7 +276,7 @@ pub(crate) fn _hayleyfs_lookup(dir: &mut inode, dentry: &mut dentry, flags: u32)
     // look up parent inode
     // TODO: check that this is actually a directory and return an error if it isn't
     // TODO: don't panic if type conversion fails
-    let parent_pi = InodeWrapper::read_inode(sbi, &(dir.i_ino.try_into().unwrap()));
+    let parent_pi = InodeWrapper::read_dir_inode(sbi, &(dir.i_ino.try_into().unwrap()));
 
     // TODO: finish - can test fs mounting once this is done
     match parent_pi.get_data_page_no() {
@@ -297,4 +298,72 @@ pub(crate) fn _hayleyfs_lookup(dir: &mut inode, dentry: &mut dentry, flags: u32)
             unsafe { simple_lookup(dir, dentry, flags) }
         }
     }
+}
+
+#[no_mangle]
+unsafe extern "C" fn hayleyfs_create(
+    mnt_userns_raw: *mut user_namespace,
+    inode_raw: *mut inode,
+    dentry_raw: *mut dentry,
+    mode: umode_t,
+    excl: bool,
+) -> i32 {
+    let mnt_userns = unsafe { &mut *(mnt_userns_raw as *mut user_namespace) };
+    let inode = unsafe { &mut *(inode_raw as *mut inode) };
+    let dentry = unsafe { &mut *(dentry_raw as *mut dentry) };
+
+    let result = _hayleyfs_create(mnt_userns, inode, dentry, mode, excl);
+
+    match result {
+        Ok(_) => 0,
+        Err(e) => e.to_kernel_errno(),
+    }
+}
+
+fn _hayleyfs_create(
+    mnt_userns: &mut user_namespace,
+    inode: &mut inode,
+    dentry: &mut dentry,
+    mode: umode_t,
+    _excl: bool,
+) -> Result<()> {
+    // TODO: handle excl case - if true, create should only succeed if the file doesn't already exist
+
+    // TODO: configure permissions
+    let sb = unsafe { &mut *(inode.i_sb as *mut super_block) };
+    let sbi = hayleyfs_get_sbi(sb);
+
+    // inode parameter is the parent's inode
+    let file_name = unsafe { CStr::from_char_ptr((*dentry).d_name.name as *const c_char) };
+    if file_name.len() > MAX_FILENAME_LEN {
+        pr_info!("file_name name {:?} is too long\n", file_name);
+        return Err(Error::ENAMETOOLONG);
+    }
+
+    let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi);
+    let (ino, inode_bitmap) = inode_bitmap.find_and_set_next_zero_bit()?;
+    let inode_bitmap = inode_bitmap.flush().fence();
+
+    let pi = InodeWrapper::read_file_inode(sbi, &ino);
+    let pi = pi
+        .initialize_inode(ino, None, S_IFREG, 1, &inode_bitmap)
+        .fence();
+
+    let parent_ino = inode.i_ino.try_into()?;
+    let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
+    let new_dentry =
+        hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
+
+    // TODO: do something with this
+    let _new_dentry = new_dentry
+        .initialize_file_dentry(ino, file_name.to_str()?, &pi)
+        .fence();
+
+    let new_inode = hayleyfs_new_vfs_inode(sb, inode, pi, mnt_userns, mode, NewInodeType::Create);
+    unsafe {
+        d_instantiate(dentry, new_inode); // instantiate VFS dentry with the inode
+        unlock_new_inode(new_inode);
+    };
+
+    Ok(())
 }

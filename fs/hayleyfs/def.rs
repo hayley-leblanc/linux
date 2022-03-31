@@ -48,10 +48,17 @@ pub(crate) struct Valid;
 pub(crate) struct Zero;
 pub(crate) struct Link;
 
-// semantic types used to indicate the type of a bitmap (data or inode)
+// semantic types used to indicate the type of bitmaps and/or inodes
 // to reduce some code repetition and prevent mistakes
-pub(crate) struct InoBmap;
-pub(crate) struct DataBmap;
+pub(crate) struct Inode;
+pub(crate) struct Data;
+pub(crate) struct Dir;
+pub(crate) struct Unknown;
+
+// pub(crate) trait InodeType {}
+// impl InodeType for Data {}
+// impl InodeType for Dir {}
+// impl InodeType for Unknown {}
 
 pub(crate) trait PmObjWrapper {}
 
