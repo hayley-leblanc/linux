@@ -15,7 +15,9 @@ use core::ptr::{eq, null_mut};
 use kernel::bindings::{
     current_time, d_instantiate, d_splice_alias, dentry, iget_failed, iget_locked, inc_nlink,
     inode, inode_init_owner, inode_operations, insert_inode_locked, new_inode, set_nlink,
-    simple_lookup, super_block, umode_t, unlock_new_inode, user_namespace, I_NEW, S_IFDIR, S_IFREG,
+    simple_lookup, super_block, umode_t, unlock_new_inode, user_namespace, FS_APPEND_FL,
+    FS_DIRSYNC_FL, FS_IMMUTABLE_FL, FS_NOATIME_FL, FS_SYNC_FL, I_NEW, S_APPEND, S_DAX, S_DIRSYNC,
+    S_IFDIR, S_IMMUTABLE, S_NOATIME, S_SYNC,
 };
 use kernel::c_types::c_char;
 use kernel::prelude::*;
@@ -39,15 +41,53 @@ pub(crate) fn hayleyfs_iget(sb: *mut super_block, ino: usize) -> Result<&'static
         return Ok(inode);
     }
     inode.i_ino = ino as u64;
-    // TODO: right now this is hardcoded for directories because
-    // that's all we have. but it should be read from the persistent inode
-    // and set depending on the type of inode
-    inode.i_mode = S_IFDIR as u16;
-    inode.i_op = &HayleyfsDirInodeOps;
+    let sbi = hayleyfs_get_sbi(sb);
+
+    // read the persistent inode to fill in info
+    let pi = InodeWrapper::read_unknown_inode(sbi, &ino);
+    inode.i_mode = pi.get_mode();
+    inode.i_size = pi.get_size();
     unsafe {
-        inode.__bindgen_anon_3.i_fop = &HayleyfsFileOps; // fileOps has to be mutable so this has to be unsafe. Why does it have to be mutable???
-        set_nlink(inode, 2);
+        set_nlink(inode, pi.get_link_count());
+        hayleyfs_write_uid(inode, pi.get_uid());
+        hayleyfs_write_gid(inode, pi.get_gid());
     }
+
+    // this logic is taken from NOVA's nova_set_inode_flags function
+    let flags = pi.get_flags();
+    inode.i_flags &= !(S_SYNC | S_APPEND | S_IMMUTABLE | S_NOATIME | S_DIRSYNC);
+    if flags & FS_SYNC_FL != 0 {
+        inode.i_flags |= S_SYNC;
+    }
+    if flags & FS_APPEND_FL != 0 {
+        inode.i_flags |= S_APPEND;
+    }
+    if flags & FS_IMMUTABLE_FL != 0 {
+        inode.i_flags |= S_IMMUTABLE;
+    }
+    if flags & FS_NOATIME_FL != 0 {
+        inode.i_flags |= S_NOATIME;
+    }
+    if flags & FS_DIRSYNC_FL != 0 {
+        inode.i_flags |= S_DIRSYNC;
+    }
+    inode.i_flags |= S_DAX;
+
+    unsafe {
+        if hayleyfs_isdir(inode.i_mode) {
+            inode.i_op = &HayleyfsDirInodeOps;
+        } else if hayleyfs_isreg(inode.i_mode) {
+            inode.__bindgen_anon_3.i_fop = &HayleyfsFileOps; // fileOps has to be mutable so this has to be unsafe. Why does it have to be mutable???
+        }
+    }
+
+    // TODO: should update persistent access time here?
+    inode.i_ctime.tv_sec = pi.get_ctime();
+    inode.i_ctime.tv_nsec = 0;
+    inode.i_mtime.tv_sec = pi.get_mtime();
+    inode.i_mtime.tv_nsec = 0;
+    inode.i_atime = unsafe { current_time(inode) };
+
     unsafe { unlock_new_inode(inode) };
 
     Ok(inode)
@@ -256,6 +296,7 @@ unsafe extern "C" fn hayleyfs_lookup(
 
 #[no_mangle]
 pub(crate) fn _hayleyfs_lookup(dir: &mut inode, dentry: &mut dentry, flags: u32) -> *mut dentry {
+    pr_info!("LOOKING UP\n");
     let dentry_name = unsafe { CStr::from_char_ptr((*dentry).d_name.name as *const c_char) };
 
     let dir = unsafe { &mut *(dir as *mut inode) };
@@ -276,7 +317,8 @@ pub(crate) fn _hayleyfs_lookup(dir: &mut inode, dentry: &mut dentry, flags: u32)
             match lookup_res {
                 Ok(ino) => {
                     // TODO: handle error properly
-                    let mut inode = hayleyfs_iget(sb, ino).unwrap();
+                    let inode = hayleyfs_iget(sb, ino).unwrap();
+                    pr_info!("inode mode: {:?}\n", inode.i_mode);
                     unsafe { d_splice_alias(inode, dentry) }
                 }
                 Err(_) => unsafe { simple_lookup(dir, dentry, flags) },
@@ -338,7 +380,7 @@ fn _hayleyfs_create(
     let parent_ino = inode.i_ino.try_into()?;
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
 
-    let mut new_inode =
+    let new_inode =
         hayleyfs_new_vfs_inode(sb, inode, &pi, mnt_userns, mode, NewInodeType::Create, 0);
     unsafe {
         d_instantiate(dentry, new_inode); // instantiate VFS dentry with the inode

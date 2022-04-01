@@ -40,19 +40,12 @@ pub(crate) mod hayleyfs_inode {
         ctime: i64, // inode change time
         mtime: i64, // modification time
         atime: i64, // access time
-        size: u64,  // size of data in bytes
+        size: i64,  // size of data in bytes
         ino: InodeNum,
         data0: Option<PmPage>,
     }
 
     impl HayleyfsInode {
-        // fn set_up(&mut self, ino: InodeNum, data: Option<PmPage>, mode: u32, link_count: u16) {
-        //     self.ino = ino;
-        //     self.data0 = data;
-        //     self.mode = mode;
-        //     self.link_count = link_count;
-        // }
-
         fn set_page(&mut self, page: Option<PmPage>) {
             self.data0 = page;
         }
@@ -101,6 +94,34 @@ pub(crate) mod hayleyfs_inode {
 
         pub(crate) fn get_flags(&self) -> u32 {
             self.inode.flags
+        }
+
+        pub(crate) fn get_mode(&self) -> u16 {
+            self.inode.mode
+        }
+
+        pub(crate) fn get_uid(&self) -> u32 {
+            self.inode.uid
+        }
+
+        pub(crate) fn get_gid(&self) -> u32 {
+            self.inode.gid
+        }
+
+        pub(crate) fn get_size(&self) -> i64 {
+            self.inode.size
+        }
+
+        pub(crate) fn get_link_count(&self) -> u32 {
+            self.inode.link_count
+        }
+
+        pub(crate) fn get_ctime(&self) -> i64 {
+            self.inode.ctime
+        }
+
+        pub(crate) fn get_mtime(&self) -> i64 {
+            self.inode.mtime
         }
 
         // TODO: THIS NEEDS TO BE REWRITTEN
@@ -243,16 +264,16 @@ pub(crate) mod hayleyfs_inode {
         ) -> InodeWrapper<'a, Flushed, Init, Type> {
             // TODO: do these numbers make sense? do you have to do something with them to
             // make them make sense?
-            self.inode.mode = hayleyfs_cpu_to_le16(inode.i_mode);
-            self.inode.link_count = hayleyfs_cpu_to_le32(unsafe { inode.__bindgen_anon_1.i_nlink });
+            self.inode.mode = inode.i_mode;
+            self.inode.link_count = unsafe { inode.__bindgen_anon_1.i_nlink };
             self.inode.data0 = None;
-            self.inode.ctime = hayleyfs_cpu_to_le64_signed(inode.i_ctime.tv_sec);
-            self.inode.mtime = hayleyfs_cpu_to_le64_signed(inode.i_mtime.tv_sec);
-            self.inode.atime = hayleyfs_cpu_to_le64_signed(inode.i_atime.tv_sec);
-            self.inode.size = hayleyfs_cpu_to_le64(inode.i_size as u64);
+            self.inode.ctime = inode.i_ctime.tv_sec;
+            self.inode.mtime = inode.i_mtime.tv_sec;
+            self.inode.atime = inode.i_atime.tv_sec;
+            self.inode.size = inode.i_size;
             self.inode.flags = hayleyfs_mask_flags(new_mode, parent_flags);
-            self.inode.uid = hayleyfs_cpu_to_le32(unsafe { hayleyfs_uid_read(inode) } as u32);
-            self.inode.gid = hayleyfs_cpu_to_le32(unsafe { hayleyfs_gid_read(inode) } as u32);
+            self.inode.uid = unsafe { hayleyfs_uid_read(inode) } as u32;
+            self.inode.gid = unsafe { hayleyfs_gid_read(inode) } as u32;
             clwb(self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }
@@ -266,25 +287,19 @@ pub(crate) mod hayleyfs_inode {
         ) -> InodeWrapper<'a, Flushed, Init, Dir> {
             let current_time = unsafe { current_time(root_inode) };
             let ifdir_16: u16 = S_IFDIR.try_into().unwrap();
-            self.inode.mode = hayleyfs_cpu_to_le16(sbi.mode | ifdir_16);
+            self.inode.mode = sbi.mode | ifdir_16;
             self.inode.data0 = None;
             unsafe {
-                self.inode.uid = hayleyfs_cpu_to_le32(from_kuid(
-                    &mut init_user_ns as *mut user_namespace,
-                    sbi.uid,
-                ));
-                self.inode.gid = hayleyfs_cpu_to_le32(from_kgid(
-                    &mut init_user_ns as *mut user_namespace,
-                    sbi.gid,
-                ));
+                self.inode.uid = from_kuid(&mut init_user_ns as *mut user_namespace, sbi.uid);
+                self.inode.gid = from_kgid(&mut init_user_ns as *mut user_namespace, sbi.gid);
             }
-            self.inode.link_count = hayleyfs_cpu_to_le32(2);
-            self.inode.size = hayleyfs_cpu_to_le64(sb.s_blocksize as u64);
+            self.inode.link_count = 2;
+            self.inode.size = sb.s_blocksize as i64;
             self.inode.flags = 0;
             self.inode.ino = ROOT_INO;
-            self.inode.ctime = hayleyfs_cpu_to_le64_signed(current_time.tv_sec);
-            self.inode.atime = hayleyfs_cpu_to_le64_signed(current_time.tv_sec);
-            self.inode.mtime = hayleyfs_cpu_to_le64_signed(current_time.tv_sec);
+            self.inode.ctime = current_time.tv_sec;
+            self.inode.atime = current_time.tv_sec;
+            self.inode.mtime = current_time.tv_sec;
             clwb(self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }
@@ -295,12 +310,12 @@ pub(crate) mod hayleyfs_inode {
 // but we need to mask out some depending on the file types
 // this logic and the inherited flags is 100% stolen from NOVA
 fn hayleyfs_mask_flags(mode: u16, flags: u32) -> u32 {
-    let flags = flags & hayleyfs_cpu_to_le32(HAYLEYFS_FL_INHERITED);
+    let flags = flags & HAYLEYFS_FL_INHERITED;
     if unsafe { hayleyfs_isdir(mode) } {
         flags
     } else if unsafe { hayleyfs_isreg(mode) } {
-        flags & hayleyfs_cpu_to_le32(HAYLEYFS_REG_FLMASK)
+        flags & HAYLEYFS_REG_FLMASK
     } else {
-        flags & hayleyfs_cpu_to_le32(HAYLEYFS_OTHER_FLMASK)
+        flags & HAYLEYFS_OTHER_FLMASK
     }
 }
