@@ -13,13 +13,13 @@ use crate::super_def::*;
 use crate::{fence_all, fence_obj};
 use core::ptr::{eq, null_mut};
 use kernel::bindings::{
-    d_instantiate, d_splice_alias, dentry, iget_failed, iget_locked, inc_nlink, inode,
-    inode_init_owner, inode_operations, insert_inode_locked, new_inode, set_nlink, simple_lookup,
-    super_block, umode_t, unlock_new_inode, user_namespace, I_NEW, S_IFDIR, S_IFREG,
+    current_time, d_instantiate, d_splice_alias, dentry, iget_failed, iget_locked, inc_nlink,
+    inode, inode_init_owner, inode_operations, insert_inode_locked, new_inode, set_nlink,
+    simple_lookup, super_block, umode_t, unlock_new_inode, user_namespace, I_NEW, S_IFDIR, S_IFREG,
 };
-use kernel::c_default_struct;
 use kernel::c_types::c_char;
 use kernel::prelude::*;
+use kernel::{c_default_struct, PAGE_SIZE};
 
 pub(crate) static HayleyfsDirInodeOps: inode_operations = inode_operations {
     mkdir: Some(hayleyfs_mkdir),
@@ -108,6 +108,10 @@ unsafe extern "C" fn hayleyfs_mkdir(
  *                               └──────────────────────────┘
  */
 
+// if sbi.mount_opts.crash_point == 1 {
+//     return Err(Error::EINVAL);
+// }
+
 #[no_mangle]
 fn _hayleyfs_mkdir(
     mnt_userns: &mut user_namespace,
@@ -133,57 +137,50 @@ fn _hayleyfs_mkdir(
     let data_bitmap = BitmapWrapper::read_data_bitmap(sbi);
     let (ino, inode_bitmap) = inode_bitmap.find_and_set_next_zero_bit()?;
     let inode_bitmap = inode_bitmap.flush();
-    if sbi.mount_opts.crash_point == 1 {
-        return Err(Error::EINVAL);
-    }
+
     let (page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
     let data_bitmap = data_bitmap.flush();
-    if sbi.mount_opts.crash_point == 2 {
-        return Err(Error::EINVAL);
-    }
     // TODO: do we need to use data bitmap again?
     let (inode_bitmap, _data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
-    if sbi.mount_opts.crash_point == 3 {
-        return Err(Error::EINVAL);
-    }
 
     let pi = InodeWrapper::read_dir_inode(sbi, &ino);
-    let pi = pi.initialize_inode(ino, None, S_IFDIR, 2, &inode_bitmap);
-    if sbi.mount_opts.crash_point == 4 {
-        return Err(Error::EINVAL);
-    }
-
     let parent_ino: InodeNum = dir.i_ino.try_into()?;
+    let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
+
+    // set up vfs inode
+    // TODO: at what point should this actually happen?
+    let mut inode = hayleyfs_new_vfs_inode(
+        sb,
+        dir,
+        &pi,
+        mnt_userns,
+        mode,
+        NewInodeType::Mkdir,
+        PAGE_SIZE.try_into()?,
+    );
+    unsafe {
+        d_instantiate(dentry, inode); // instantiate VFS dentry with the inode
+        inc_nlink(dir as *mut inode);
+        unlock_new_inode(inode);
+    };
+
+    let pi = pi.initialize_inode(
+        mode.into(),
+        parent_pi.get_flags(),
+        &mut inode,
+        &inode_bitmap,
+    );
+
     let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, ino)?;
-    if sbi.mount_opts.crash_point == 5 {
-        return Err(Error::EINVAL);
-    }
     let parent_dentry = hayleyfs_dir::initialize_parent_dentry(sbi, page_no, ino)?;
-    if sbi.mount_opts.crash_point == 6 {
-        return Err(Error::EINVAL);
-    }
     let (pi, self_dentry, parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
-    if sbi.mount_opts.crash_point == 7 {
-        return Err(Error::EINVAL);
-    }
 
     // increment parent link count
-    let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
-    let parent_pi = parent_pi.inc_links();
-    if sbi.mount_opts.crash_point == 8 {
-        return Err(Error::EINVAL);
-    }
+    let parent_pi = parent_pi.inc_links(); // TODO: increment vfs link count as well?
 
     // add page with newly initialized dentries to the new inode
     let pi = pi.add_dir_page(Some(page_no), self_dentry, parent_dentry);
-    if sbi.mount_opts.crash_point == 9 {
-        return Err(Error::EINVAL);
-    }
-
     let (pi, parent_pi) = fence_all!(pi, parent_pi);
-    if sbi.mount_opts.crash_point == 10 {
-        return Err(Error::EINVAL);
-    }
 
     // add new dentry to parent
     // we can read the dentry at any time, but we can't actually modify it without methods
@@ -191,27 +188,12 @@ fn _hayleyfs_mkdir(
     // TODO: handle panic
     let new_dentry =
         hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
-    if sbi.mount_opts.crash_point == 11 {
-        return Err(Error::EINVAL);
-    }
 
     // TODO: do something with last new_dentry variable
-    let _new_dentry =
-        new_dentry.initialize_mkdir_dentry(ino, dentry_name.to_str()?, &pi, &parent_pi);
-    if sbi.mount_opts.crash_point == 12 {
-        return Err(Error::EINVAL);
-    }
-
-    // set up vfs inode
-    // TODO: what if this fails? need to roll back gracefully
-    // TODO: at what point should this actually happen? doing it early would reduce the amount
-    // of rollback work we need to do; would it cause correctness issues?
-    let inode = hayleyfs_new_vfs_inode(sb, dir, pi, mnt_userns, mode, NewInodeType::Mkdir);
-    unsafe {
-        d_instantiate(dentry, inode); // instantiate VFS dentry with the inode
-        inc_nlink(dir as *mut inode);
-        unlock_new_inode(inode);
-    };
+    // TODO: this should rely on the vfs inode being valid?
+    let _new_dentry = new_dentry
+        .initialize_mkdir_dentry(ino, dentry_name.to_str()?, &pi, &parent_pi)
+        .fence();
 
     Ok(())
 }
@@ -219,10 +201,11 @@ fn _hayleyfs_mkdir(
 fn hayleyfs_new_vfs_inode<'a, Op, Type>(
     sb: &mut super_block,
     dir: &inode,
-    pi: InodeWrapper<'a, Clean, Op, Type>,
+    pi: &InodeWrapper<'a, Clean, Op, Type>,
     mnt_userns: &mut user_namespace,
     mode: umode_t,
     new_type: NewInodeType,
+    size: i64,
 ) -> &'static mut inode {
     // TODO: handle errors properly
     let inode = unsafe { &mut *(new_inode(sb) as *mut inode) };
@@ -246,6 +229,13 @@ fn hayleyfs_new_vfs_inode<'a, Op, Type>(
             pr_info!("implement me!");
         }
     }
+
+    let current_time = unsafe { current_time(inode) };
+    inode.i_ino = ino as u64;
+    inode.i_mtime = current_time;
+    inode.i_ctime = current_time;
+    inode.i_atime = current_time;
+    inode.i_size = size;
 
     unsafe { insert_inode_locked(inode) };
 
@@ -286,7 +276,7 @@ pub(crate) fn _hayleyfs_lookup(dir: &mut inode, dentry: &mut dentry, flags: u32)
             match lookup_res {
                 Ok(ino) => {
                     // TODO: handle error properly
-                    let inode = hayleyfs_iget(sb, ino).unwrap();
+                    let mut inode = hayleyfs_iget(sb, ino).unwrap();
                     unsafe { d_splice_alias(inode, dentry) }
                 }
                 Err(_) => unsafe { simple_lookup(dir, dentry, flags) },
@@ -345,12 +335,20 @@ fn _hayleyfs_create(
     let inode_bitmap = inode_bitmap.flush().fence();
 
     let pi = InodeWrapper::read_file_inode(sbi, &ino);
-    let pi = pi
-        .initialize_inode(ino, None, S_IFREG, 1, &inode_bitmap)
-        .fence();
-
     let parent_ino = inode.i_ino.try_into()?;
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
+
+    let mut new_inode =
+        hayleyfs_new_vfs_inode(sb, inode, &pi, mnt_userns, mode, NewInodeType::Create, 0);
+    unsafe {
+        d_instantiate(dentry, new_inode); // instantiate VFS dentry with the inode
+        unlock_new_inode(new_inode);
+    };
+
+    let pi = pi
+        .initialize_inode(mode, parent_pi.get_flags(), new_inode, &inode_bitmap)
+        .fence();
+
     let new_dentry =
         hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
 
@@ -358,12 +356,6 @@ fn _hayleyfs_create(
     let _new_dentry = new_dentry
         .initialize_file_dentry(ino, file_name.to_str()?, &pi)
         .fence();
-
-    let new_inode = hayleyfs_new_vfs_inode(sb, inode, pi, mnt_userns, mode, NewInodeType::Create);
-    unsafe {
-        d_instantiate(dentry, new_inode); // instantiate VFS dentry with the inode
-        unlock_new_inode(new_inode);
-    };
 
     Ok(())
 }

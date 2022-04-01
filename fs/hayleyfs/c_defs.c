@@ -48,3 +48,35 @@ int hayleyfs_fs_parse(struct fs_context *fc,
 {
 	return fs_parse(fc, desc, param, result);
 }
+
+uid_t hayleyfs_uid_read(const struct inode *inode) {
+    return i_uid_read(inode);
+}
+
+uid_t hayleyfs_gid_read(const struct inode *inode) {
+    return i_gid_read(inode);
+}
+
+uint64_t hayleyfs_cpu_to_le64_unsafe(uint64_t val) {
+    return cpu_to_le64(val);
+}
+
+int64_t hayleyfs_cpu_to_le64_signed_unsafe(int64_t val) {
+    return cpu_to_le64(val);
+}
+
+uint32_t hayleyfs_cpu_to_le32_unsafe(uint32_t val) {
+    return cpu_to_le32(val);
+}
+
+uint16_t hayleyfs_cpu_to_le16_unsafe(uint16_t val) {
+    return cpu_to_le16(val);
+}
+
+bool hayleyfs_isdir(uint16_t flags) {
+    return S_ISDIR(flags);
+}
+
+bool hayleyfs_isreg(uint16_t flags) {
+    return S_ISREG(flags);
+}

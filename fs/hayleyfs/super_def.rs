@@ -37,8 +37,8 @@ pub(crate) static hayleyfs_fs_parameters: [fs_parameter_spec; 4] = [
 // TODO: order structs low to high
 #[repr(C)]
 pub(crate) struct HayleyfsSuperBlock {
-    pub(crate) blocksize: u32,
     pub(crate) magic: u32,
+    pub(crate) blocksize: u64,
 }
 
 #[repr(C)]

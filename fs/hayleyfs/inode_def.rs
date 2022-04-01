@@ -10,7 +10,9 @@ use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
-use kernel::bindings::S_IFDIR;
+use kernel::bindings::{
+    current_time, from_kgid, from_kuid, init_user_ns, inode, super_block, user_namespace, S_IFDIR,
+};
 use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
@@ -30,19 +32,26 @@ pub(crate) mod hayleyfs_inode {
     // inode that lives in PM
     #[repr(C)]
     struct HayleyfsInode {
-        link_count: u16,
-        mode: u32,
+        mode: u16, // file mode (directory, regular, etc.)
+        link_count: u32,
+        uid: u32,
+        gid: u32,
+        flags: u32,
+        ctime: i64, // inode change time
+        mtime: i64, // modification time
+        atime: i64, // access time
+        size: u64,  // size of data in bytes
         ino: InodeNum,
         data0: Option<PmPage>,
     }
 
     impl HayleyfsInode {
-        fn set_up(&mut self, ino: InodeNum, data: Option<PmPage>, mode: u32, link_count: u16) {
-            self.ino = ino;
-            self.data0 = data;
-            self.mode = mode;
-            self.link_count = link_count;
-        }
+        // fn set_up(&mut self, ino: InodeNum, data: Option<PmPage>, mode: u32, link_count: u16) {
+        //     self.ino = ino;
+        //     self.data0 = data;
+        //     self.mode = mode;
+        //     self.link_count = link_count;
+        // }
 
         fn set_page(&mut self, page: Option<PmPage>) {
             self.data0 = page;
@@ -87,9 +96,14 @@ pub(crate) mod hayleyfs_inode {
         }
 
         pub(crate) fn is_dir(&self) -> bool {
-            (self.inode.mode & S_IFDIR) != 0
+            (self.inode.mode as u32 & S_IFDIR) != 0
         }
 
+        pub(crate) fn get_flags(&self) -> u32 {
+            self.inode.flags
+        }
+
+        // TODO: THIS NEEDS TO BE REWRITTEN
         pub(crate) fn zero_inode(self) -> InodeWrapper<'a, Flushed, Zero, Type> {
             self.inode.ino = 0;
             self.inode.data0 = None;
@@ -129,7 +143,7 @@ pub(crate) mod hayleyfs_inode {
     }
 
     // TODO: some redundant code here because we need different read methods
-    // for different types of indoes. Can we get rid of that/reuse the code somehow?
+    // for different types of inodes. Can we get rid of that/reuse the code somehow?
     impl<'a> InodeWrapper<'a, Clean, Read, Data> {
         pub(crate) fn read_file_inode(sbi: &SbInfo, ino: &InodeNum) -> Self {
             let addr = (PAGE_SIZE * INODE_PAGE) + (ino * size_of::<HayleyfsInode>());
@@ -184,18 +198,18 @@ pub(crate) mod hayleyfs_inode {
     }
 
     impl<'a, Type> InodeWrapper<'a, Clean, Read, Type> {
-        pub(crate) fn initialize_inode(
-            self,
-            ino: InodeNum,
-            page: Option<PmPage>,
-            mode: u32,
-            link_count: u16,
-            _: &BitmapWrapper<'_, Clean, Alloc, Inode>,
-        ) -> InodeWrapper<'a, Flushed, Init, Type> {
-            self.inode.set_up(ino, page, mode, link_count);
-            clwb(self.inode, size_of::<HayleyfsInode>(), false);
-            InodeWrapper::new(self.inode)
-        }
+        // pub(crate) fn initialize_inode(
+        //     self,
+        //     ino: InodeNum,
+        //     page: Option<PmPage>,
+        //     mode: u32,
+        //     link_count: u16,
+        //     _: &BitmapWrapper<'_, Clean, Alloc, Inode>,
+        // ) -> InodeWrapper<'a, Flushed, Init, Type> {
+        //     self.inode.set_up(ino, page, mode, link_count);
+        //     clwb(self.inode, size_of::<HayleyfsInode>(), false);
+        //     InodeWrapper::new(self.inode)
+        // }
 
         // TODO: this might need to go in a different impl
         pub(crate) fn inc_links(self) -> InodeWrapper<'a, Flushed, Link, Type> {
@@ -217,5 +231,76 @@ pub(crate) mod hayleyfs_inode {
             sfence();
             InodeWrapper::new(self.inode)
         }
+    }
+
+    impl<'a, Type> InodeWrapper<'a, Clean, Read, Type> {
+        pub(crate) fn initialize_inode(
+            self,
+            new_mode: u16,
+            parent_flags: u32,
+            inode: &mut inode,
+            _: &BitmapWrapper<'a, Clean, Alloc, Inode>,
+        ) -> InodeWrapper<'a, Flushed, Init, Type> {
+            // TODO: do these numbers make sense? do you have to do something with them to
+            // make them make sense?
+            self.inode.mode = hayleyfs_cpu_to_le16(inode.i_mode);
+            self.inode.link_count = hayleyfs_cpu_to_le32(unsafe { inode.__bindgen_anon_1.i_nlink });
+            self.inode.data0 = None;
+            self.inode.ctime = hayleyfs_cpu_to_le64_signed(inode.i_ctime.tv_sec);
+            self.inode.mtime = hayleyfs_cpu_to_le64_signed(inode.i_mtime.tv_sec);
+            self.inode.atime = hayleyfs_cpu_to_le64_signed(inode.i_atime.tv_sec);
+            self.inode.size = hayleyfs_cpu_to_le64(inode.i_size as u64);
+            self.inode.flags = hayleyfs_mask_flags(new_mode, parent_flags);
+            self.inode.uid = hayleyfs_cpu_to_le32(unsafe { hayleyfs_uid_read(inode) } as u32);
+            self.inode.gid = hayleyfs_cpu_to_le32(unsafe { hayleyfs_gid_read(inode) } as u32);
+            clwb(self.inode, size_of::<HayleyfsInode>(), false);
+            InodeWrapper::new(self.inode)
+        }
+
+        pub(crate) fn initialize_root_inode(
+            self,
+            sb: &super_block,
+            sbi: &SbInfo,
+            root_inode: &mut inode,
+            _: &BitmapWrapper<'a, Clean, Alloc, Inode>,
+        ) -> InodeWrapper<'a, Flushed, Init, Dir> {
+            let current_time = unsafe { current_time(root_inode) };
+            let ifdir_16: u16 = S_IFDIR.try_into().unwrap();
+            self.inode.mode = hayleyfs_cpu_to_le16(sbi.mode | ifdir_16);
+            self.inode.data0 = None;
+            unsafe {
+                self.inode.uid = hayleyfs_cpu_to_le32(from_kuid(
+                    &mut init_user_ns as *mut user_namespace,
+                    sbi.uid,
+                ));
+                self.inode.gid = hayleyfs_cpu_to_le32(from_kgid(
+                    &mut init_user_ns as *mut user_namespace,
+                    sbi.gid,
+                ));
+            }
+            self.inode.link_count = hayleyfs_cpu_to_le32(2);
+            self.inode.size = hayleyfs_cpu_to_le64(sb.s_blocksize as u64);
+            self.inode.flags = 0;
+            self.inode.ino = ROOT_INO;
+            self.inode.ctime = hayleyfs_cpu_to_le64_signed(current_time.tv_sec);
+            self.inode.atime = hayleyfs_cpu_to_le64_signed(current_time.tv_sec);
+            self.inode.mtime = hayleyfs_cpu_to_le64_signed(current_time.tv_sec);
+            clwb(self.inode, size_of::<HayleyfsInode>(), false);
+            InodeWrapper::new(self.inode)
+        }
+    }
+}
+
+// mode is new inode's mode, flags are its parent's flags. it inherits some flags
+// but we need to mask out some depending on the file types
+// this logic and the inherited flags is 100% stolen from NOVA
+fn hayleyfs_mask_flags(mode: u16, flags: u32) -> u32 {
+    let flags = flags & hayleyfs_cpu_to_le32(HAYLEYFS_FL_INHERITED);
+    if unsafe { hayleyfs_isdir(mode) } {
+        flags
+    } else if unsafe { hayleyfs_isreg(mode) } {
+        flags & hayleyfs_cpu_to_le32(HAYLEYFS_REG_FLMASK)
+    } else {
+        flags & hayleyfs_cpu_to_le32(HAYLEYFS_OTHER_FLMASK)
     }
 }

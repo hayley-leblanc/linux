@@ -6,7 +6,9 @@
 use crate::super_def::SbInfo;
 use kernel::bindings::{
     dax_device, dir_context, file, fs_context, fs_parameter, fs_parameter_spec, fs_parse_result,
-    inode, kgid_t, kuid_t, pfn_t,
+    inode, kgid_t, kuid_t, pfn_t, FS_COMPRBLK_FL, FS_COMPR_FL, FS_DIRSYNC_FL, FS_JOURNAL_DATA_FL,
+    FS_NOATIME_FL, FS_NOCOMP_FL, FS_NODUMP_FL, FS_NOTAIL_FL, FS_SECRM_FL, FS_SYNC_FL, FS_TOPDIR_FL,
+    FS_UNRM_FL,
 };
 use kernel::c_types::{c_char, c_int, c_ulong, c_void};
 use kernel::prelude::*;
@@ -34,6 +36,22 @@ pub(crate) const LONG_MAX: usize = 9223372036854775807;
 pub(crate) const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;
 pub(crate) const READDIR_END: i64 = !0;
 
+// set of flags that should be inherited by new nodes from parent
+// taken from NOVA, not checked
+pub(crate) const HAYLEYFS_FL_INHERITED: u32 = FS_SECRM_FL
+    | FS_UNRM_FL
+    | FS_COMPR_FL
+    | FS_SYNC_FL
+    | FS_NODUMP_FL
+    | FS_NOATIME_FL
+    | FS_COMPRBLK_FL
+    | FS_NOCOMP_FL
+    | FS_JOURNAL_DATA_FL
+    | FS_NOTAIL_FL
+    | FS_DIRSYNC_FL;
+pub(crate) const HAYLEYFS_REG_FLMASK: u32 = !(FS_DIRSYNC_FL | FS_TOPDIR_FL);
+pub(crate) const HAYLEYFS_OTHER_FLMASK: u32 = FS_NODUMP_FL | FS_NOATIME_FL;
+
 // semantic types indicating the persistence state of an object
 pub(crate) struct Dirty;
 pub(crate) struct Flushed;
@@ -47,6 +65,7 @@ pub(crate) struct Init;
 pub(crate) struct Valid;
 pub(crate) struct Zero;
 pub(crate) struct Link;
+pub(crate) struct Flags;
 
 // semantic types used to indicate the type of bitmaps and/or inodes
 // to reduce some code repetition and prevent mistakes
@@ -105,6 +124,7 @@ where
     }
 }
 
+// TODO: what does allow improper ctypes do here?
 extern "C" {
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_fs_put_dax(dax_dev: *mut dax_device);
@@ -141,4 +161,36 @@ extern "C" {
         param: *mut fs_parameter,
         result: *mut fs_parse_result,
     ) -> c_int;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_uid_read(inode: *const inode) -> c_int;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_gid_read(inode: *const inode) -> c_int;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_cpu_to_le64_unsafe(val: u64) -> u64;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_cpu_to_le64_signed_unsafe(val: i64) -> i64;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_cpu_to_le32_unsafe(val: u32) -> u32;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_cpu_to_le16_unsafe(val: u16) -> u16;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_isdir(flags: u16) -> bool;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_isreg(flags: u16) -> bool;
+}
+
+pub(crate) fn hayleyfs_cpu_to_le64(val: u64) -> u64 {
+    unsafe { hayleyfs_cpu_to_le64_unsafe(val) }
+}
+
+pub(crate) fn hayleyfs_cpu_to_le64_signed(val: i64) -> i64 {
+    unsafe { hayleyfs_cpu_to_le64_signed_unsafe(val) }
+}
+
+pub(crate) fn hayleyfs_cpu_to_le32(val: u32) -> u32 {
+    unsafe { hayleyfs_cpu_to_le32_unsafe(val) }
+}
+
+pub(crate) fn hayleyfs_cpu_to_le16(val: u16) -> u16 {
+    unsafe { hayleyfs_cpu_to_le16_unsafe(val) }
 }

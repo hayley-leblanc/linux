@@ -253,12 +253,10 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // TODO: do we need to use data bitmap again?
         let (_data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
 
-        // initialize inode
-        let inode_wrapper = InodeWrapper::read_dir_inode(sbi, &root_ino).initialize_inode(
-            root_ino,
-            None,
-            S_IFDIR,
-            2, // TODO: should link count be 1 or 2 for root directory?
+        let inode_wrapper = InodeWrapper::read_dir_inode(sbi, &root_ino).initialize_root_inode(
+            sb,
+            sbi,
+            root_i,
             &inode_bitmap,
         );
 
