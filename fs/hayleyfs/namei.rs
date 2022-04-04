@@ -27,6 +27,7 @@ pub(crate) static HayleyfsDirInodeOps: inode_operations = inode_operations {
     mkdir: Some(hayleyfs_mkdir),
     lookup: Some(hayleyfs_lookup),
     create: Some(hayleyfs_create),
+    rmdir: Some(hayleyfs_rmdir),
     ..c_default_struct!(inode_operations)
 };
 
@@ -152,6 +153,8 @@ unsafe extern "C" fn hayleyfs_mkdir(
 //     return Err(Error::EINVAL);
 // }
 
+/// NOTE: link count is conservatively high. we may crash with an incremented link count
+/// before the child has been added. this is causes a space leak but is NOT incorrect.
 #[no_mangle]
 fn _hayleyfs_mkdir(
     mnt_userns: &mut user_namespace,
@@ -159,8 +162,6 @@ fn _hayleyfs_mkdir(
     dentry: &mut dentry,
     mode: umode_t,
 ) -> Result<()> {
-    pr_info!("creating a new directory\n");
-    // TODO: configure permissions
     // TODO: more graceful way of checking crashes. find a way that doesn't introduce so much redundant code
 
     let sb = unsafe { &mut *(dir.i_sb as *mut super_block) };
@@ -318,7 +319,7 @@ pub(crate) fn _hayleyfs_lookup(
     match parent_pi.get_data_page_no() {
         Some(page_no) => {
             let lookup_res =
-                hayleyfs_dir::lookup_dentry(sbi, page_no, dentry_name.as_bytes_with_nul());
+                hayleyfs_dir::lookup_ino_by_name(sbi, page_no, dentry_name.as_bytes_with_nul());
             match lookup_res {
                 Ok(ino) => {
                     let inode = hayleyfs_iget(sb, ino)?;
@@ -361,7 +362,6 @@ fn _hayleyfs_create(
 ) -> Result<()> {
     // TODO: handle excl case - if true, create should only succeed if the file doesn't already exist
 
-    // TODO: configure permissions
     let sb = unsafe { &mut *(inode.i_sb as *mut super_block) };
     let sbi = hayleyfs_get_sbi(sb);
 
@@ -398,6 +398,58 @@ fn _hayleyfs_create(
     let _new_dentry = new_dentry
         .initialize_file_dentry(ino, file_name.to_str()?, &pi)
         .fence();
+
+    Ok(())
+}
+
+#[no_mangle]
+unsafe extern "C" fn hayleyfs_rmdir(inode_raw: *mut inode, dentry_raw: *mut dentry) -> i32 {
+    let inode = unsafe { &mut *(inode_raw as *mut inode) };
+    let dentry = unsafe { &mut *(dentry_raw as *mut dentry) };
+    let sb = unsafe { &mut *(inode.i_sb as *mut super_block) };
+    let sbi = hayleyfs_get_sbi(sb);
+
+    let result = _hayleyfs_rmdir(sbi, inode, dentry);
+
+    match result {
+        Ok(_) => 0,
+        Err(e) => e.to_kernel_errno(),
+    }
+}
+
+/// IMPORTANT NOTE: as in original soft updates, link count is conservatively high.
+/// we decrement parent's link count AFTER deleting dentry for the deleted child
+/// (which implicitly removes the link from the child from the parent).
+/// this means that a poorly timed crash could result in a parent with a link count
+/// that is too high. In the original soft updates paper, this is not considered
+/// a consistency issue, so we don't consider it an issue either. It can be easily
+/// fixed with fsck. The main issue with this is that it results in undeletable directories,
+/// which is not ideal, but it's just a space leak issue
+///
+/// inode is the parent inode, dentry is the dentry of the file to delete
+fn _hayleyfs_rmdir(sbi: &SbInfo, dir: &mut inode, dentry: &mut dentry) -> Result<()> {
+    // 1. delete child dentry from parent
+    // pr_info!(
+    //     "dentry name: {:?}\n",
+    //     CStr::from_char_ptr(dentry.d_name.name as *const c_char)
+    // );
+    // pr_info!("inode num: {:?}\n", dir.i_ino);
+    let dentry_name = unsafe { CStr::from_char_ptr(dentry.d_name.name as *const c_char) };
+
+    let parent_ino = dir.i_ino as usize;
+
+    // read the parent inode from PM
+    let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
+    // obtain the dentry to delete
+    let delete_dentry = parent_pi.lookup_dentry_in_inode(sbi, dentry_name)?;
+    // and set it invalid
+    let delete_dentry = unsafe { delete_dentry.set_invalid() }.fence();
+
+    // now we can:
+    // a. decrement parent link count
+    // b. zero the . and .. dentries in the deleted directory.
+    // c. zero the deleted inode
+    // then fence
 
     Ok(())
 }

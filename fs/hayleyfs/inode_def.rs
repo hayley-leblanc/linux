@@ -3,6 +3,7 @@
 #![deny(clippy::let_underscore_must_use)]
 #![deny(clippy::used_underscore_binding)]
 
+use crate::data::hayleyfs_data::*;
 use crate::def::*;
 use crate::dir::hayleyfs_dir::*;
 use crate::pm::*;
@@ -85,7 +86,6 @@ pub(crate) mod hayleyfs_inode {
         }
 
         pub(crate) fn get_ino(&self) -> InodeNum {
-            pr_info!("getting ino {:?}\n", self.inode.ino);
             self.inode.ino
         }
 
@@ -192,6 +192,14 @@ pub(crate) mod hayleyfs_inode {
                 inode,
             }
         }
+
+        pub(crate) fn lookup_dentry_in_inode(
+            &self,
+            sbi: &'a SbInfo,
+            child_name: &[u8],
+        ) -> Result<DentryWrapper<'a, Clean, Read>> {
+            DentryWrapper::lookup_dentry_by_name(sbi, child_name, self)
+        }
     }
 
     impl<'a> InodeWrapper<'a, Clean, Read, Unknown> {
@@ -220,19 +228,6 @@ pub(crate) mod hayleyfs_inode {
     }
 
     impl<'a, Type> InodeWrapper<'a, Clean, Read, Type> {
-        // pub(crate) fn initialize_inode(
-        //     self,
-        //     ino: InodeNum,
-        //     page: Option<PmPage>,
-        //     mode: u32,
-        //     link_count: u16,
-        //     _: &BitmapWrapper<'_, Clean, Alloc, Inode>,
-        // ) -> InodeWrapper<'a, Flushed, Init, Type> {
-        //     self.inode.set_up(ino, page, mode, link_count);
-        //     clwb(self.inode, size_of::<HayleyfsInode>(), false);
-        //     InodeWrapper::new(self.inode)
-        // }
-
         // TODO: this might need to go in a different impl
         pub(crate) fn inc_links(self) -> InodeWrapper<'a, Flushed, Link, Type> {
             self.inode.inc_links();
