@@ -287,14 +287,13 @@ pub(crate) mod hayleyfs_inode {
             _: &BitmapWrapper<'a, Clean, Alloc, Inode>,
         ) -> InodeWrapper<'a, Flushed, Init, Dir> {
             let current_time = unsafe { current_time(root_inode) };
-            let ifdir_16: u16 = S_IFDIR.try_into().unwrap();
-            self.inode.mode = sbi.mode | ifdir_16;
+            self.inode.mode = root_inode.i_mode;
             self.inode.data0 = None;
             unsafe {
                 self.inode.uid = from_kuid(&mut init_user_ns as *mut user_namespace, sbi.uid);
                 self.inode.gid = from_kgid(&mut init_user_ns as *mut user_namespace, sbi.gid);
             }
-            self.inode.link_count = 2;
+            self.inode.link_count = unsafe { root_inode.__bindgen_anon_1.i_nlink };
             self.inode.size = sb.s_blocksize as i64;
             self.inode.flags = 0;
             self.inode.ino = ROOT_INO;

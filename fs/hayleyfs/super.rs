@@ -217,6 +217,10 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
     let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO)?;
     let mut root_i = unsafe { &mut *(root_i as *mut inode) };
 
+    root_i.i_mode = sbi.mode | S_IFDIR as u16;
+    root_i.i_op = &HayleyfsDirInodeOps;
+    set_nlink_safe(root_i, 2);
+
     if sbi.mount_opts.init {
         // TODO: we probably shouldn't actually do this. very slow. but it will let
         // me procrastinate on how to actually make sure data from old mounts doesn't
@@ -275,10 +279,6 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
     } else {
         hayleyfs_recovery(sbi)?;
     }
-
-    root_i.i_mode = S_IFDIR as u16;
-    root_i.i_op = &HayleyfsDirInodeOps;
-    set_nlink_safe(root_i, 2);
 
     // TODO: hide in a function
     unsafe {

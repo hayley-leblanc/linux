@@ -194,7 +194,7 @@ fn _hayleyfs_mkdir(
         dir,
         ino,
         mnt_userns,
-        mode,
+        mode | S_IFDIR as u16,
         NewInodeType::Mkdir,
         PAGE_SIZE.try_into()?,
     );
@@ -254,25 +254,24 @@ fn hayleyfs_new_vfs_inode(
         inode_init_owner(mnt_userns as *mut user_namespace, inode, dir, mode);
     }
 
+    inode.i_mode = mode;
+    inode.i_ino = ino as u64;
+
     match new_type {
         NewInodeType::Mkdir => {
-            inode.i_mode = S_IFDIR as u16;
             inode.i_op = &HayleyfsDirInodeOps;
             unsafe {
                 inode.__bindgen_anon_3.i_fop = &HayleyfsFileOps;
                 set_nlink(inode, 2);
             }
         }
-        NewInodeType::Create => {
-            // pr_info!("implement me!");
-            unsafe {
-                set_nlink(inode, 1);
-            }
-        }
+        NewInodeType::Create => unsafe {
+            // TODO: finish
+            set_nlink(inode, 1);
+        },
     }
 
     let current_time = unsafe { current_time(inode) };
-    inode.i_ino = ino as u64;
     inode.i_mtime = current_time;
     inode.i_ctime = current_time;
     inode.i_atime = current_time;
