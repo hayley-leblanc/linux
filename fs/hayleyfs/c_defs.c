@@ -57,22 +57,6 @@ uid_t hayleyfs_gid_read(const struct inode *inode) {
     return i_gid_read(inode);
 }
 
-// uint64_t hayleyfs_cpu_to_le64_unsafe(uint64_t val) {
-//     return cpu_to_le64(val);
-// }
-
-// int64_t hayleyfs_cpu_to_le64_signed_unsafe(int64_t val) {
-//     return cpu_to_le64(val);
-// }
-
-// uint32_t hayleyfs_cpu_to_le32_unsafe(uint32_t val) {
-//     return cpu_to_le32(val);
-// }
-
-// uint16_t hayleyfs_cpu_to_le16_unsafe(uint16_t val) {
-//     return cpu_to_le16(val);
-// }
-
 bool hayleyfs_isdir(uint16_t mode) {
     return S_ISDIR(mode);
 }
@@ -87,4 +71,8 @@ void hayleyfs_write_uid(struct inode *inode, uid_t uid) {
 
 void hayleyfs_write_gid(struct inode *inode, gid_t gid) {
     i_gid_write(inode, gid);
+}
+
+void* hayleyfs_err_ptr(long error) {
+    return ERR_PTR(error);
 }

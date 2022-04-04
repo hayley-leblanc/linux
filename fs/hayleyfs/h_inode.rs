@@ -15,9 +15,9 @@ use core::ptr::{eq, null_mut};
 use kernel::bindings::{
     current_time, d_instantiate, d_splice_alias, dentry, iget_failed, iget_locked, inc_nlink,
     inode, inode_init_owner, inode_operations, insert_inode_locked, new_inode, set_nlink,
-    simple_lookup, super_block, umode_t, unlock_new_inode, user_namespace, FS_APPEND_FL,
-    FS_DIRSYNC_FL, FS_IMMUTABLE_FL, FS_NOATIME_FL, FS_SYNC_FL, I_NEW, S_APPEND, S_DAX, S_DIRSYNC,
-    S_IFDIR, S_IMMUTABLE, S_NOATIME, S_SYNC,
+    super_block, umode_t, unlock_new_inode, user_namespace, FS_APPEND_FL, FS_DIRSYNC_FL,
+    FS_IMMUTABLE_FL, FS_NOATIME_FL, FS_SYNC_FL, I_NEW, S_APPEND, S_DAX, S_DIRSYNC, S_IFDIR,
+    S_IMMUTABLE, S_NOATIME, S_SYNC,
 };
 use kernel::c_types::c_char;
 use kernel::prelude::*;
@@ -192,7 +192,7 @@ fn _hayleyfs_mkdir(
     let mut inode = hayleyfs_new_vfs_inode(
         sb,
         dir,
-        &pi,
+        ino,
         mnt_userns,
         mode,
         NewInodeType::Mkdir,
@@ -238,10 +238,10 @@ fn _hayleyfs_mkdir(
     Ok(())
 }
 
-fn hayleyfs_new_vfs_inode<'a, Op, Type>(
+fn hayleyfs_new_vfs_inode(
     sb: &mut super_block,
     dir: &inode,
-    pi: &InodeWrapper<'a, Clean, Op, Type>,
+    ino: InodeNum,
     mnt_userns: &mut user_namespace,
     mode: umode_t,
     new_type: NewInodeType,
@@ -249,11 +249,9 @@ fn hayleyfs_new_vfs_inode<'a, Op, Type>(
 ) -> &'static mut inode {
     // TODO: handle errors properly
     let inode = unsafe { &mut *(new_inode(sb) as *mut inode) };
-    let ino = pi.get_ino();
 
     unsafe {
         inode_init_owner(mnt_userns as *mut user_namespace, inode, dir, mode);
-        inode.i_ino = ino as u64;
     }
 
     match new_type {
@@ -266,7 +264,10 @@ fn hayleyfs_new_vfs_inode<'a, Op, Type>(
             }
         }
         NewInodeType::Create => {
-            pr_info!("implement me!");
+            // pr_info!("implement me!");
+            unsafe {
+                set_nlink(inode, 1);
+            }
         }
     }
 
@@ -291,12 +292,19 @@ unsafe extern "C" fn hayleyfs_lookup(
     let dir = unsafe { &mut *(dir_raw as *mut inode) };
     let dentry = unsafe { &mut *(dentry_raw as *mut dentry) };
 
-    _hayleyfs_lookup(dir, dentry, flags)
+    let result = _hayleyfs_lookup(dir, dentry, flags);
+    match result {
+        Ok(dentry) => dentry,
+        Err(e) => unsafe { hayleyfs_err_ptr(e.to_kernel_errno().into()) as *mut dentry },
+    }
 }
 
 #[no_mangle]
-pub(crate) fn _hayleyfs_lookup(dir: &mut inode, dentry: &mut dentry, flags: u32) -> *mut dentry {
-    pr_info!("LOOKING UP\n");
+pub(crate) fn _hayleyfs_lookup(
+    dir: &mut inode,
+    dentry: &mut dentry,
+    _flags: u32,
+) -> Result<*mut dentry> {
     let dentry_name = unsafe { CStr::from_char_ptr((*dentry).d_name.name as *const c_char) };
 
     let dir = unsafe { &mut *(dir as *mut inode) };
@@ -306,29 +314,22 @@ pub(crate) fn _hayleyfs_lookup(dir: &mut inode, dentry: &mut dentry, flags: u32)
 
     // look up parent inode
     // TODO: check that this is actually a directory and return an error if it isn't
-    // TODO: don't panic if type conversion fails
-    let parent_pi = InodeWrapper::read_dir_inode(sbi, &(dir.i_ino.try_into().unwrap()));
+    let parent_pi = InodeWrapper::read_dir_inode(sbi, &(dir.i_ino.try_into()?));
 
-    // TODO: finish - can test fs mounting once this is done
     match parent_pi.get_data_page_no() {
         Some(page_no) => {
             let lookup_res =
                 hayleyfs_dir::lookup_dentry(sbi, page_no, dentry_name.as_bytes_with_nul());
             match lookup_res {
                 Ok(ino) => {
-                    // TODO: handle error properly
-                    let inode = hayleyfs_iget(sb, ino).unwrap();
-                    pr_info!("inode mode: {:?}\n", inode.i_mode);
-                    unsafe { d_splice_alias(inode, dentry) }
+                    let inode = hayleyfs_iget(sb, ino)?;
+                    Ok(unsafe { d_splice_alias(inode, dentry) })
                 }
-                Err(_) => unsafe { simple_lookup(dir, dentry, flags) },
+                Err(Error::ENOENT) => Ok(unsafe { d_splice_alias(core::ptr::null_mut(), dentry) }),
+                Err(e) => Err(e),
             }
         }
-        None => {
-            // TODO: figure out how to return the correct error type here
-            // for now just fall back to making the kernel do that for us
-            unsafe { simple_lookup(dir, dentry, flags) }
-        }
+        None => Err(Error::EACCES),
     }
 }
 
@@ -381,7 +382,7 @@ fn _hayleyfs_create(
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
 
     let new_inode =
-        hayleyfs_new_vfs_inode(sb, inode, &pi, mnt_userns, mode, NewInodeType::Create, 0);
+        hayleyfs_new_vfs_inode(sb, inode, ino, mnt_userns, mode, NewInodeType::Create, 0);
     unsafe {
         d_instantiate(dentry, new_inode); // instantiate VFS dentry with the inode
         unlock_new_inode(new_inode);

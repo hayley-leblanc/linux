@@ -85,6 +85,7 @@ pub(crate) mod hayleyfs_inode {
         }
 
         pub(crate) fn get_ino(&self) -> InodeNum {
+            pr_info!("getting ino {:?}\n", self.inode.ino);
             self.inode.ino
         }
 

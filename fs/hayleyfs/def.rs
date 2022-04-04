@@ -10,7 +10,7 @@ use kernel::bindings::{
     FS_NOATIME_FL, FS_NOCOMP_FL, FS_NODUMP_FL, FS_NOTAIL_FL, FS_SECRM_FL, FS_SYNC_FL, FS_TOPDIR_FL,
     FS_UNRM_FL,
 };
-use kernel::c_types::{c_char, c_int, c_ulong, c_void};
+use kernel::c_types::{c_char, c_int, c_long, c_ulong, c_void};
 use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
@@ -165,14 +165,6 @@ extern "C" {
     pub(crate) fn hayleyfs_uid_read(inode: *const inode) -> c_int;
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_gid_read(inode: *const inode) -> c_int;
-    // #[allow(improper_ctypes)]
-    // pub(crate) fn hayleyfs_cpu_to_le64_unsafe(val: u64) -> u64;
-    // #[allow(improper_ctypes)]
-    // pub(crate) fn hayleyfs_cpu_to_le64_signed_unsafe(val: i64) -> i64;
-    // #[allow(improper_ctypes)]
-    // pub(crate) fn hayleyfs_cpu_to_le32_unsafe(val: u32) -> u32;
-    // #[allow(improper_ctypes)]
-    // pub(crate) fn hayleyfs_cpu_to_le16_unsafe(val: u16) -> u16;
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_isdir(flags: u16) -> bool;
     #[allow(improper_ctypes)]
@@ -181,20 +173,6 @@ extern "C" {
     pub(crate) fn hayleyfs_write_uid(inode: &mut inode, uid: u32);
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_write_gid(inode: &mut inode, gid: u32);
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_err_ptr(err: c_long) -> *mut c_void;
 }
-
-// pub(crate) fn hayleyfs_cpu_to_le64(val: u64) -> u64 {
-//     unsafe { hayleyfs_cpu_to_le64_unsafe(val) }
-// }
-
-// pub(crate) fn hayleyfs_cpu_to_le64_signed(val: i64) -> i64 {
-//     unsafe { hayleyfs_cpu_to_le64_signed_unsafe(val) }
-// }
-
-// pub(crate) fn hayleyfs_cpu_to_le32(val: u32) -> u32 {
-//     unsafe { hayleyfs_cpu_to_le32_unsafe(val) }
-// }
-
-// pub(crate) fn hayleyfs_cpu_to_le16(val: u16) -> u16 {
-//     unsafe { hayleyfs_cpu_to_le16_unsafe(val) }
-// }
