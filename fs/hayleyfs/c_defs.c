@@ -18,6 +18,10 @@ int hayleyfs_set_bit(int nr, void* addr) {
    return __test_and_set_bit_le(nr, addr);
 }
 
+void hayleyfs_clear_bit(int nr, void* addr) {
+    return clear_bit_le(nr, addr);
+}
+
 unsigned long hayleyfs_find_next_zero_bit(const unsigned long *addr, unsigned long size, unsigned long offset) {
     return find_next_zero_bit_le(addr, size, offset);
 }

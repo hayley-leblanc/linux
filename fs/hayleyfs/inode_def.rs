@@ -11,6 +11,7 @@ use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
+use core::ptr::write_bytes;
 use kernel::bindings::{
     current_time, from_kgid, from_kuid, init_user_ns, inode, super_block, user_namespace, S_IFDIR,
 };
@@ -53,6 +54,10 @@ pub(crate) mod hayleyfs_inode {
 
         fn inc_links(&mut self) {
             self.link_count += 1;
+        }
+
+        fn dec_links(&mut self) {
+            self.link_count -= 1;
         }
     }
 
@@ -125,12 +130,10 @@ pub(crate) mod hayleyfs_inode {
             self.inode.mtime
         }
 
-        // TODO: THIS NEEDS TO BE REWRITTEN
+        // TODO: can we invalidate without overwriting the whole thing?
+        // or implement a memset with nontemporal stores at least
         pub(crate) fn zero_inode(self) -> InodeWrapper<'a, Flushed, Zero, Type> {
-            self.inode.ino = 0;
-            self.inode.data0 = None;
-            self.inode.mode = 0;
-            self.inode.link_count = 0;
+            unsafe { write_bytes(self.inode, 0, size_of::<HayleyfsInode>()) };
             clwb(&self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }
@@ -231,6 +234,12 @@ pub(crate) mod hayleyfs_inode {
         // TODO: this might need to go in a different impl
         pub(crate) fn inc_links(self) -> InodeWrapper<'a, Flushed, Link, Type> {
             self.inode.inc_links();
+            clwb(self.inode, size_of::<HayleyfsInode>(), false);
+            InodeWrapper::new(self.inode)
+        }
+
+        pub(crate) fn dec_links(self) -> InodeWrapper<'a, Flushed, Link, Type> {
+            self.inode.dec_links();
             clwb(self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }

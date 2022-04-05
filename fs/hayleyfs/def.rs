@@ -124,6 +124,21 @@ where
     }
 }
 
+impl<A, B, C, D> Flatten for (A, (B, (C, D)))
+where
+    A: PmObjWrapper,
+    B: PmObjWrapper,
+    C: PmObjWrapper,
+    D: PmObjWrapper,
+{
+    type Output = (A, B, C, D);
+
+    fn flatten_tuple(self) -> Self::Output {
+        let (a, (b, (c, d))) = self;
+        (a, b, c, d)
+    }
+}
+
 // TODO: what does allow improper ctypes do here?
 extern "C" {
     #[allow(improper_ctypes)]
@@ -132,6 +147,8 @@ extern "C" {
     pub(crate) fn hayleyfs_pfn_t_to_pfn(pfn: pfn_t) -> u64;
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_set_bit(nr: usize, addr: *mut c_void) -> i32;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_clear_bit(nr: usize, addr: *mut c_void);
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_test_bit(nr: usize, addr: *const c_void) -> i32;
     #[allow(improper_ctypes)]

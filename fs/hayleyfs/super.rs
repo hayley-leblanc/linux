@@ -11,6 +11,7 @@
 mod data;
 mod def;
 mod dir;
+mod finalize;
 mod inode_def;
 mod namei;
 mod pm;
@@ -20,6 +21,7 @@ mod super_def;
 use crate::data::*;
 use crate::def::*;
 use crate::dir::*;
+use crate::finalize::*;
 use crate::inode_def::hayleyfs_inode::*;
 use crate::inode_def::*;
 use crate::namei::*;
@@ -207,8 +209,6 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
     let mut sbi = hayleyfs_get_sbi(sb);
     sbi.mount_opts = unsafe { *((*fc).fs_private as *mut HayleyfsMountOpts) }; // TODO: abstraction
     hayleyfs_get_pm_info(sb, sbi)?;
-
-    pr_info!("sbi virt addr: {:?}\n", sbi.virt_addr);
 
     sbi.mode = 0o755;
     sbi.uid = unsafe { hayleyfs_current_fsuid() };

@@ -5,6 +5,7 @@
 
 use crate::def::*;
 use crate::dir::*;
+use crate::finalize::*;
 use crate::inode_def::hayleyfs_inode::*;
 use crate::inode_def::*;
 use crate::pm::*;
@@ -427,13 +428,14 @@ unsafe extern "C" fn hayleyfs_rmdir(inode_raw: *mut inode, dentry_raw: *mut dent
 /// which is not ideal, but it's just a space leak issue
 ///
 /// inode is the parent inode, dentry is the dentry of the file to delete
-fn _hayleyfs_rmdir(sbi: &SbInfo, dir: &mut inode, dentry: &mut dentry) -> Result<()> {
+fn _hayleyfs_rmdir(
+    sbi: &SbInfo,
+    dir: &mut inode,
+    dentry: &mut dentry,
+) -> Result<RmdirFinalizeToken> {
+    // TODO: do we have to check the child's link count? or does VFS do that?
+
     // 1. delete child dentry from parent
-    // pr_info!(
-    //     "dentry name: {:?}\n",
-    //     CStr::from_char_ptr(dentry.d_name.name as *const c_char)
-    // );
-    // pr_info!("inode num: {:?}\n", dir.i_ino);
     let dentry_name = unsafe { CStr::from_char_ptr(dentry.d_name.name as *const c_char) };
 
     let parent_ino = dir.i_ino as usize;
@@ -442,14 +444,53 @@ fn _hayleyfs_rmdir(sbi: &SbInfo, dir: &mut inode, dentry: &mut dentry) -> Result
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
     // obtain the dentry to delete
     let delete_dentry = parent_pi.lookup_dentry_in_inode(sbi, dentry_name)?;
+    let child_ino = delete_dentry.get_ino();
     // and set it invalid
     let delete_dentry = unsafe { delete_dentry.set_invalid() }.fence();
 
-    // now we can:
-    // a. decrement parent link count
-    // b. zero the . and .. dentries in the deleted directory.
-    // c. zero the deleted inode
-    // then fence
+    // 2. decrement parent link count
+    // TODO: do something with parent pi to finalize it and make sure you've used
+    // everything up
+    let parent_pi = parent_pi.dec_links();
 
-    Ok(())
+    // 3. now that there isn't a pointer to the deleted directory, we can clean it up
+    let child_inode = InodeWrapper::read_dir_inode(sbi, &child_ino);
+    // TODO: we actually can probably ignore errors reading . and .. here
+    let self_dentry = child_inode.lookup_dentry_in_inode(sbi, b".")?;
+    let parent_dentry = child_inode.lookup_dentry_in_inode(sbi, b"..")?;
+
+    let self_dentry = unsafe { self_dentry.set_invalid() };
+    let parent_dentry = unsafe { parent_dentry.set_invalid() };
+
+    // 4. zero the deleted inode
+    // better handling in case the child directory doesn't have dir page for some reason
+    let child_dir_page = child_inode.get_data_page_no().unwrap();
+
+    let child_inode = child_inode.zero_inode();
+
+    let (parent_pi, self_dentry, parent_dentry, child_inode) =
+        fence_all!(parent_pi, self_dentry, parent_dentry, child_inode);
+
+    // 5. clear bits in the bitmaps
+    // TODO: make it harder to clear the wrong bits? that would hopefully show
+    // up in regular testing though
+    let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi)
+        .clear_bit(child_ino)?
+        .flush();
+    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi)
+        .clear_bit(child_dir_page)?
+        .flush();
+
+    let (inode_bitmap, data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
+
+    let token = RmdirFinalizeToken::new(
+        parent_pi,
+        delete_dentry,
+        self_dentry,
+        parent_dentry,
+        child_inode,
+        inode_bitmap,
+        data_bitmap,
+    );
+    Ok(token)
 }

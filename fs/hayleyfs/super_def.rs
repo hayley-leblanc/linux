@@ -136,6 +136,20 @@ pub(crate) mod hayleyfs_bitmap {
 
             Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
         }
+
+        pub(crate) fn clear_bit(
+            mut self,
+            bit: usize,
+        ) -> Result<BitmapWrapper<'a, Dirty, Zero, Type>> {
+            if bit > PAGE_SIZE * 8 {
+                return Err(Error::EINVAL);
+            }
+            self.dirty_cache_lines
+                .try_insert(get_cacheline_num(bit), ())?;
+            unsafe { hayleyfs_clear_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+
+            Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
+        }
     }
 
     impl<'a, State, Op> BitmapWrapper<'a, State, Op, Inode> {
@@ -355,16 +369,6 @@ pub(crate) mod hayleyfs_sb {
         }
     }
 }
-
-// // TODO: this should probably live somewhere else
-// pub(crate) fn allocate_data_page<'a>(
-//     sbi: &SbInfo,
-// ) -> Result<hayleyfs_bitmap::CacheLineWrapper<'a, Flushed, Alloc, Data>> {
-//     let bitmap = hayleyfs_bitmap::BitmapWrapper::read_data_bitmap(sbi);
-
-//     let page_no = bitmap.find_and_set_next_zero_bit()?;
-//     Ok(page_no)
-// }
 
 pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {
     let sbi: &mut SbInfo = unsafe { &mut *((*sb).s_fs_info as *mut SbInfo) };
