@@ -5,20 +5,31 @@
 
 use crate::def::*;
 use crate::dir::hayleyfs_dir::*;
+use crate::file::hayleyfs_file::*;
 use crate::h_inode::hayleyfs_inode::*;
 use crate::super_def::hayleyfs_bitmap::*;
 
 pub(crate) struct RmdirFinalizeToken;
+pub(crate) struct WriteFinalizeToken;
 
 impl<'a> RmdirFinalizeToken {
     pub(crate) fn new(
-        _: InodeWrapper<'a, Clean, Link, Dir>,    // parent inode
-        _: DentryWrapper<'a, Clean, Zero>,        // parent dentry
-        _: DentryWrapper<'a, Clean, Zero>,        // child . dentry
-        _: DentryWrapper<'a, Clean, Zero>,        // child .. dentry
-        _: InodeWrapper<'a, Clean, Zero, Dir>,    // child inode
-        _: BitmapWrapper<'a, Clean, Zero, Inode>, // inode bitmap
-        _: BitmapWrapper<'a, Clean, Zero, Data>,  // data bitmap
+        _parent_inode: InodeWrapper<'a, Clean, Link, Dir>,
+        _parent_dentry: DentryWrapper<'a, Clean, Zero>,
+        _child_self_dentry: DentryWrapper<'a, Clean, Zero>,
+        _child_parent_dentry: DentryWrapper<'a, Clean, Zero>,
+        _child_inode: InodeWrapper<'a, Clean, Zero, Dir>,
+        _inode_bitmap: BitmapWrapper<'a, Clean, Zero, Inode>,
+        _data_bitmap: BitmapWrapper<'a, Clean, Zero, Data>,
+    ) -> Self {
+        Self {}
+    }
+}
+
+impl<'a> WriteFinalizeToken {
+    pub(crate) fn new(
+        _inode: InodeWrapper<'a, Clean, Size, Data>,
+        _page: DataPageWrapper<'a, Clean, WriteData>,
     ) -> Self {
         Self {}
     }

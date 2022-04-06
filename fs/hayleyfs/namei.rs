@@ -79,7 +79,7 @@ pub(crate) fn hayleyfs_iget(sb: *mut super_block, ino: usize) -> Result<&'static
         if hayleyfs_isdir(inode.i_mode) {
             inode.i_op = &HayleyfsDirInodeOps;
         } else if hayleyfs_isreg(inode.i_mode) {
-            inode.__bindgen_anon_3.i_fop = &HayleyfsFileOps; // fileOps has to be mutable so this has to be unsafe. Why does it have to be mutable???
+            inode.__bindgen_anon_3.i_fop = &HayleyfsDirOps; // fileOps has to be mutable so this has to be unsafe. Why does it have to be mutable???
         }
     }
 
@@ -263,7 +263,7 @@ fn hayleyfs_new_vfs_inode(
         NewInodeType::Mkdir => {
             inode.i_op = &HayleyfsDirInodeOps;
             unsafe {
-                inode.__bindgen_anon_3.i_fop = &HayleyfsFileOps;
+                inode.__bindgen_anon_3.i_fop = &HayleyfsDirOps;
                 set_nlink(inode, 2);
             }
         }

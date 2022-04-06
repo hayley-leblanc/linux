@@ -145,7 +145,7 @@ pub(crate) mod hayleyfs_inode {
             page: Option<PmPage>,
             _self_dentry: DentryWrapper<'a, Clean, Init>,
             _parent_dentry: DentryWrapper<'a, Clean, Init>,
-        ) -> InodeWrapper<'a, Flushed, Valid, Dir> {
+        ) -> InodeWrapper<'a, Flushed, AddPage, Dir> {
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
             self.inode.set_page(page);
@@ -158,7 +158,7 @@ pub(crate) mod hayleyfs_inode {
             page: Option<PmPage>,
             _: DentryWrapper<'a, Clean, Init>,
             _: DentryWrapper<'a, Clean, Init>,
-        ) -> InodeWrapper<'a, Clean, Valid, Dir> {
+        ) -> InodeWrapper<'a, Clean, AddPage, Dir> {
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
             self.inode.set_page(page);

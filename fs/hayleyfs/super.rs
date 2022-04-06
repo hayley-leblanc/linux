@@ -282,7 +282,7 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
 
     // TODO: hide in a function
     unsafe {
-        root_i.__bindgen_anon_3.i_fop = &HayleyfsFileOps;
+        root_i.__bindgen_anon_3.i_fop = &HayleyfsDirOps;
         sb.s_op = &HayleyfsSuperOps;
         sb.s_root = d_make_root(root_i);
     }

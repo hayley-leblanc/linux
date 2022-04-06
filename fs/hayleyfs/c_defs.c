@@ -80,3 +80,7 @@ void hayleyfs_write_gid(struct inode *inode, gid_t gid) {
 void* hayleyfs_err_ptr(long error) {
     return ERR_PTR(error);
 }
+
+int hayleyfs_access_ok(const char* __user buf, size_t len) {
+    return access_ok(buf, len);
+}

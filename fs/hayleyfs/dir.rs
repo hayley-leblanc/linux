@@ -16,7 +16,7 @@ use kernel::prelude::*;
 use kernel::{c_default_struct, PAGE_SIZE};
 
 #[no_mangle]
-pub(crate) static mut HayleyfsFileOps: file_operations = file_operations {
+pub(crate) static mut HayleyfsDirOps: file_operations = file_operations {
     iterate: Some(hayleyfs_dir::hayleyfs_readdir),
     ..c_default_struct!(file_operations)
 };
@@ -278,7 +278,7 @@ pub(crate) mod hayleyfs_dir {
             self,
             ino: InodeNum,
             name: &str,
-            _: &hayleyfs_inode::InodeWrapper<'a, Clean, Valid, Dir>,
+            _: &hayleyfs_inode::InodeWrapper<'a, Clean, AddPage, Dir>,
             _: &hayleyfs_inode::InodeWrapper<'a, Clean, Link, Dir>,
         ) -> DentryWrapper<'a, Flushed, Init> {
             self.initialize_dentry(ino, name)

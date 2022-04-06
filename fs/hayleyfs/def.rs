@@ -62,10 +62,12 @@ pub(crate) struct Clean;
 pub(crate) struct Read; // indicates no change since it was read. TODO: better name
 pub(crate) struct Alloc; // TODO: might be more clear to have separate alloc, init, and uninit types
 pub(crate) struct Init;
-pub(crate) struct Valid;
+pub(crate) struct AddPage;
 pub(crate) struct Zero;
 pub(crate) struct Link;
 pub(crate) struct Flags;
+pub(crate) struct WriteData;
+pub(crate) struct Size;
 
 // semantic types used to indicate the type of bitmaps and/or inodes
 // to reduce some code repetition and prevent mistakes
@@ -192,4 +194,6 @@ extern "C" {
     pub(crate) fn hayleyfs_write_gid(inode: &mut inode, gid: u32);
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_err_ptr(err: c_long) -> *mut c_void;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_access_ok(buf: &[i8], len: usize) -> c_int;
 }

@@ -145,7 +145,7 @@ pub(crate) mod hayleyfs_inode {
             page: Option<PmPage>,
             _self_dentry: DentryWrapper<'a, Clean, Init>,
             _parent_dentry: DentryWrapper<'a, Clean, Init>,
-        ) -> InodeWrapper<'a, Flushed, Valid, Dir> {
+        ) -> InodeWrapper<'a, Flushed, AddPage, Dir> {
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
             self.inode.set_page(page);
@@ -158,7 +158,7 @@ pub(crate) mod hayleyfs_inode {
             page: Option<PmPage>,
             _: DentryWrapper<'a, Clean, Init>,
             _: DentryWrapper<'a, Clean, Init>,
-        ) -> InodeWrapper<'a, Clean, Valid, Dir> {
+        ) -> InodeWrapper<'a, Clean, AddPage, Dir> {
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
             self.inode.set_page(page);
@@ -180,6 +180,37 @@ pub(crate) mod hayleyfs_inode {
                 inode_type: PhantomData,
                 inode,
             }
+        }
+
+        pub(crate) fn add_data_page_fence(
+            self,
+            page: PmPage,
+            _: BitmapWrapper<'a, Clean, Alloc, Data>,
+        ) -> InodeWrapper<'a, Clean, AddPage, Data> {
+            self.inode.set_page(Some(page));
+            clwb(&self.inode.data0, CACHELINE_SIZE, true);
+            InodeWrapper::new(self.inode)
+        }
+
+        pub(crate) fn coerce_to_addpage(self) -> InodeWrapper<'a, Clean, AddPage, Data> {
+            // runtime check to make sure the coercion is valid
+            // TODO: this isn't GREAT, but should be ok since can't
+            // check at compile time?
+            assert!(self.get_data_page_no().is_some());
+            InodeWrapper::new(self.inode)
+        }
+    }
+
+    impl<'a> InodeWrapper<'a, Clean, AddPage, Data> {
+        pub(crate) fn set_size(
+            self,
+            bytes_written: usize,
+            offset: i64,
+            _: &DataPageWrapper<'a, Clean, WriteData>,
+        ) -> InodeWrapper<'a, Clean, Size, Data> {
+            self.inode.size = offset + bytes_written as i64;
+            clwb(&self.inode.size, CACHELINE_SIZE, true);
+            InodeWrapper::new(self.inode)
         }
     }
 
