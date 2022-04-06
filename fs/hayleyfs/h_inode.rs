@@ -204,11 +204,10 @@ pub(crate) mod hayleyfs_inode {
     impl<'a> InodeWrapper<'a, Clean, AddPage, Data> {
         pub(crate) fn set_size(
             self,
-            bytes_written: usize,
-            offset: i64,
+            pos: i64,
             _: &DataPageWrapper<'a, Clean, WriteData>,
         ) -> InodeWrapper<'a, Clean, Size, Data> {
-            self.inode.size = offset + bytes_written as i64;
+            self.inode.size = pos;
             clwb(&self.inode.size, CACHELINE_SIZE, true);
             InodeWrapper::new(self.inode)
         }

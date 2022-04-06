@@ -84,3 +84,15 @@ void* hayleyfs_err_ptr(long error) {
 int hayleyfs_access_ok(const char* __user buf, size_t len) {
     return access_ok(buf, len);
 }
+
+unsigned long hayleyfs_copy_from_user_nt(void* dst, const void __user *src, unsigned long len) {
+    return __copy_from_user_inatomic_nocache(dst, src, len);
+}
+
+void hayleyfs_i_size_write(struct inode *inode, loff_t i_size) {
+    i_size_write(inode, i_size);
+}
+
+loff_t hayleyfs_i_size_read(const struct inode *inode) {
+    return i_size_read(inode);
+}

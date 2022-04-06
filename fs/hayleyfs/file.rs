@@ -13,13 +13,15 @@ use crate::super_def::*;
 use core::marker::PhantomData;
 use core::ptr;
 use core::slice::from_raw_parts;
-use kernel::bindings::{address_space, file, file_operations, inode, O_APPEND};
+use kernel::bindings::{address_space, file, file_operations, generic_file_open, inode, O_APPEND};
+use kernel::c_types::{c_int, c_void};
 use kernel::prelude::*;
 use kernel::{c_default_struct, PAGE_SIZE};
 
 #[no_mangle]
 pub(crate) static mut HayleyfsFileOps: file_operations = file_operations {
     write: Some(hayleyfs_file::hayleyfs_file_write),
+    open: Some(hayleyfs_file::hayleyfs_open),
     ..c_default_struct!(file_operations)
 };
 
@@ -82,14 +84,20 @@ pub(crate) mod hayleyfs_file {
             } else {
                 len
             };
-
-            // self.name[..num_bytes].clone_from_slice(&name[..num_bytes]);
-            self.data_page.data[offset..offset + bytes_to_write]
-                .clone_from_slice(&buf[..bytes_to_write]);
-            // TODO: does this syntax to start the flush at the offset
-            // work the way you want it to?
+            // TODO: do you end up writing to the correct place with these type conversions?
+            let bytes_written = unsafe {
+                hayleyfs_copy_from_user_nt(
+                    buf as *const _ as *const c_void,
+                    &self.data_page.data[offset] as *const _ as *const c_void,
+                    bytes_to_write.try_into().unwrap(), // TODO: handle error properly
+                )
+            };
+            // TODO: MUST FLUSH FIRST AND LAST CACHE LINES (or check if they need to be flushed)
             clwb(&self.data_page.data[offset], bytes_to_write, false);
-            (DataPageWrapper::new(self.data_page), bytes_to_write)
+            (
+                DataPageWrapper::new(self.data_page),
+                bytes_written.try_into().unwrap(), // TODO: handle error properly
+            )
         }
     }
 
@@ -113,15 +121,14 @@ pub(crate) mod hayleyfs_file {
     ) -> isize {
         let filep = unsafe { &mut *(filep_raw as *mut file) };
         let buf = unsafe { from_raw_parts(buf_raw, len) };
-        let pos = unsafe { &mut *(pos_raw as *mut i64) };
+        let ppos = unsafe { &mut *(pos_raw as *mut i64) };
 
         // TODO: locks
 
         let mapping = unsafe { &mut *(filep.f_mapping as *mut address_space) };
         let inode = unsafe { &mut *(mapping.host as *mut inode) };
 
-        let result = _hayleyfs_file_write(filep, buf, len, pos, inode);
-
+        let result = _hayleyfs_file_write(filep, buf, len, ppos, inode);
         match result {
             Ok((_token, bytes_written)) => bytes_written,
             Err(e) => e.to_kernel_errno().try_into().unwrap(), // TODO: error handling
@@ -135,7 +142,7 @@ pub(crate) mod hayleyfs_file {
         filep: &mut file,
         buf: &[i8],
         len: usize,
-        pos: &mut i64,
+        ppos: &mut i64,
         inode: &mut inode,
     ) -> Result<(WriteFinalizeToken, isize)> {
         // make sure we can access the user buffer
@@ -146,11 +153,12 @@ pub(crate) mod hayleyfs_file {
         let sb = inode.i_sb;
         let sbi = hayleyfs_get_sbi(sb);
 
-        let mut pos = *pos;
+        let mut pos = *ppos;
 
         if filep.f_flags & O_APPEND != 0 {
             // TODO: use i_size_read() instead of reading i_size directly?
-            pos = inode.i_size;
+            // pos = inode.i_size;
+            pos = unsafe { hayleyfs_i_size_read(inode) };
         }
 
         let ino: InodeNum = inode.i_ino.try_into().unwrap();
@@ -193,11 +201,21 @@ pub(crate) mod hayleyfs_file {
         let (data_page, bytes_written) = data_page.write_data(buf, len, pos.try_into()?);
         let data_page = data_page.fence();
 
+        pos += bytes_written as i64;
+        *ppos = pos;
+        // inode.i_size = pos;
+        unsafe { hayleyfs_i_size_write(inode, pos) };
+        inode.i_blocks = 1;
         // right now, we can just set the file size to pos + bytes written
         // TODO: in the future when the file can have multiple pages that won't be enough
-        let pi = pi.set_size(bytes_written, pos, &data_page);
+        let pi = pi.set_size(pos, &data_page);
 
         let token = WriteFinalizeToken::new(pi, data_page);
         Ok((token, bytes_written.try_into()?))
+    }
+
+    #[no_mangle]
+    pub(crate) unsafe extern "C" fn hayleyfs_open(inode: *mut inode, filep: *mut file) -> c_int {
+        unsafe { generic_file_open(inode, filep) }
     }
 }
