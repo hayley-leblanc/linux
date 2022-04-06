@@ -3,10 +3,10 @@
 #![deny(clippy::let_underscore_must_use)]
 #![deny(clippy::used_underscore_binding)]
 
-use crate::data::hayleyfs_data::*;
 use crate::def::*;
-use crate::inode_def::hayleyfs_inode::*;
-use crate::inode_def::*;
+use crate::file::hayleyfs_file::*;
+use crate::h_inode::hayleyfs_inode::*;
+use crate::h_inode::*;
 use crate::pm::*;
 use core::marker::PhantomData;
 use core::mem::size_of;

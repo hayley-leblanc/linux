@@ -5,7 +5,7 @@
 
 use crate::def::*;
 use crate::dir::hayleyfs_dir::*;
-use crate::inode_def::hayleyfs_inode::*;
+use crate::h_inode::hayleyfs_inode::*;
 use crate::super_def::hayleyfs_bitmap::*;
 
 pub(crate) struct RmdirFinalizeToken;

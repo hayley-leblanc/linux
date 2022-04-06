@@ -8,22 +8,22 @@
 #![deny(clippy::let_underscore_must_use)]
 #![deny(clippy::used_underscore_binding)]
 
-mod data;
 mod def;
 mod dir;
+mod file;
 mod finalize;
-mod inode_def;
+mod h_inode;
 mod namei;
 mod pm;
 mod recovery;
 mod super_def;
 
-use crate::data::*;
 use crate::def::*;
 use crate::dir::*;
+use crate::file::*;
 use crate::finalize::*;
-use crate::inode_def::hayleyfs_inode::*;
-use crate::inode_def::*;
+use crate::h_inode::hayleyfs_inode::*;
+use crate::h_inode::*;
 use crate::namei::*;
 use crate::pm::*;
 use crate::recovery::*;

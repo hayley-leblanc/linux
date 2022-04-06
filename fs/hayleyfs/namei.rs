@@ -6,8 +6,8 @@
 use crate::def::*;
 use crate::dir::*;
 use crate::finalize::*;
-use crate::inode_def::hayleyfs_inode::*;
-use crate::inode_def::*;
+use crate::h_inode::hayleyfs_inode::*;
+use crate::h_inode::*;
 use crate::pm::*;
 use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::*;

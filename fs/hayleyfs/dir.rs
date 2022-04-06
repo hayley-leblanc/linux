@@ -4,8 +4,8 @@
 #![deny(clippy::used_underscore_binding)]
 
 use crate::def::*;
-use crate::inode_def::hayleyfs_inode::*;
-use crate::inode_def::*;
+use crate::h_inode::hayleyfs_inode::*;
+use crate::h_inode::*;
 use crate::pm::*;
 use crate::super_def::*;
 use core::marker::PhantomData;
