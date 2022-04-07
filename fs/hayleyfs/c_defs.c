@@ -93,10 +93,6 @@ unsigned long hayleyfs_copy_to_user(void __user *dst, const void *src, unsigned 
     return copy_to_user(dst, src, len);
 }
 
-unsigned long hayleyfs_copy_from_user(void *dst, const void *src, unsigned long len) {
-    return copy_from_user(dst, src, len);
-}
-
 void hayleyfs_i_size_write(struct inode *inode, loff_t i_size) {
     i_size_write(inode, i_size);
 }

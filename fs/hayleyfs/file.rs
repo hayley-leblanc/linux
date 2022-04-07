@@ -12,7 +12,6 @@ use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::*;
 use core::marker::PhantomData;
 use core::ptr;
-use core::slice::from_raw_parts;
 use kernel::bindings::{address_space, file, file_operations, generic_file_open, inode, O_APPEND};
 use kernel::c_types::{c_int, c_void};
 use kernel::prelude::*;
@@ -91,17 +90,14 @@ pub(crate) mod hayleyfs_file {
             let bytes_written = bytes_to_write
                 - unsafe {
                     hayleyfs_copy_from_user_nt(
-                        // data_ptr as *const c_void, // TODO: take offset into account
                         data_ptr.offset(offset.try_into().unwrap()) as *const c_void, // TODO: handle error properly
                         buf as *const c_void,
-                        //
                         bytes_to_write.try_into().unwrap(), // TODO: handle error properly
                     ) as usize
                 };
             // TODO: MUST FLUSH FIRST AND LAST CACHE LINES (or check if they need to be flushed)
             clwb(
                 unsafe { data_ptr.offset(offset.try_into().unwrap()) },
-                // data_ptr,
                 bytes_to_write,
                 false,
             );
@@ -144,7 +140,6 @@ pub(crate) mod hayleyfs_file {
         pos_raw: *mut i64,
     ) -> isize {
         let filep = unsafe { &mut *(filep_raw as *mut file) };
-        // let buf = unsafe { from_raw_parts(buf_raw, len) };
         let ppos = unsafe { &mut *(pos_raw as *mut i64) };
 
         // TODO: locks
@@ -180,8 +175,6 @@ pub(crate) mod hayleyfs_file {
         let mut pos = *ppos;
 
         if filep.f_flags & O_APPEND != 0 {
-            // TODO: use i_size_read() instead of reading i_size directly?
-            // pos = inode.i_size;
             pos = unsafe { hayleyfs_i_size_read(inode) };
         }
 
@@ -218,7 +211,6 @@ pub(crate) mod hayleyfs_file {
         }
         let pi = pi_temp;
         let page_no = page_no.unwrap();
-        pr_info!("page no: {:?}\n", page_no);
 
         // TODO: should reading data page require an AddPage or higher inode?
         let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
@@ -228,10 +220,7 @@ pub(crate) mod hayleyfs_file {
 
         pos += bytes_written as i64;
         *ppos = pos;
-        pr_info!("pos: {:?}\n", pos);
-        // inode.i_size = pos;
         unsafe { hayleyfs_i_size_write(inode, pos) };
-        pr_info!("inode size: {:?}\n", inode.i_size);
         inode.i_blocks = 1;
         // right now, we can just set the file size to pos + bytes written
         // TODO: in the future when the file can have multiple pages that won't be enough
@@ -249,7 +238,6 @@ pub(crate) mod hayleyfs_file {
         ppos_raw: *mut i64,
     ) -> isize {
         let filep = unsafe { &mut *(filep_raw as *mut file) };
-        // let buf = unsafe { from_raw_parts(buf_raw, len) };
         let ppos = unsafe { &mut *(ppos_raw as *mut i64) };
         let mapping = unsafe { &mut *(filep.f_mapping as *mut address_space) };
         let inode = unsafe { &mut *(mapping.host as *mut inode) };
@@ -304,7 +292,6 @@ pub(crate) mod hayleyfs_file {
             let bytes_read = data_page.read_data(buf, len, pos.try_into()?);
             pos += bytes_read as i64;
             *ppos = pos;
-            pr_info!("pos: {:?}\n", pos);
             Ok(bytes_read.try_into()?)
         } else {
             Ok(0)

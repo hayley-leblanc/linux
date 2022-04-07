@@ -30,7 +30,7 @@ pub(crate) const CACHELINE_SIZE: usize = 64; // TODO: this should probably come 
 pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 pub(crate) const CACHELINE_BIT_SHIFT: usize = 9;
 pub(crate) const NUM_BITMAP_CACHELINES: usize = PAGE_SIZE / CACHELINE_SIZE;
-pub(crate) const CACHELINE_MASK: usize = (1 << CACHELINE_BIT_SHIFT) - 1;
+// pub(crate) const CACHELINE_MASK: usize = (1 << CACHELINE_BIT_SHIFT) - 1;
 
 pub(crate) const LONG_MAX: usize = 9223372036854775807;
 pub(crate) const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;
@@ -142,24 +142,18 @@ where
 }
 
 // TODO: what does allow improper ctypes do here?
+#[allow(improper_ctypes)]
 extern "C" {
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_fs_put_dax(dax_dev: *mut dax_device);
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_pfn_t_to_pfn(pfn: pfn_t) -> u64;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_set_bit(nr: usize, addr: *mut c_void) -> i32;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_clear_bit(nr: usize, addr: *mut c_void);
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_test_bit(nr: usize, addr: *const c_void) -> i32;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_find_next_zero_bit(
         addr: *mut c_ulong,
         size: c_ulong,
         offset: c_ulong,
     ) -> usize;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_dir_emit(
         ctx: *mut dir_context,
         name: *const c_char,
@@ -167,55 +161,33 @@ extern "C" {
         ino: u64,
         t: u32,
     ) -> bool;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_file_inode(f: *const file) -> *mut inode;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_current_fsuid() -> kuid_t;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_current_fsgid() -> kgid_t;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_fs_parse(
         fc: *mut fs_context,
         desc: *const fs_parameter_spec,
         param: *mut fs_parameter,
         result: *mut fs_parse_result,
     ) -> c_int;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_uid_read(inode: *const inode) -> c_int;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_gid_read(inode: *const inode) -> c_int;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_isdir(flags: u16) -> bool;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_isreg(flags: u16) -> bool;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_write_uid(inode: &mut inode, uid: u32);
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_write_gid(inode: &mut inode, gid: u32);
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_err_ptr(err: c_long) -> *mut c_void;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_access_ok(buf: *const i8, len: usize) -> c_int;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_copy_from_user_nt(
         dst: *const c_void,
         src: *const c_void,
         len: c_ulong,
     ) -> c_ulong;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_copy_to_user(
         dst: *const c_void,
         src: *const c_void,
         len: c_ulong,
     ) -> c_ulong;
-    #[allow(improper_ctypes)]
-    pub(crate) fn hayleyfs_copy_from_user(
-        dst: *const c_void,
-        src: *const c_void,
-        len: c_ulong,
-    ) -> c_ulong;
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_i_size_write(inode: *mut inode, i_size: i64);
-    #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_i_size_read(inode: *mut inode) -> i64;
 }
