@@ -195,9 +195,21 @@ extern "C" {
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_err_ptr(err: c_long) -> *mut c_void;
     #[allow(improper_ctypes)]
-    pub(crate) fn hayleyfs_access_ok(buf: &[i8], len: usize) -> c_int;
+    pub(crate) fn hayleyfs_access_ok(buf: *const i8, len: usize) -> c_int;
     #[allow(improper_ctypes)]
     pub(crate) fn hayleyfs_copy_from_user_nt(
+        dst: *const c_void,
+        src: *const c_void,
+        len: c_ulong,
+    ) -> c_ulong;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_copy_to_user(
+        dst: *const c_void,
+        src: *const c_void,
+        len: c_ulong,
+    ) -> c_ulong;
+    #[allow(improper_ctypes)]
+    pub(crate) fn hayleyfs_copy_from_user(
         dst: *const c_void,
         src: *const c_void,
         len: c_ulong,

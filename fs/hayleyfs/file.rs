@@ -21,6 +21,7 @@ use kernel::{c_default_struct, PAGE_SIZE};
 #[no_mangle]
 pub(crate) static mut HayleyfsFileOps: file_operations = file_operations {
     write: Some(hayleyfs_file::hayleyfs_file_write),
+    read: Some(hayleyfs_file::hayleyfs_file_read),
     open: Some(hayleyfs_file::hayleyfs_open),
     ..c_default_struct!(file_operations)
 };
@@ -73,7 +74,7 @@ pub(crate) mod hayleyfs_file {
 
         pub(crate) fn write_data(
             self,
-            buf: &[i8],
+            buf: *const i8,
             len: usize,
             offset: usize,
         ) -> (DataPageWrapper<'a, Flushed, WriteData>, usize) {
@@ -85,19 +86,42 @@ pub(crate) mod hayleyfs_file {
                 len
             };
             // TODO: do you end up writing to the correct place with these type conversions?
-            let bytes_written = unsafe {
-                hayleyfs_copy_from_user_nt(
-                    buf as *const _ as *const c_void,
-                    &self.data_page.data[offset] as *const _ as *const c_void,
-                    bytes_to_write.try_into().unwrap(), // TODO: handle error properly
-                )
-            };
+            // TODO: what does the return value here actually mean?????
+            let data_ptr = self.data_page.data.as_ptr() as *mut i8;
+            let bytes_written = bytes_to_write
+                - unsafe {
+                    hayleyfs_copy_from_user_nt(
+                        // data_ptr as *const c_void, // TODO: take offset into account
+                        data_ptr.offset(offset.try_into().unwrap()) as *const c_void, // TODO: handle error properly
+                        buf as *const c_void,
+                        //
+                        bytes_to_write.try_into().unwrap(), // TODO: handle error properly
+                    ) as usize
+                };
             // TODO: MUST FLUSH FIRST AND LAST CACHE LINES (or check if they need to be flushed)
-            clwb(&self.data_page.data[offset], bytes_to_write, false);
+            clwb(
+                unsafe { data_ptr.offset(offset.try_into().unwrap()) },
+                // data_ptr,
+                bytes_to_write,
+                false,
+            );
             (
                 DataPageWrapper::new(self.data_page),
                 bytes_written.try_into().unwrap(), // TODO: handle error properly
             )
+        }
+
+        pub(crate) fn read_data(&self, buf: *mut i8, len: usize, offset: usize) -> usize {
+            let data_ptr = self.data_page.data.as_ptr() as *mut i8;
+            let bytes_copied = len
+                - unsafe {
+                    hayleyfs_copy_to_user(
+                        buf as *mut c_void,
+                        data_ptr.offset(offset.try_into().unwrap()) as *const c_void, // TODO: include offset
+                        len.try_into().unwrap(), // TODO: handle error properly
+                    ) as usize
+                };
+            bytes_copied.try_into().unwrap() // TODO: handle error properly
         }
     }
 
@@ -115,12 +139,12 @@ pub(crate) mod hayleyfs_file {
     #[no_mangle]
     pub(crate) unsafe extern "C" fn hayleyfs_file_write(
         filep_raw: *mut file,
-        buf_raw: *const i8,
+        buf: *const i8,
         len: usize,
         pos_raw: *mut i64,
     ) -> isize {
         let filep = unsafe { &mut *(filep_raw as *mut file) };
-        let buf = unsafe { from_raw_parts(buf_raw, len) };
+        // let buf = unsafe { from_raw_parts(buf_raw, len) };
         let ppos = unsafe { &mut *(pos_raw as *mut i64) };
 
         // TODO: locks
@@ -140,7 +164,7 @@ pub(crate) mod hayleyfs_file {
     /// to add it.
     fn _hayleyfs_file_write(
         filep: &mut file,
-        buf: &[i8],
+        buf: *const i8,
         len: usize,
         ppos: &mut i64,
         inode: &mut inode,
@@ -194,6 +218,7 @@ pub(crate) mod hayleyfs_file {
         }
         let pi = pi_temp;
         let page_no = page_no.unwrap();
+        pr_info!("page no: {:?}\n", page_no);
 
         // TODO: should reading data page require an AddPage or higher inode?
         let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
@@ -203,8 +228,10 @@ pub(crate) mod hayleyfs_file {
 
         pos += bytes_written as i64;
         *ppos = pos;
+        pr_info!("pos: {:?}\n", pos);
         // inode.i_size = pos;
         unsafe { hayleyfs_i_size_write(inode, pos) };
+        pr_info!("inode size: {:?}\n", inode.i_size);
         inode.i_blocks = 1;
         // right now, we can just set the file size to pos + bytes written
         // TODO: in the future when the file can have multiple pages that won't be enough
@@ -212,6 +239,76 @@ pub(crate) mod hayleyfs_file {
 
         let token = WriteFinalizeToken::new(pi, data_page);
         Ok((token, bytes_written.try_into()?))
+    }
+
+    #[no_mangle]
+    pub(crate) unsafe extern "C" fn hayleyfs_file_read(
+        filep_raw: *mut file,
+        buf: *mut i8,
+        len: usize,
+        ppos_raw: *mut i64,
+    ) -> isize {
+        let filep = unsafe { &mut *(filep_raw as *mut file) };
+        // let buf = unsafe { from_raw_parts(buf_raw, len) };
+        let ppos = unsafe { &mut *(ppos_raw as *mut i64) };
+        let mapping = unsafe { &mut *(filep.f_mapping as *mut address_space) };
+        let inode = unsafe { &mut *(mapping.host as *mut inode) };
+
+        let result = _hayleyfs_file_read(buf, len, ppos, inode);
+
+        match result {
+            Ok(bytes_read) => bytes_read,
+            Err(e) => e.to_kernel_errno().try_into().unwrap(), // TODO: error handling
+        }
+    }
+
+    #[no_mangle]
+    pub(crate) fn _hayleyfs_file_read(
+        // filep: &mut file,
+        buf: *mut i8,
+        mut len: usize,
+        ppos: &mut i64,
+        inode: &mut inode,
+    ) -> Result<isize> {
+        // TODO: mark the file as accessed, update access time, etc.
+
+        // make sure we can access the user buffer
+        if !unsafe { hayleyfs_access_ok(buf, len) } == 0 {
+            return Err(Error::EFAULT);
+        }
+
+        let mut pos = *ppos;
+        let file_size = unsafe { hayleyfs_i_size_read(inode) };
+        if file_size == 0 {
+            return Ok(0);
+        }
+
+        if len > (file_size - pos).try_into()? {
+            len = (file_size - pos).try_into()?;
+        }
+        if len <= 0 {
+            return Ok(0);
+        }
+
+        let ino: InodeNum = inode.i_ino.try_into()?;
+
+        let sb = inode.i_sb;
+        let sbi = hayleyfs_get_sbi(sb);
+
+        // TODO: logic here will have to change when there is more than one page
+        // associated with a file
+        let pi = InodeWrapper::read_file_inode(sbi, &ino);
+        let page_no = pi.get_data_page_no();
+        if let Some(page_no) = page_no {
+            let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
+            let bytes_read = data_page.read_data(buf, len, pos.try_into()?);
+            pos += bytes_read as i64;
+            *ppos = pos;
+            pr_info!("pos: {:?}\n", pos);
+            Ok(bytes_read.try_into()?)
+        } else {
+            Ok(0)
+        }
     }
 
     #[no_mangle]
