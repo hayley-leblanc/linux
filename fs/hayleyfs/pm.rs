@@ -20,7 +20,7 @@ pub(crate) fn clwb<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
         start = (start >> CACHELINE_BYTE_SHIFT) << CACHELINE_BYTE_SHIFT; // TODO: i think this properly aligns it
         let end = start + len;
 
-        pr_info!("start {:#X}, end {:#X}, len {:?}\n", start, end, len);
+        // pr_info!("start {:#X}, end {:#X}, len {:?}\n", start, end, len);
 
         // TODO: properly check architecture and choose correct cache line flush instruction
         while start < end {
@@ -54,7 +54,7 @@ pub(crate) fn clwb<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
 /// Store fence (from Corundum)
 // #[inline(always)]
 pub(crate) fn sfence() {
-    pr_info!("fence\n");
+    // pr_info!("fence\n");
     unsafe {
         asm!("sfence");
     }

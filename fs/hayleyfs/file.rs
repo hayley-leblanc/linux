@@ -198,7 +198,19 @@ pub(crate) mod hayleyfs_file {
             pos = unsafe { hayleyfs_i_size_read(inode) };
         }
 
+        // TODO: remove this when file size can be bigger
+        if pos >= PAGE_SIZE.try_into()? {
+            return Err(Error::ENOSPC);
+        }
+
         let ino: InodeNum = inode.i_ino.try_into().unwrap();
+
+        pr_info!(
+            "writing: inode {:?}, count {:?}, offset {:?}\n",
+            ino,
+            len,
+            pos
+        );
 
         // obtain our inode and its data page
         // TODO: logic here will have to change when there is more than one page
@@ -247,6 +259,7 @@ pub(crate) mod hayleyfs_file {
         let pi = pi.set_size(pos, &data_page);
 
         let token = WriteFinalizeToken::new(pi, data_page);
+        pr_info!("bytes written: {:?}\n", bytes_written);
         Ok((token, bytes_written.try_into()?))
     }
 

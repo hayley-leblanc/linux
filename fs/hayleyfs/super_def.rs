@@ -317,7 +317,7 @@ pub(crate) mod hayleyfs_bitmap {
                 hayleyfs_find_next_zero_bit(
                     self.bitmap as *mut _ as *mut u64,
                     (PAGE_SIZE * 8).try_into().unwrap(),
-                    0,
+                    1,
                 )
             };
 

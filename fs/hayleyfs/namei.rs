@@ -166,7 +166,6 @@ fn _hayleyfs_mkdir(
     mode: umode_t,
 ) -> Result<()> {
     // TODO: more graceful way of checking crashes. find a way that doesn't introduce so much redundant code
-
     let sb = unsafe { &mut *(dir.i_sb as *mut super_block) };
     let sbi = hayleyfs_get_sbi(sb);
 
@@ -175,6 +174,8 @@ fn _hayleyfs_mkdir(
         pr_info!("dentry name {:?} is too long\n", dentry_name);
         return Err(Error::ENAMETOOLONG);
     }
+
+    pr_info!("mkdir {:?}\n", dentry_name);
 
     // get an inode
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi);
@@ -365,7 +366,6 @@ fn _hayleyfs_create(
     _excl: bool,
 ) -> Result<()> {
     // TODO: handle excl case - if true, create should only succeed if the file doesn't already exist
-
     let sb = unsafe { &mut *(inode.i_sb as *mut super_block) };
     let sbi = hayleyfs_get_sbi(sb);
 
@@ -376,13 +376,19 @@ fn _hayleyfs_create(
         return Err(Error::ENAMETOOLONG);
     }
 
+    pr_info!("create {:?}, mode {:?}\n", file_name, mode);
+
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi);
     let (ino, inode_bitmap) = inode_bitmap.find_and_set_next_zero_bit()?;
     let inode_bitmap = inode_bitmap.flush().fence();
 
+    pr_info!("allocated inode {:?}\n", ino);
+
     let pi = InodeWrapper::read_file_inode(sbi, &ino);
     let parent_ino = inode.i_ino.try_into()?;
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
+
+    pr_info!("parent ino: {:?}\n", parent_ino);
 
     let new_inode =
         hayleyfs_new_vfs_inode(sb, inode, ino, mnt_userns, mode, NewInodeType::Create, 0);
@@ -391,17 +397,25 @@ fn _hayleyfs_create(
         unlock_new_inode(new_inode);
     };
 
+    pr_info!("set up vfs inode\n");
+
     let pi = pi
         .initialize_inode(mode, parent_pi.get_flags(), new_inode, &inode_bitmap)
         .fence();
 
+    pr_info!("initialized inode\n");
+
     let new_dentry =
         hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
+
+    pr_info!("allocated dentry\n");
 
     // TODO: do something with this
     let _new_dentry = new_dentry
         .initialize_file_dentry(ino, file_name.to_str()?, &pi)
         .fence();
+
+    pr_info!("initialized dentry\n");
 
     Ok(())
 }
@@ -442,7 +456,7 @@ fn _hayleyfs_rmdir(
 
     // 1. delete child dentry from parent
     let dentry_name = unsafe { CStr::from_char_ptr(dentry.d_name.name as *const c_char) };
-
+    pr_info!("rmdir {:?}\n", dentry_name);
     let parent_ino = dir.i_ino as usize;
 
     // read the parent inode from PM
@@ -539,7 +553,7 @@ fn _hayleyfs_unlink(
     }
 
     let dentry_name = unsafe { CStr::from_char_ptr(dentry.d_name.name as *const c_char) };
-
+    pr_info!("unlink {:?}\n", dentry_name);
     let child_ino: InodeNum = inode.i_ino.try_into()?;
     let parent_ino: InodeNum = dir.i_ino.try_into()?;
 
