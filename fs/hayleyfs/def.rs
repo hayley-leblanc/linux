@@ -76,6 +76,8 @@ pub(crate) struct Data;
 pub(crate) struct Dir;
 pub(crate) struct Unknown;
 
+pub(crate) struct EmptyPage;
+
 // pub(crate) trait InodeType {}
 // impl InodeType for Data {}
 // impl InodeType for Dir {}

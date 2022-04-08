@@ -15,7 +15,7 @@ mod finalize;
 mod h_inode;
 mod namei;
 mod pm;
-mod recovery;
+// mod recovery;
 mod super_def;
 
 use crate::def::*;
@@ -26,7 +26,7 @@ use crate::h_inode::hayleyfs_inode::*;
 use crate::h_inode::*;
 use crate::namei::*;
 use crate::pm::*;
-use crate::recovery::*;
+// use crate::recovery::*;
 use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::hayleyfs_sb::*;
 use crate::super_def::*;
@@ -276,9 +276,9 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // TODO: finalize inode wrapper more explicitly
         let _inode_wrapper =
             inode_wrapper.add_dir_page_fence(Some(page_no), self_dentry, parent_dentry);
-    } else {
-        hayleyfs_recovery(sbi)?;
-    }
+    } // else {
+      // hayleyfs_recovery(sbi)?;
+      //}
 
     // TODO: hide in a function
     unsafe {

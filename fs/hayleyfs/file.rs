@@ -37,7 +37,24 @@ pub(crate) mod hayleyfs_file {
     pub(crate) struct DataPageWrapper<'a, State, Op> {
         state: PhantomData<State>,
         op: PhantomData<Op>,
+        page_no: PmPage,
         data_page: &'a mut DataPage,
+    }
+
+    pub(crate) trait EmptyFilePage {
+        fn get_page_no(&self) -> Option<PmPage>;
+    }
+
+    impl<'a> EmptyFilePage for DataPageWrapper<'a, Clean, Zero> {
+        fn get_page_no(&self) -> Option<PmPage> {
+            Some(self.page_no)
+        }
+    }
+
+    impl EmptyFilePage for EmptyPage {
+        fn get_page_no(&self) -> Option<PmPage> {
+            None
+        }
     }
 
     impl<'a, State, Op> PmObjWrapper for DataPageWrapper<'a, State, Op> {}
@@ -45,10 +62,11 @@ pub(crate) mod hayleyfs_file {
     impl<'a, State, Op> PmObjWrapper for Vec<DataPageWrapper<'a, State, Op>> {}
 
     impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
-        fn new(data_page: &'a mut DataPage) -> Self {
+        fn new(page_no: PmPage, data_page: &'a mut DataPage) -> Self {
             Self {
                 state: PhantomData,
                 op: PhantomData,
+                page_no,
                 data_page,
             }
         }
@@ -58,7 +76,7 @@ pub(crate) mod hayleyfs_file {
         pub(crate) fn read_data_page(sbi: &SbInfo, page_no: PmPage) -> Result<Self> {
             check_page_no(sbi, page_no)?;
             let addr = (sbi.virt_addr as usize) + (PAGE_SIZE * page_no);
-            Ok(DataPageWrapper::new(unsafe {
+            Ok(DataPageWrapper::new(page_no, unsafe {
                 &mut *(addr as *mut DataPage)
             }))
         }
@@ -68,7 +86,7 @@ pub(crate) mod hayleyfs_file {
             // TODO: do this with nontemporal stores rather than cache line flushes
             unsafe { ptr::write_bytes(&mut self.data_page.data, 0, PAGE_SIZE) };
             clwb(&self.data_page.data, PAGE_SIZE, false);
-            DataPageWrapper::new(self.data_page)
+            DataPageWrapper::new(self.page_no, self.data_page)
         }
 
         pub(crate) fn write_data(
@@ -102,7 +120,7 @@ pub(crate) mod hayleyfs_file {
                 false,
             );
             (
-                DataPageWrapper::new(self.data_page),
+                DataPageWrapper::new(self.page_no, self.data_page),
                 bytes_written.try_into().unwrap(), // TODO: handle error properly
             )
         }
@@ -121,14 +139,16 @@ pub(crate) mod hayleyfs_file {
         }
     }
 
+    impl<'a> DataPageWrapper<'a, Clean, Zero> {}
+
     impl<'a, Op> DataPageWrapper<'a, Flushed, Op> {
         pub(crate) unsafe fn fence_unsafe(self) -> DataPageWrapper<'a, Clean, Op> {
-            DataPageWrapper::new(self.data_page)
+            DataPageWrapper::new(self.page_no, self.data_page)
         }
 
         pub(crate) fn fence(self) -> DataPageWrapper<'a, Clean, Op> {
             sfence();
-            DataPageWrapper::new(self.data_page)
+            DataPageWrapper::new(self.page_no, self.data_page)
         }
     }
 

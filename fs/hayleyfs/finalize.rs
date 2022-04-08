@@ -11,13 +11,13 @@ use crate::super_def::hayleyfs_bitmap::*;
 
 pub(crate) struct RmdirFinalizeToken;
 pub(crate) struct WriteFinalizeToken;
+pub(crate) struct UnlinkFinalizeToken;
 
 impl<'a> RmdirFinalizeToken {
     pub(crate) fn new(
         _parent_inode: InodeWrapper<'a, Clean, Link, Dir>,
         _parent_dentry: DentryWrapper<'a, Clean, Zero>,
-        _child_self_dentry: DentryWrapper<'a, Clean, Zero>,
-        _child_parent_dentry: DentryWrapper<'a, Clean, Zero>,
+        _child_dir_page: DataPageWrapper<'a, Clean, Zero>,
         _child_inode: InodeWrapper<'a, Clean, Zero, Dir>,
         _inode_bitmap: BitmapWrapper<'a, Clean, Zero, Inode>,
         _data_bitmap: BitmapWrapper<'a, Clean, Zero, Data>,
@@ -30,6 +30,18 @@ impl<'a> WriteFinalizeToken {
     pub(crate) fn new(
         _inode: InodeWrapper<'a, Clean, Size, Data>,
         _page: DataPageWrapper<'a, Clean, WriteData>,
+    ) -> Self {
+        Self {}
+    }
+}
+
+impl<'a> UnlinkFinalizeToken {
+    pub(crate) fn new(
+        _parent_inode: InodeWrapper<'a, Clean, Read, Dir>,
+        _deleted_inode: InodeWrapper<'a, Clean, Zero, Data>,
+        _deleted_page: &dyn EmptyFilePage,
+        _inode_bitmap: BitmapWrapper<'a, Clean, Zero, Inode>,
+        _data_bitmap: BitmapWrapper<'a, Clean, Zero, Data>,
     ) -> Self {
         Self {}
     }

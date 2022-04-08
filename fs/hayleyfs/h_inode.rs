@@ -69,6 +69,7 @@ pub(crate) mod hayleyfs_inode {
         state: PhantomData<State>,
         op: PhantomData<Op>,
         inode_type: PhantomData<Type>,
+        ino: InodeNum,
         inode: &'a mut HayleyfsInode,
     }
 
@@ -82,6 +83,7 @@ pub(crate) mod hayleyfs_inode {
                 state: PhantomData,
                 op: PhantomData,
                 inode_type: PhantomData,
+                ino: inode.ino,
                 inode,
             }
         }
@@ -132,7 +134,10 @@ pub(crate) mod hayleyfs_inode {
 
         // TODO: can we invalidate without overwriting the whole thing?
         // or implement a memset with nontemporal stores at least
-        pub(crate) fn zero_inode(self) -> InodeWrapper<'a, Flushed, Zero, Type> {
+        pub(crate) fn zero_inode(
+            self,
+            _: &DentryWrapper<'a, Clean, Zero>,
+        ) -> InodeWrapper<'a, Flushed, Zero, Type> {
             unsafe { write_bytes(self.inode, 0, size_of::<HayleyfsInode>()) };
             clwb(&self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
@@ -178,6 +183,7 @@ pub(crate) mod hayleyfs_inode {
                 state: PhantomData,
                 op: PhantomData,
                 inode_type: PhantomData,
+                ino: *ino,
                 inode,
             }
         }
@@ -198,6 +204,17 @@ pub(crate) mod hayleyfs_inode {
             // check at compile time?
             assert!(self.get_data_page_no().is_some());
             InodeWrapper::new(self.inode)
+        }
+
+        pub(crate) fn clear_data_page(&self, sbi: &SbInfo) -> Result<Box<dyn EmptyFilePage>> {
+            match self.inode.data0 {
+                Some(page_no) => {
+                    let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
+                    let data_page = data_page.zero_page().fence();
+                    Ok(Box::try_new(data_page)?)
+                }
+                None => Ok(Box::try_new(EmptyPage {})?),
+            }
         }
     }
 
@@ -222,6 +239,7 @@ pub(crate) mod hayleyfs_inode {
                 state: PhantomData,
                 op: PhantomData,
                 inode_type: PhantomData,
+                ino: *ino,
                 inode,
             }
         }
@@ -244,6 +262,7 @@ pub(crate) mod hayleyfs_inode {
                 state: PhantomData,
                 op: PhantomData,
                 inode_type: PhantomData,
+                ino: *ino,
                 inode,
             }
         }

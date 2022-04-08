@@ -2,9 +2,9 @@
 #![deny(unused_variables)]
 #![deny(clippy::let_underscore_must_use)]
 #![deny(clippy::used_underscore_binding)]
-
 use crate::def::*;
 use crate::dir::*;
+use crate::file::hayleyfs_file::*;
 use crate::file::*;
 use crate::finalize::*;
 use crate::h_inode::hayleyfs_inode::*;
@@ -30,6 +30,7 @@ pub(crate) static HayleyfsDirInodeOps: inode_operations = inode_operations {
     lookup: Some(hayleyfs_lookup),
     create: Some(hayleyfs_create),
     rmdir: Some(hayleyfs_rmdir),
+    unlink: Some(hayleyfs_unlink),
     ..c_default_struct!(inode_operations)
 };
 
@@ -430,6 +431,8 @@ unsafe extern "C" fn hayleyfs_rmdir(inode_raw: *mut inode, dentry_raw: *mut dent
 /// which is not ideal, but it's just a space leak issue
 ///
 /// inode is the parent inode, dentry is the dentry of the file to delete
+/// TODO: i don't think this will work correctly if there are hard links to
+/// a directory inode
 fn _hayleyfs_rmdir(
     sbi: &SbInfo,
     dir: &mut inode,
@@ -458,29 +461,34 @@ fn _hayleyfs_rmdir(
     // 3. now that there isn't a pointer to the deleted directory, we can clean it up
     let child_inode = InodeWrapper::read_dir_inode(sbi, &child_ino);
     // TODO: we actually can probably ignore errors reading . and .. here
-    let self_dentry = child_inode.lookup_dentry_in_inode(sbi, b".")?;
-    let parent_dentry = child_inode.lookup_dentry_in_inode(sbi, b"..")?;
+    // let self_dentry = child_inode.lookup_dentry_in_inode(sbi, b".")?;
+    // let parent_dentry = child_inode.lookup_dentry_in_inode(sbi, b"..")?;
 
-    let self_dentry = unsafe { self_dentry.set_invalid() };
-    let parent_dentry = unsafe { parent_dentry.set_invalid() };
+    // let self_dentry = unsafe { self_dentry.set_invalid() };
+    // let parent_dentry = unsafe { parent_dentry.set_invalid() };
 
     // 4. zero the deleted inode
     // better handling in case the child directory doesn't have dir page for some reason
     let child_dir_page = child_inode.get_data_page_no().unwrap();
 
-    let child_inode = child_inode.zero_inode();
+    // rather than zeroing dentries individually just zero the whole page
+    // this is slower but makes some correctness stuff easier
+    // TODO: find a way to make this work without zeroing the whole page;
+    // maybe optimizations in the zero page method?
+    let dir_page = DataPageWrapper::read_data_page(sbi, child_dir_page)?.zero_page();
 
-    let (parent_pi, self_dentry, parent_dentry, child_inode) =
-        fence_all!(parent_pi, self_dentry, parent_dentry, child_inode);
+    let child_inode = child_inode.zero_inode(&delete_dentry);
+
+    let (parent_pi, dir_page, child_inode) = fence_all!(parent_pi, dir_page, child_inode);
 
     // 5. clear bits in the bitmaps
     // TODO: make it harder to clear the wrong bits? that would hopefully show
     // up in regular testing though
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi)
-        .clear_bit(child_ino)?
+        .clear_bit(&child_inode)?
         .flush();
     let data_bitmap = BitmapWrapper::read_data_bitmap(sbi)
-        .clear_bit(child_dir_page)?
+        .clear_bit(&dir_page)?
         .flush();
 
     let (inode_bitmap, data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
@@ -488,11 +496,86 @@ fn _hayleyfs_rmdir(
     let token = RmdirFinalizeToken::new(
         parent_pi,
         delete_dentry,
-        self_dentry,
-        parent_dentry,
+        dir_page,
         child_inode,
         inode_bitmap,
         data_bitmap,
     );
+    Ok(token)
+}
+
+#[no_mangle]
+unsafe extern "C" fn hayleyfs_unlink(dir: *mut inode, dentry: *mut dentry) -> i32 {
+    let dir = unsafe { &mut *(dir as *mut inode) };
+    let dentry = unsafe { &mut *(dentry as *mut dentry) };
+    let inode = unsafe { &mut *(dentry.d_inode as *mut inode) };
+    let sb = unsafe { &mut *(inode.i_sb as *mut super_block) };
+    let sbi = hayleyfs_get_sbi(sb);
+
+    let result = _hayleyfs_unlink(dir, dentry, inode, sbi);
+
+    match result {
+        Ok(_) => 0,
+        Err(e) => e.to_kernel_errno(),
+    }
+}
+
+#[no_mangle]
+fn _hayleyfs_unlink(
+    dir: &mut inode,
+    dentry: &mut dentry,
+    inode: &mut inode,
+    sbi: &SbInfo,
+) -> Result<UnlinkFinalizeToken> {
+    // check link count on the VFS inode; if it's 1, we just delete the inode
+    // TODO: if it's >1, handling is slightly different, but since we don't
+    // do hard links yet no point in implementing that now
+
+    // TODO: what happens if you call unlink on a directory?
+
+    let n_links = unsafe { inode.__bindgen_anon_1.i_nlink };
+    if n_links > 1 {
+        assert!(false, "Unlinking files with hard links is not implemented");
+    }
+
+    let dentry_name = unsafe { CStr::from_char_ptr(dentry.d_name.name as *const c_char) };
+
+    let child_ino: InodeNum = inode.i_ino.try_into()?;
+    let parent_ino: InodeNum = dir.i_ino.try_into()?;
+
+    let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
+    let pi = InodeWrapper::read_file_inode(sbi, &child_ino);
+
+    // otherwise, nlinks is 1 so we can just delete the inode
+    // remove the dentry for this file from the parent
+    let delete_dentry = parent_pi.lookup_dentry_in_inode(sbi, dentry_name)?;
+    let delete_dentry = unsafe { delete_dentry.set_invalid() }.fence();
+
+    // TODO: handle multiple data pages
+    // it's possible that the inode doesn't have any pages,
+    // so we use a method that returns a trait object indicating that
+    // if any pages exist, they've been zeroed and that we can use
+    // to clear bitmap bits
+    // TODO: if the inode does have pages, there is an unnecessary fence here.
+    // not sure how (if possible) to manage keeping track of cleanliness of
+    // real pages within the empty page trait
+    let zeroed_page = pi.clear_data_page(sbi)?;
+
+    let pi = pi.zero_inode(&delete_dentry).fence();
+
+    let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi)
+        .clear_bit(&pi)?
+        .flush();
+    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi)
+        .clear_bit(&*zeroed_page)? // TODO: weird syntax.....
+        .flush();
+
+    let (inode_bitmap, data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
+
+    let token = UnlinkFinalizeToken::new(parent_pi, pi, &*zeroed_page, inode_bitmap, data_bitmap);
+
+    // TODO: finalization
+    // at the end we should have: clean parent inode, zeroed dentry,
+    // zeroed data page, zeroed inode, both zeroed bitmaps
     Ok(token)
 }
