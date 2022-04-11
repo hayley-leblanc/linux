@@ -84,7 +84,8 @@ pub(crate) mod hayleyfs_file {
         pub(crate) fn zero_page(self) -> DataPageWrapper<'a, Flushed, Zero> {
             // unsafely zero the memory region associated with this page
             // TODO: do this with nontemporal stores rather than cache line flushes
-            unsafe { ptr::write_bytes(&mut self.data_page.data, 0, PAGE_SIZE) };
+            // TODO: make sure this is zeroing the right amount of space
+            unsafe { ptr::write_bytes(&mut self.data_page.data, 0, 1) };
             clwb(&self.data_page.data, PAGE_SIZE, false);
             DataPageWrapper::new(self.page_no, self.data_page)
         }

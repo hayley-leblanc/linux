@@ -165,6 +165,7 @@ fn _hayleyfs_mkdir(
     dentry: &mut dentry,
     mode: umode_t,
 ) -> Result<()> {
+    pr_info!("MKDIR!\n");
     // TODO: more graceful way of checking crashes. find a way that doesn't introduce so much redundant code
     let sb = unsafe { &mut *(dir.i_sb as *mut super_block) };
     let sbi = hayleyfs_get_sbi(sb);
@@ -174,6 +175,7 @@ fn _hayleyfs_mkdir(
         pr_info!("dentry name {:?} is too long\n", dentry_name);
         return Err(Error::ENAMETOOLONG);
     }
+    pr_info!("creating {:?}\n", dentry_name);
 
     // get an inode
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi);
@@ -465,7 +467,7 @@ fn _hayleyfs_rmdir(
     dentry: &mut dentry,
 ) -> Result<RmdirFinalizeToken> {
     // TODO: do we have to check the child's link count? or does VFS do that?
-
+    pr_info!("RMDIR!\n");
     let inode = unsafe { &mut *(dentry.d_inode as *mut inode) };
     if !unsafe { hayleyfs_isdir(inode.i_mode) } {
         pr_info!(
@@ -477,13 +479,13 @@ fn _hayleyfs_rmdir(
         pr_info!("inode {:?} is a directory\n", inode.i_ino);
     }
 
-    unsafe { drop_nlink(dir) };
-    unsafe { clear_nlink(inode) };
-
     // 1. delete child dentry from parent
     let dentry_name = unsafe { CStr::from_char_ptr(dentry.d_name.name as *const c_char) };
     let parent_ino = dir.i_ino as usize;
     pr_info!("deleting file name {:?}\n", dentry_name);
+
+    unsafe { drop_nlink(dir) };
+    unsafe { clear_nlink(inode) };
 
     // read the parent inode from PM
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
@@ -501,6 +503,7 @@ fn _hayleyfs_rmdir(
 
     // 3. now that there isn't a pointer to the deleted directory, we can clean it up
     let child_inode = InodeWrapper::read_dir_inode(sbi, &child_ino);
+    pr_info!("{:?}\n", child_inode);
     // TODO: we actually can probably ignore errors reading . and .. here
     // let self_dentry = child_inode.lookup_dentry_in_inode(sbi, b".")?;
     // let parent_dentry = child_inode.lookup_dentry_in_inode(sbi, b"..")?;
@@ -513,6 +516,8 @@ fn _hayleyfs_rmdir(
     // 4. zero the deleted inode
     // better handling in case the child directory doesn't have dir page for some reason
     let child_dir_page = child_inode.get_data_page_no();
+
+    assert!(child_dir_page != 0);
 
     // rather than zeroing dentries individually just zero the whole page
     // this is slower but makes some correctness stuff easier
@@ -535,6 +540,8 @@ fn _hayleyfs_rmdir(
         .flush();
 
     let (inode_bitmap, data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
+
+    pr_info!("RMDIR DONE\n");
 
     let token = RmdirFinalizeToken::new(
         parent_pi,

@@ -229,7 +229,8 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // but then you'd have to implement that and that would defeat the point of this
         // janky quick workaround
         unsafe {
-            ptr::write_bytes(sbi.virt_addr, 0, sbi.pm_size.try_into().unwrap());
+            // TODO: make sure you're writing the right amount of zeros
+            ptr::write_bytes(sbi.virt_addr, 0, (sbi.pm_size / 8).try_into()?);
             clwb(sbi.virt_addr, sbi.pm_size.try_into().unwrap(), true);
         }
         // TODO: for some reason there are extra fences here

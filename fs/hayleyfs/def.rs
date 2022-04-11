@@ -53,27 +53,43 @@ pub(crate) const HAYLEYFS_REG_FLMASK: u32 = !(FS_DIRSYNC_FL | FS_TOPDIR_FL);
 pub(crate) const HAYLEYFS_OTHER_FLMASK: u32 = FS_NODUMP_FL | FS_NOATIME_FL;
 
 // semantic types indicating the persistence state of an object
+#[derive(Debug)]
 pub(crate) struct Dirty;
+#[derive(Debug)]
 pub(crate) struct Flushed;
+#[derive(Debug)]
 pub(crate) struct Clean;
 
 // semantic types indicating the most recent type of modification to an object
 // TODO: think more about what these should be once the fs works better
+#[derive(Debug)]
 pub(crate) struct Read; // indicates no change since it was read. TODO: better name
+#[derive(Debug)]
 pub(crate) struct Alloc; // TODO: might be more clear to have separate alloc, init, and uninit types
+#[derive(Debug)]
 pub(crate) struct Init;
+#[derive(Debug)]
 pub(crate) struct AddPage;
+#[derive(Debug)]
 pub(crate) struct Zero;
+#[derive(Debug)]
 pub(crate) struct Link;
+#[derive(Debug)]
 pub(crate) struct Flags;
+#[derive(Debug)]
 pub(crate) struct WriteData;
+#[derive(Debug)]
 pub(crate) struct Size;
 
 // semantic types used to indicate the type of bitmaps and/or inodes
 // to reduce some code repetition and prevent mistakes
+#[derive(Debug)]
 pub(crate) struct Inode;
+#[derive(Debug)]
 pub(crate) struct Data;
+#[derive(Debug)]
 pub(crate) struct Dir;
+#[derive(Debug)]
 pub(crate) struct Unknown;
 
 pub(crate) struct EmptyPage;

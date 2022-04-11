@@ -84,6 +84,7 @@ pub(crate) mod hayleyfs_dir {
         file: *mut file,
         ctx_raw: *mut dir_context,
     ) -> i32 {
+        pr_info!("READDIR\n");
         // TODO: check that the file is actually a directory
         // TODO: use in-memory inodes
         // TODO: nicer abstractions for unsafe code here
@@ -127,6 +128,7 @@ pub(crate) mod hayleyfs_dir {
             ctx.pos = READDIR_END;
             0
         } else {
+            pr_info!("readdir: inode has no data page\n");
             -(ENOTDIR as c_int)
         }
     }

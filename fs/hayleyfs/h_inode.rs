@@ -33,6 +33,7 @@ pub(crate) mod hayleyfs_inode {
 
     // inode that lives in PM
     #[repr(C)]
+    #[derive(Debug)]
     struct HayleyfsInode {
         mode: u16, // file mode (directory, regular, etc.)
         link_count: u32,
@@ -45,10 +46,12 @@ pub(crate) mod hayleyfs_inode {
         size: i64,  // size of data in bytes
         ino: InodeNum,
         data0: PmPage, // set to 0 when there is not a page associated with this file
+                       // pad up to 72 bytes
     }
 
     impl HayleyfsInode {
         fn set_page(&mut self, page: PmPage) {
+            pr_info!("setting inode {:?} to page {:?}\n", self.ino, page);
             self.data0 = page;
         }
 
@@ -65,6 +68,7 @@ pub(crate) mod hayleyfs_inode {
     // handles flushing it and keeping track of the last operation
     // so the private/public stuff has to be set up so the compiler enforces that
     #[must_use]
+    #[derive(Debug)]
     pub(crate) struct InodeWrapper<'a, State, Op, Type: ?Sized> {
         state: PhantomData<State>,
         op: PhantomData<Op>,
@@ -141,7 +145,7 @@ pub(crate) mod hayleyfs_inode {
             self,
             _: &DentryWrapper<'a, Clean, Zero>,
         ) -> InodeWrapper<'a, Flushed, Zero, Type> {
-            unsafe { write_bytes(self.inode, 0, size_of::<HayleyfsInode>()) };
+            unsafe { write_bytes(self.inode, 0, 1) };
             clwb(&self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
         }
@@ -321,6 +325,7 @@ pub(crate) mod hayleyfs_inode {
         ) -> InodeWrapper<'a, Flushed, Init, Type> {
             // TODO: do these numbers make sense? do you have to do something with them to
             // make them make sense?
+            self.inode.ino = inode.i_ino as usize;
             self.inode.mode = inode.i_mode;
             self.inode.link_count = unsafe { inode.__bindgen_anon_1.i_nlink };
             self.inode.data0 = 0;
