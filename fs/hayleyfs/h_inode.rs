@@ -44,11 +44,11 @@ pub(crate) mod hayleyfs_inode {
         atime: i64, // access time
         size: i64,  // size of data in bytes
         ino: InodeNum,
-        data0: Option<PmPage>,
+        data0: PmPage, // set to 0 when there is not a page associated with this file
     }
 
     impl HayleyfsInode {
-        fn set_page(&mut self, page: Option<PmPage>) {
+        fn set_page(&mut self, page: PmPage) {
             self.data0 = page;
         }
 
@@ -88,7 +88,10 @@ pub(crate) mod hayleyfs_inode {
             }
         }
 
-        pub(crate) fn get_data_page_no(&self) -> Option<PmPage> {
+        pub(crate) fn get_data_page_no(&self) -> PmPage {
+            if self.inode.data0 == 0 {
+                pr_info!("inode {:?} has no data page\n", self.ino);
+            }
             self.inode.data0
         }
 
@@ -147,7 +150,7 @@ pub(crate) mod hayleyfs_inode {
     impl<'a> InodeWrapper<'a, Clean, Init, Dir> {
         pub(crate) fn add_dir_page(
             self,
-            page: Option<PmPage>,
+            page: PmPage,
             _self_dentry: DentryWrapper<'a, Clean, Init>,
             _parent_dentry: DentryWrapper<'a, Clean, Init>,
         ) -> InodeWrapper<'a, Flushed, AddPage, Dir> {
@@ -160,7 +163,7 @@ pub(crate) mod hayleyfs_inode {
 
         pub(crate) fn add_dir_page_fence(
             self,
-            page: Option<PmPage>,
+            page: PmPage,
             _: DentryWrapper<'a, Clean, Init>,
             _: DentryWrapper<'a, Clean, Init>,
         ) -> InodeWrapper<'a, Clean, AddPage, Dir> {
@@ -193,7 +196,7 @@ pub(crate) mod hayleyfs_inode {
             page: PmPage,
             _: BitmapWrapper<'a, Clean, Alloc, Data>,
         ) -> InodeWrapper<'a, Clean, AddPage, Data> {
-            self.inode.set_page(Some(page));
+            self.inode.set_page(page);
             clwb(&self.inode.data0, CACHELINE_SIZE, true);
             InodeWrapper::new(self.inode)
         }
@@ -202,18 +205,18 @@ pub(crate) mod hayleyfs_inode {
             // runtime check to make sure the coercion is valid
             // TODO: this isn't GREAT, but should be ok since can't
             // check at compile time?
-            assert!(self.get_data_page_no().is_some());
+            assert!(self.get_data_page_no() != 0);
             InodeWrapper::new(self.inode)
         }
 
         pub(crate) fn clear_data_page(&self, sbi: &SbInfo) -> Result<Box<dyn EmptyFilePage>> {
-            match self.inode.data0 {
-                Some(page_no) => {
-                    let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
-                    let data_page = data_page.zero_page().fence();
-                    Ok(Box::try_new(data_page)?)
-                }
-                None => Ok(Box::try_new(EmptyPage {})?),
+            if self.inode.data0 == 0 {
+                let page_no = self.inode.data0;
+                let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
+                let data_page = data_page.zero_page().fence();
+                Ok(Box::try_new(data_page)?)
+            } else {
+                Ok(Box::try_new(EmptyPage {})?)
             }
         }
     }
@@ -320,7 +323,7 @@ pub(crate) mod hayleyfs_inode {
             // make them make sense?
             self.inode.mode = inode.i_mode;
             self.inode.link_count = unsafe { inode.__bindgen_anon_1.i_nlink };
-            self.inode.data0 = None;
+            self.inode.data0 = 0;
             self.inode.ctime = inode.i_ctime.tv_sec;
             self.inode.mtime = inode.i_mtime.tv_sec;
             self.inode.atime = inode.i_atime.tv_sec;
@@ -341,7 +344,7 @@ pub(crate) mod hayleyfs_inode {
         ) -> InodeWrapper<'a, Flushed, Init, Dir> {
             let current_time = unsafe { current_time(root_inode) };
             self.inode.mode = root_inode.i_mode;
-            self.inode.data0 = None;
+            self.inode.data0 = 0;
             unsafe {
                 self.inode.uid = from_kuid(&mut init_user_ns as *mut user_namespace, sbi.uid);
                 self.inode.gid = from_kgid(&mut init_user_ns as *mut user_namespace, sbi.gid);

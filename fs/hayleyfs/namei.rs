@@ -15,11 +15,11 @@ use crate::super_def::*;
 use crate::{fence_all, fence_obj};
 use core::ptr::{eq, null_mut};
 use kernel::bindings::{
-    current_time, d_instantiate, d_splice_alias, dentry, iget_failed, iget_locked, inc_nlink,
-    inode, inode_init_owner, inode_operations, insert_inode_locked, new_inode, set_nlink,
-    super_block, umode_t, unlock_new_inode, user_namespace, FS_APPEND_FL, FS_DIRSYNC_FL,
-    FS_IMMUTABLE_FL, FS_NOATIME_FL, FS_SYNC_FL, I_NEW, S_APPEND, S_DAX, S_DIRSYNC, S_IFDIR,
-    S_IMMUTABLE, S_NOATIME, S_SYNC,
+    clear_nlink, current_time, d_instantiate, d_splice_alias, dentry, drop_nlink, iget_failed,
+    iget_locked, inc_nlink, inode, inode_init_owner, inode_operations, insert_inode_locked,
+    new_inode, set_nlink, super_block, umode_t, unlock_new_inode, user_namespace, FS_APPEND_FL,
+    FS_DIRSYNC_FL, FS_IMMUTABLE_FL, FS_NOATIME_FL, FS_SYNC_FL, I_NEW, S_APPEND, S_DAX, S_DIRSYNC,
+    S_IFDIR, S_IMMUTABLE, S_NOATIME, S_SYNC,
 };
 use kernel::c_types::c_char;
 use kernel::prelude::*;
@@ -175,14 +175,13 @@ fn _hayleyfs_mkdir(
         return Err(Error::ENAMETOOLONG);
     }
 
-    pr_info!("mkdir {:?}\n", dentry_name);
-
     // get an inode
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi);
     let data_bitmap = BitmapWrapper::read_data_bitmap(sbi);
     let (ino, inode_bitmap) = inode_bitmap.find_and_set_next_zero_bit()?;
     let inode_bitmap = inode_bitmap.flush();
 
+    pr_info!("mkdir {:?}, allocated inode {:?}\n", dentry_name, ino);
     let (page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
     let data_bitmap = data_bitmap.flush();
     // TODO: do we need to use data bitmap again?
@@ -191,6 +190,17 @@ fn _hayleyfs_mkdir(
     let pi = InodeWrapper::read_dir_inode(sbi, &ino);
     let parent_ino: InodeNum = dir.i_ino.try_into()?;
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
+
+    pr_info!("parent inode: {:?}\n", parent_ino);
+
+    // add new dentry to parent
+    // we can read the dentry at any time, but we can't actually modify it without methods
+    // that require proof of link inc and new inode init
+    // TODO: handle panic
+    // do this early so that if the directory is full, we don't create a vfs inode
+    let parent_page = parent_pi.get_data_page_no();
+    assert!(parent_page != 0);
+    let new_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_page)?;
 
     // set up vfs inode
     // TODO: at what point should this actually happen?
@@ -209,6 +219,7 @@ fn _hayleyfs_mkdir(
         unlock_new_inode(inode);
     };
 
+    pr_info!("initializing inode\n");
     let pi = pi.initialize_inode(
         mode.into(),
         parent_pi.get_flags(),
@@ -216,23 +227,19 @@ fn _hayleyfs_mkdir(
         &inode_bitmap,
     );
 
+    pr_info!("initializing dentries\n");
     let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, ino)?;
     let parent_dentry = hayleyfs_dir::initialize_parent_dentry(sbi, page_no, ino)?;
     let (pi, self_dentry, parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
+    pr_info!("done initializing dentries\n");
 
     // increment parent link count
     let parent_pi = parent_pi.inc_links(); // TODO: increment vfs link count as well?
 
     // add page with newly initialized dentries to the new inode
-    let pi = pi.add_dir_page(Some(page_no), self_dentry, parent_dentry);
+    pr_info!("adding dir page {:?}\n", page_no);
+    let pi = pi.add_dir_page(page_no, self_dentry, parent_dentry);
     let (pi, parent_pi) = fence_all!(pi, parent_pi);
-
-    // add new dentry to parent
-    // we can read the dentry at any time, but we can't actually modify it without methods
-    // that require proof of link inc and new inode init
-    // TODO: handle panic
-    let new_dentry =
-        hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
 
     // TODO: do something with last new_dentry variable
     // TODO: this should rely on the vfs inode being valid?
@@ -240,6 +247,7 @@ fn _hayleyfs_mkdir(
         .initialize_mkdir_dentry(ino, dentry_name.to_str()?, &pi, &parent_pi)
         .fence();
 
+    pr_info!("all done!\n");
     Ok(())
 }
 
@@ -321,20 +329,20 @@ pub(crate) fn _hayleyfs_lookup(
     // TODO: check that this is actually a directory and return an error if it isn't
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &(dir.i_ino.try_into()?));
 
-    match parent_pi.get_data_page_no() {
-        Some(page_no) => {
-            let lookup_res =
-                hayleyfs_dir::lookup_ino_by_name(sbi, page_no, dentry_name.as_bytes_with_nul());
-            match lookup_res {
-                Ok(ino) => {
-                    let inode = hayleyfs_iget(sb, ino)?;
-                    Ok(unsafe { d_splice_alias(inode, dentry) })
-                }
-                Err(Error::ENOENT) => Ok(unsafe { d_splice_alias(core::ptr::null_mut(), dentry) }),
-                Err(e) => Err(e),
+    let page_no = parent_pi.get_data_page_no();
+    if page_no != 0 {
+        let lookup_res =
+            hayleyfs_dir::lookup_ino_by_name(sbi, page_no, dentry_name.as_bytes_with_nul());
+        match lookup_res {
+            Ok(ino) => {
+                let inode = hayleyfs_iget(sb, ino)?;
+                Ok(unsafe { d_splice_alias(inode, dentry) })
             }
+            Err(Error::ENOENT) => Ok(unsafe { d_splice_alias(core::ptr::null_mut(), dentry) }),
+            Err(e) => Err(e),
         }
-        None => Err(Error::EACCES),
+    } else {
+        Err(Error::EACCES)
     }
 }
 
@@ -354,7 +362,10 @@ unsafe extern "C" fn hayleyfs_create(
 
     match result {
         Ok(_) => 0,
-        Err(e) => e.to_kernel_errno(),
+        Err(e) => {
+            pr_alert!("returning {:?}\n", e);
+            e.to_kernel_errno()
+        }
     }
 }
 
@@ -390,6 +401,12 @@ fn _hayleyfs_create(
 
     pr_info!("parent ino: {:?}\n", parent_ino);
 
+    // do this early so that if the directory is full, we don't create a vfs inode
+    let new_dentry =
+        hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no())?;
+
+    pr_info!("allocated dentry\n");
+
     let new_inode =
         hayleyfs_new_vfs_inode(sb, inode, ino, mnt_userns, mode, NewInodeType::Create, 0);
     unsafe {
@@ -404,11 +421,6 @@ fn _hayleyfs_create(
         .fence();
 
     pr_info!("initialized inode\n");
-
-    let new_dentry =
-        hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no().unwrap())?;
-
-    pr_info!("allocated dentry\n");
 
     // TODO: do something with this
     let _new_dentry = new_dentry
@@ -454,16 +466,31 @@ fn _hayleyfs_rmdir(
 ) -> Result<RmdirFinalizeToken> {
     // TODO: do we have to check the child's link count? or does VFS do that?
 
+    let inode = unsafe { &mut *(dentry.d_inode as *mut inode) };
+    if !unsafe { hayleyfs_isdir(inode.i_mode) } {
+        pr_info!(
+            "Tried to rmdir inode {:?}, but it is not a directory\n",
+            inode.i_ino
+        );
+        return Err(Error::ENOTDIR);
+    } else {
+        pr_info!("inode {:?} is a directory\n", inode.i_ino);
+    }
+
+    unsafe { drop_nlink(dir) };
+    unsafe { clear_nlink(inode) };
+
     // 1. delete child dentry from parent
     let dentry_name = unsafe { CStr::from_char_ptr(dentry.d_name.name as *const c_char) };
-    pr_info!("rmdir {:?}\n", dentry_name);
     let parent_ino = dir.i_ino as usize;
+    pr_info!("deleting file name {:?}\n", dentry_name);
 
     // read the parent inode from PM
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
     // obtain the dentry to delete
     let delete_dentry = parent_pi.lookup_dentry_in_inode(sbi, dentry_name)?;
     let child_ino = delete_dentry.get_ino();
+    pr_info!("deleting inode {:?}\n", child_ino);
     // and set it invalid
     let delete_dentry = unsafe { delete_dentry.set_invalid() }.fence();
 
@@ -481,9 +508,11 @@ fn _hayleyfs_rmdir(
     // let self_dentry = unsafe { self_dentry.set_invalid() };
     // let parent_dentry = unsafe { parent_dentry.set_invalid() };
 
+    pr_info!("parent page: {:?}\n", parent_pi.get_data_page_no());
+
     // 4. zero the deleted inode
     // better handling in case the child directory doesn't have dir page for some reason
-    let child_dir_page = child_inode.get_data_page_no().unwrap();
+    let child_dir_page = child_inode.get_data_page_no();
 
     // rather than zeroing dentries individually just zero the whole page
     // this is slower but makes some correctness stuff easier
@@ -552,8 +581,9 @@ fn _hayleyfs_unlink(
         assert!(false, "Unlinking files with hard links is not implemented");
     }
 
+    unsafe { drop_nlink(inode) };
+
     let dentry_name = unsafe { CStr::from_char_ptr(dentry.d_name.name as *const c_char) };
-    pr_info!("unlink {:?}\n", dentry_name);
     let child_ino: InodeNum = inode.i_ino.try_into()?;
     let parent_ino: InodeNum = dir.i_ino.try_into()?;
 

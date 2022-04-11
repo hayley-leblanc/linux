@@ -99,35 +99,35 @@ pub(crate) mod hayleyfs_dir {
             return 0;
         }
 
-        match pi.get_data_page_no() {
-            Some(page_no) => {
-                // iterate over dentries and give to dir_emit
-                let dir_page = hayleyfs_dir::get_dir_page(sbi, page_no);
-                for i in 0..DENTRIES_PER_PAGE {
-                    // TODO: should make a function that iterates over dentries in a page
-                    // and takes a closure to perform the operation you want
-                    // instead of directly reading the dentries here
-                    let dentry = &dir_page.dentries[i];
-                    if !dentry.is_valid() {
-                        ctx.pos = READDIR_END;
-                        return 0;
-                    }
-                    if unsafe {
-                        !hayleyfs_dir_emit(
-                            ctx,
-                            dentry.name.as_ptr() as *const i8,
-                            dentry.name_len.try_into().unwrap(),
-                            pi.get_ino().try_into().unwrap(),
-                            0,
-                        )
-                    } {
-                        return 0;
-                    }
+        let page_no = pi.get_data_page_no();
+        if page_no != 0 {
+            // iterate over dentries and give to dir_emit
+            let dir_page = hayleyfs_dir::get_dir_page(sbi, page_no);
+            for i in 0..DENTRIES_PER_PAGE {
+                // TODO: should make a function that iterates over dentries in a page
+                // and takes a closure to perform the operation you want
+                // instead of directly reading the dentries here
+                let dentry = &dir_page.dentries[i];
+                if !dentry.is_valid() {
+                    ctx.pos = READDIR_END;
+                    return 0;
                 }
-                ctx.pos = READDIR_END;
-                0
+                if unsafe {
+                    !hayleyfs_dir_emit(
+                        ctx,
+                        dentry.name.as_ptr() as *const i8,
+                        dentry.name_len.try_into().unwrap(),
+                        pi.get_ino().try_into().unwrap(),
+                        0,
+                    )
+                } {
+                    return 0;
+                }
             }
-            None => -(ENOTDIR as c_int),
+            ctx.pos = READDIR_END;
+            0
+        } else {
+            -(ENOTDIR as c_int)
         }
     }
 
@@ -234,17 +234,17 @@ pub(crate) mod hayleyfs_dir {
             child_name: &[u8],
             parent_inode: &InodeWrapper<'a, Clean, Read, Dir>,
         ) -> Result<Self> {
-            match parent_inode.get_data_page_no() {
-                None => Err(Error::ENOENT),
-                Some(page_no) => {
-                    let dir_page = DirPage::read_dir_page(sbi, page_no)?;
-                    for dentry in dir_page.iter_mut() {
-                        if dentry.is_valid() && compare_dentry_name(dentry.get_name(), child_name) {
-                            return Ok(dentry);
-                        }
+            let page_no = parent_inode.get_data_page_no();
+            if page_no != 0 {
+                let dir_page = DirPage::read_dir_page(sbi, page_no)?;
+                for dentry in dir_page.iter_mut() {
+                    if dentry.is_valid() && compare_dentry_name(dentry.get_name(), child_name) {
+                        return Ok(dentry);
                     }
-                    Err(Error::ENOENT)
                 }
+                Err(Error::ENOENT)
+            } else {
+                Err(Error::ENOENT)
             }
         }
     }

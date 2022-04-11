@@ -230,19 +230,19 @@ pub(crate) mod hayleyfs_file {
         // TODO: variables are weird here due to scoping and shadowing, try to figure
         // out a nicer way to handle it?
         let pi_temp;
-        if page_no.is_none() {
+        if page_no == 0 {
             // allocate a page
             // save it in the inode
             let data_bitmap = BitmapWrapper::read_data_bitmap(sbi);
-            let (page_no_temp, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
+            let (page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
             let data_bitmap = data_bitmap.persist();
-            pi_temp = pi.add_data_page_fence(page_no_temp, data_bitmap);
-            page_no = Some(page_no_temp);
+            pi_temp = pi.add_data_page_fence(page_no, data_bitmap);
+            // page_no = page_no_temp;
         } else {
             pi_temp = pi.coerce_to_addpage();
         }
         let pi = pi_temp;
-        let page_no = page_no.unwrap();
+        // let page_no = page_no.unwrap();
 
         // TODO: should reading data page require an AddPage or higher inode?
         let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
@@ -320,7 +320,7 @@ pub(crate) mod hayleyfs_file {
         // associated with a file
         let pi = InodeWrapper::read_file_inode(sbi, &ino);
         let page_no = pi.get_data_page_no();
-        if let Some(page_no) = page_no {
+        if page_no != 0 {
             let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
             let bytes_read = data_page.read_data(buf, len, pos.try_into()?);
             pos += bytes_read as i64;

@@ -322,6 +322,7 @@ pub(crate) mod hayleyfs_bitmap {
             };
 
             if bit == (PAGE_SIZE * 8) {
+                pr_info!("no space, ran out of bits to allocate\n");
                 return Err(Error::ENOSPC);
             }
 
