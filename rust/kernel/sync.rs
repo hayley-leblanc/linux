@@ -36,13 +36,13 @@ mod spinlock;
 
 pub use arc::{Ref, RefBorrow, UniqueRef};
 pub use condvar::CondVar;
-pub use guard::{CreatableLock, Guard, Lock, LockInfo, ReadLock, WriteLock};
+pub use guard::{Guard, Lock, LockFactory, LockInfo, LockIniter, ReadLock, WriteLock};
 pub use locked_by::LockedBy;
 pub use mutex::Mutex;
 pub use revocable_mutex::{RevocableMutex, RevocableMutexGuard};
 pub use rwsem::RwSemaphore;
 pub use seqlock::{SeqLock, SeqLockReadGuard};
-pub use spinlock::SpinLock;
+pub use spinlock::{RawSpinLock, SpinLock};
 
 /// Safely initialises an object that has an `init` function that takes a name and a lock class as
 /// arguments, examples of these are [`Mutex`] and [`SpinLock`]. Each of them also provides a more
