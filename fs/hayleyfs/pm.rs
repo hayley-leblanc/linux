@@ -7,6 +7,7 @@
 #![deny(clippy::used_underscore_binding)]
 
 use crate::def::*;
+use core::arch::asm;
 use kernel::prelude::*;
 
 /// Taken from Corundum

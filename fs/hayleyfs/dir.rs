@@ -34,7 +34,7 @@ pub(crate) mod hayleyfs_dir {
             // TODO: check that it's actually a dir page
             let max_pages = sbi.pm_size / PAGE_SIZE as u64;
             if page_no >= max_pages.try_into()? {
-                return Err(Error::EINVAL);
+                return Err(EINVAL);
             }
             let addr = (sbi.virt_addr as usize) + (PAGE_SIZE * page_no);
             Ok(unsafe { &mut *(addr as *mut DirPage) })
@@ -43,12 +43,12 @@ pub(crate) mod hayleyfs_dir {
         fn lookup_name(&self, name: &[u8]) -> Result<InodeNum> {
             for dentry in self.dentries.iter() {
                 if !dentry.is_valid() {
-                    return Err(Error::ENOENT);
+                    return Err(ENOENT);
                 } else if compare_dentry_name(dentry.get_name(), name) {
                     return Ok(dentry.get_ino());
                 }
             }
-            Err(Error::ENOENT)
+            Err(ENOENT)
         }
 
         pub(crate) fn iter_mut(&'a mut self) -> DirPageIterator<'a> {
@@ -244,9 +244,9 @@ pub(crate) mod hayleyfs_dir {
                         return Ok(dentry);
                     }
                 }
-                Err(Error::ENOENT)
+                Err(ENOENT)
             } else {
-                Err(Error::ENOENT)
+                Err(ENOENT)
             }
         }
     }
@@ -267,7 +267,7 @@ pub(crate) mod hayleyfs_dir {
                 }
             }
             // if we get here, all dentries are in use
-            Err(Error::ENOSPC)
+            Err(ENOSPC)
         }
 
         fn initialize_dentry(self, ino: InodeNum, name: &str) -> DentryWrapper<'a, Flushed, Init> {

@@ -187,7 +187,7 @@ pub(crate) mod hayleyfs_file {
     ) -> Result<(WriteFinalizeToken, isize)> {
         // make sure we can access the user buffer
         if !unsafe { hayleyfs_access_ok(buf, len) } == 0 {
-            return Err(Error::EFAULT);
+            return Err(EFAULT);
         }
 
         let sb = inode.i_sb;
@@ -201,7 +201,7 @@ pub(crate) mod hayleyfs_file {
 
         // TODO: remove this when file size can be bigger
         if pos >= PAGE_SIZE.try_into()? {
-            return Err(Error::ENOSPC);
+            return Err(ENOSPC);
         }
 
         let ino: InodeNum = inode.i_ino.try_into().unwrap();
@@ -296,7 +296,7 @@ pub(crate) mod hayleyfs_file {
 
         // make sure we can access the user buffer
         if !unsafe { hayleyfs_access_ok(buf, len) } == 0 {
-            return Err(Error::EFAULT);
+            return Err(EFAULT);
         }
 
         let mut pos = *ppos;

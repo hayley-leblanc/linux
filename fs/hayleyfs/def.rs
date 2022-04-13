@@ -106,7 +106,7 @@ pub(crate) type PmPage = usize; // TODO: move this somewhere else
 pub(crate) fn check_page_no(sbi: &SbInfo, page_no: PmPage) -> Result<()> {
     let max_pages = sbi.pm_size / PAGE_SIZE as u64;
     if page_no >= max_pages.try_into()? {
-        Err(Error::EINVAL)
+        Err(EINVAL)
     } else {
         Ok(())
     }
@@ -195,6 +195,8 @@ extern "C" {
     pub(crate) fn hayleyfs_write_uid(inode: &mut inode, uid: u32);
     pub(crate) fn hayleyfs_write_gid(inode: &mut inode, gid: u32);
     pub(crate) fn hayleyfs_err_ptr(err: c_long) -> *mut c_void;
+    pub(crate) fn hayleyfs_is_err(ptr: *const c_void) -> bool;
+    pub(crate) fn hayleyfs_ptr_err(ptr: *const c_void) -> c_ulong;
     pub(crate) fn hayleyfs_access_ok(buf: *const i8, len: usize) -> c_int;
     pub(crate) fn hayleyfs_copy_from_user_nt(
         dst: *const c_void,

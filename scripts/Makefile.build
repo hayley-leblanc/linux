@@ -328,15 +328,10 @@ $(obj)/%.lst: $(src)/%.c FORCE
 # Compile Rust sources (.rs)
 # ---------------------------------------------------------------------------
 
-# Need to use absolute path here and have symbolic links resolved;
-# otherwise rustdoc and rustc compute different hashes for the target.
-rust_cross_flags := --target=$(realpath $(KBUILD_RUST_TARGET))
-
-rust_allowed_features := allocator_api,bench_black_box,concat_idents,generic_associated_types,global_asm,asm
+rust_allowed_features := allocator_api,bench_black_box,concat_idents,generic_associated_types
 
 rust_common_cmd = \
-	RUST_MODFILE=$(modfile) $(RUSTC_OR_CLIPPY) \
-	$(rust_flags) $(rust_cross_flags) \
+	RUST_MODFILE=$(modfile) $(RUSTC_OR_CLIPPY) $(rust_flags) \
 	-Zallow-features=$(rust_allowed_features),new_uninit \
 	-Zcrate-attr=no_std \
 	-Zcrate-attr='feature($(rust_allowed_features))' \

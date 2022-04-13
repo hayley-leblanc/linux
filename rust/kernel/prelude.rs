@@ -20,7 +20,7 @@ pub use macros::module;
 pub use super::build_assert;
 
 pub use super::{
-    dbg, dev_alert, dev_crit, dev_dbg, dev_emerg, dev_err, dev_info, dev_notice, dev_warn,
+    dbg, dev_alert, dev_crit, dev_dbg, dev_emerg, dev_err, dev_info, dev_notice, dev_warn, fmt,
     pr_alert, pr_crit, pr_debug, pr_emerg, pr_err, pr_info, pr_notice, pr_warn,
 };
 
@@ -31,6 +31,6 @@ pub use super::module_amba_driver;
 
 pub use super::static_assert;
 
-pub use super::{Error, KernelModule, Result};
+pub use super::{error::code::*, Error, Result};
 
-pub use super::{str::CStr, ThisModule};
+pub use super::{str::CStr, ARef, ThisModule};

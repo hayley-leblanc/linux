@@ -81,6 +81,14 @@ void* hayleyfs_err_ptr(long error) {
     return ERR_PTR(error);
 }
 
+bool hayleyfs_is_err(const void *ptr) {
+    return IS_ERR(ptr);
+}
+
+long hayleyfs_ptr_err(const void *ptr) {
+    return PTR_ERR(ptr);
+}
+
 int hayleyfs_access_ok(const char* __user buf, size_t len) {
     return access_ok(buf, len);
 }

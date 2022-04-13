@@ -4,8 +4,7 @@
 
 use kernel::prelude::*;
 use kernel::{
-    file::File,
-    file_operations::FileOperations,
+    file::{self, File},
     io_buffer::{IoBufferReader, IoBufferWriter},
     miscdev,
     sync::{CondVar, Mutex, Ref, RefBorrow, UniqueRef},
@@ -52,13 +51,13 @@ impl SharedState {
 }
 
 struct Token;
-impl FileOperations for Token {
-    type Wrapper = Ref<SharedState>;
+impl file::Operations for Token {
+    type Data = Ref<SharedState>;
     type OpenData = Ref<SharedState>;
 
     kernel::declare_file_operations!(read, write);
 
-    fn open(shared: &Ref<SharedState>, _file: &File) -> Result<Self::Wrapper> {
+    fn open(shared: &Ref<SharedState>, _file: &File) -> Result<Self::Data> {
         Ok(shared.clone())
     }
 
@@ -79,7 +78,7 @@ impl FileOperations for Token {
             // Wait until we are allowed to decrement the token count or a signal arrives.
             while inner.token_count == 0 {
                 if shared.state_changed.wait(&mut inner) {
-                    return Err(Error::EINTR);
+                    return Err(EINTR);
                 }
             }
 
@@ -107,7 +106,7 @@ impl FileOperations for Token {
             // Wait until we are allowed to increment the token count or a signal arrives.
             while inner.token_count == MAX_TOKENS {
                 if shared.state_changed.wait(&mut inner) {
-                    return Err(Error::EINTR);
+                    return Err(EINTR);
                 }
             }
 
@@ -125,14 +124,14 @@ struct RustMiscdev {
     _dev: Pin<Box<miscdev::Registration<Token>>>,
 }
 
-impl KernelModule for RustMiscdev {
+impl kernel::Module for RustMiscdev {
     fn init(name: &'static CStr, _module: &'static ThisModule) -> Result<Self> {
         pr_info!("Rust miscellaneous device sample (init)\n");
 
         let state = SharedState::try_new()?;
 
         Ok(RustMiscdev {
-            _dev: miscdev::Registration::new_pinned(name, state)?,
+            _dev: miscdev::Registration::new_pinned(fmt!("{name}"), state)?,
         })
     }
 }

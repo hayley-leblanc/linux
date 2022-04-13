@@ -43,7 +43,6 @@ pub mod bindings;
 
 #[cfg(CONFIG_ARM_AMBA)]
 pub mod amba;
-pub mod buffer;
 pub mod c_types;
 pub mod chrdev;
 #[cfg(CONFIG_COMMON_CLK)]
@@ -51,14 +50,17 @@ pub mod clk;
 pub mod cred;
 pub mod device;
 pub mod driver;
-mod error;
+pub mod error;
 pub mod file;
-pub mod file_operations;
+// pub mod file_operations;
 pub mod file_system;
 pub mod gpio;
+pub mod hwrng;
 pub mod irq;
 pub mod miscdev;
 pub mod mm;
+#[cfg(CONFIG_NET)]
+pub mod net;
 pub mod pages;
 pub mod power;
 pub mod revocable;
@@ -98,7 +100,9 @@ pub mod user_ptr;
 pub use build_error::build_error;
 
 pub use crate::error::{to_result, Error, Result};
-pub use crate::types::{bit, bits_iter, Mode, Opaque, ScopeGuard};
+pub use crate::types::{
+    bit, bits_iter, ARef, AlwaysRefCounted, Bool, False, Mode, Opaque, ScopeGuard, True,
+};
 
 use core::marker::PhantomData;
 
@@ -113,7 +117,7 @@ const __LOG_PREFIX: &[u8] = b"rust_kernel\0";
 /// The top level entrypoint to implementing a kernel module.
 ///
 /// For any teardown or cleanup operations, your type may implement [`Drop`].
-pub trait KernelModule: Sized + Sync {
+pub trait Module: Sized + Sync {
     /// Called at module initialization time.
     ///
     /// Use this method to perform whatever setup or registration your module

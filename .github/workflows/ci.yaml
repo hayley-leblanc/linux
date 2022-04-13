@@ -7,7 +7,7 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-20.04
-    container: ghcr.io/rust-for-linux/ci
+    container: ghcr.io/rust-for-linux/ci:Rust-1.59.0
     timeout-minutes: 20
 
     strategy:
@@ -404,6 +404,9 @@ jobs:
           grep -F '#![feature(prelude_import)]' ${{ env.BUILD_DIR }}samples/rust/rust_minimal.i
           grep -F '.text'                       ${{ env.BUILD_DIR }}samples/rust/rust_minimal.s
           grep -F '; ModuleID'                  ${{ env.BUILD_DIR }}samples/rust/rust_minimal.ll
+
+      # Rust host programs
+      - run: ${{ env.BUILD_DIR }}samples/rust/hostprogs/single | grep -F 'The number is 42.'
 
       # View changes to ccache
       - run: ccache -s

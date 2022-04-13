@@ -11,9 +11,11 @@ use crate::{
 use alloc::boxed::Box;
 use core::{
     cell::UnsafeCell,
+    marker::PhantomData,
     mem::MaybeUninit,
     ops::{self, Deref, DerefMut},
     pin::Pin,
+    ptr::NonNull,
 };
 
 /// Permissions.
@@ -483,4 +485,192 @@ where
     }
 
     BitIterator { value }
+}
+
+/// A trait for boolean types.
+///
+/// This is meant to be used in type states to allow booelan constraints in implementation blocks.
+/// In the example below, the implementation containing `MyType::set_value` could _not_ be
+/// constrained to type states containing `Writable = true` if `Writable` were a constant instead
+/// of a type.
+///
+/// # Safety
+///
+/// No additional implementations of [`Bool`] should be provided, as [`True`] and [`False`] are
+/// already provided.
+///
+/// # Examples
+///
+/// ```
+/// # use kernel::{Bool, False, True};
+/// use core::marker::PhantomData;
+///
+/// // Type state specifies whether the type is writable.
+/// trait MyTypeState {
+///     type Writable: Bool;
+/// }
+///
+/// // In state S1, the type is writable.
+/// struct S1;
+/// impl MyTypeState for S1 {
+///     type Writable = True;
+/// }
+///
+/// // In state S2, the type is not writable.
+/// struct S2;
+/// impl MyTypeState for S2 {
+///     type Writable = False;
+/// }
+///
+/// struct MyType<T: MyTypeState> {
+///     value: u32,
+///     _p: PhantomData<T>,
+/// }
+///
+/// impl<T: MyTypeState> MyType<T> {
+///     fn new(value: u32) -> Self {
+///         Self {
+///             value,
+///             _p: PhantomData,
+///         }
+///     }
+/// }
+///
+/// // This implementation block only applies if the type state is writable.
+/// impl<T> MyType<T>
+/// where
+///     T: MyTypeState<Writable = True>,
+/// {
+///     fn set_value(&mut self, v: u32) {
+///         self.value = v;
+///     }
+/// }
+///
+/// pub(crate) fn test() {
+///     let mut x = MyType::<S1>::new(10);
+///     let mut y = MyType::<S2>::new(20);
+///
+///     x.set_value(30);
+///
+///     // The code below fails to compile because `S2` is not writable.
+///     // y.set_value(40);
+/// }
+/// ```
+pub unsafe trait Bool {}
+
+/// Represents the `true` value for types with [`Bool`] bound.
+pub struct True;
+
+// SAFETY: This is one of the only two implementations of `Bool`.
+unsafe impl Bool for True {}
+
+/// Represents the `false` value for types wth [`Bool`] bound.
+pub struct False;
+
+// SAFETY: This is one of the only two implementations of `Bool`.
+unsafe impl Bool for False {}
+
+/// Types that are _always_ reference counted.
+///
+/// It allows such types to define their own custom ref increment and decrement functions.
+/// Additionally, it allows users to convert from a shared reference `&T` to an owned reference
+/// [`ARef<T>`].
+///
+/// This is usually implemented by wrappers to existing structures on the C side of the code. For
+/// Rust code, the recommendation is to use [`Ref`] to create reference-counted instances of a
+/// type.
+///
+/// # Safety
+///
+/// Implementers must ensure that increments to the reference count keeps the object alive in
+/// memory at least until a matching decrement performed.
+///
+/// Implementers must also ensure that all instances are reference-counted. (Otherwise they
+/// won't be able to honour the requirement that [`AlwaysRefCounted::inc_ref`] keep the object
+/// alive.)
+pub unsafe trait AlwaysRefCounted {
+    /// Increments the reference count on the object.
+    fn inc_ref(&self);
+
+    /// Decrements the reference count on the object.
+    ///
+    /// Frees the object when the count reaches zero.
+    ///
+    /// # Safety
+    ///
+    /// Callers must ensure that there was a previous matching increment to the reference count,
+    /// and that the object is no longer used after its reference count is decremented (as it may
+    /// result in the object being freed), unless the caller owns another increment on the refcount
+    /// (e.g., it calls [`AlwaysRefCounted::inc_ref`] twice, then calls
+    /// [`AlwaysRefCounted::dec_ref`] once).
+    unsafe fn dec_ref(obj: NonNull<Self>);
+}
+
+/// An owned reference to an always-reference-counted object.
+///
+/// The object's reference count is automatically decremented when an instance of [`ARef`] is
+/// dropped. It is also automatically incremented when a new instance is created via
+/// [`ARef::clone`].
+///
+/// # Invariants
+///
+/// The pointer stored in `ptr` is non-null and valid for the lifetime of the [`ARef`] instance. In
+/// particular, the [`ARef`] instance owns an increment on underlying object's reference count.
+pub struct ARef<T: AlwaysRefCounted> {
+    ptr: NonNull<T>,
+    _p: PhantomData<T>,
+}
+
+impl<T: AlwaysRefCounted> ARef<T> {
+    /// Creates a new instance of [`ARef`].
+    ///
+    /// It takes over an increment of the reference count on the underlying object.
+    ///
+    /// # Safety
+    ///
+    /// Callers must ensure that the reference count was incremented at least once, and that they
+    /// are properly relinquishing one increment. That is, if there is only one increment, callers
+    /// must not use the underlying object anymore -- it is only safe to do so via the newly
+    /// created [`ARef`].
+    pub unsafe fn from_raw(ptr: NonNull<T>) -> Self {
+        // INVARIANT: The safety requirements guarantee that the new instance now owns the
+        // increment on the refcount.
+        Self {
+            ptr,
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<T: AlwaysRefCounted> Clone for ARef<T> {
+    fn clone(&self) -> Self {
+        self.inc_ref();
+        // SAFETY: We just incremented the refcount above.
+        unsafe { Self::from_raw(self.ptr) }
+    }
+}
+
+impl<T: AlwaysRefCounted> Deref for ARef<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: The type invariants guarantee that the object is valid.
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+impl<T: AlwaysRefCounted> From<&T> for ARef<T> {
+    fn from(b: &T) -> Self {
+        b.inc_ref();
+        // SAFETY: We just incremented the refcount above.
+        unsafe { Self::from_raw(NonNull::from(b)) }
+    }
+}
+
+impl<T: AlwaysRefCounted> Drop for ARef<T> {
+    fn drop(&mut self) {
+        // SAFETY: The type invariants guarantee that the `ARef` owns the reference we're about to
+        // decrement.
+        unsafe { T::dec_ref(self.ptr) };
+    }
 }

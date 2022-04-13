@@ -173,7 +173,7 @@ impl Transaction {
 
         // If the list is non-empty, prepare the buffer.
         if !file_list.is_empty() {
-            let alloc = self.to.buffer_get(self.data_address).ok_or(Error::ESRCH)?;
+            let alloc = self.to.buffer_get(self.data_address).ok_or(ESRCH)?;
             let cleanup = ScopeGuard::new(|| {
                 self.free_allocation.store(false, Ordering::Relaxed);
             });
@@ -297,7 +297,7 @@ pub(crate) struct FileInfo {
     links: Links<FileInfo>,
 
     /// The file for which a descriptor will be created in the recipient process.
-    file: Option<File>,
+    file: Option<ARef<File>>,
 
     /// The file descriptor reservation on the recipient process.
     reservation: Option<FileDescriptorReservation>,
@@ -307,7 +307,7 @@ pub(crate) struct FileInfo {
 }
 
 impl FileInfo {
-    pub(crate) fn new(file: File, buffer_offset: usize) -> Self {
+    pub(crate) fn new(file: ARef<File>, buffer_offset: usize) -> Self {
         Self {
             file: Some(file),
             reservation: None,

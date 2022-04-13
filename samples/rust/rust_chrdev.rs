@@ -3,7 +3,7 @@
 //! Rust character device sample.
 
 use kernel::prelude::*;
-use kernel::{chrdev, file, file_operations::FileOperations};
+use kernel::{chrdev, file};
 
 module! {
     type: RustChrdev,
@@ -15,7 +15,7 @@ module! {
 
 struct RustFile;
 
-impl FileOperations for RustFile {
+impl file::Operations for RustFile {
     kernel::declare_file_operations!();
 
     fn open(_shared: &(), _file: &file::File) -> Result {
@@ -27,7 +27,7 @@ struct RustChrdev {
     _dev: Pin<Box<chrdev::Registration<2>>>,
 }
 
-impl KernelModule for RustChrdev {
+impl kernel::Module for RustChrdev {
     fn init(name: &'static CStr, module: &'static ThisModule) -> Result<Self> {
         pr_info!("Rust character device sample (init)\n");
 

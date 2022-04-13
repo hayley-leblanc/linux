@@ -84,7 +84,7 @@ fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> Result<()> {
     // TODO: what else do you have to check?
     if ptr::eq(sbi.s_daxdev, ptr::null_mut()) {
         pr_alert!("Bad DAX device\n");
-        Err(Error::EINVAL)
+        Err(EINVAL)
     } else {
         let mut virt_addr: *mut c_void = ptr::null_mut();
         let pfn: *mut pfn_t = ptr::null_mut();
@@ -102,7 +102,7 @@ fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> Result<()> {
         };
         if size <= 0 {
             pr_alert!("direct access failed\n");
-            Err(Error::EINVAL)
+            Err(EINVAL)
         } else {
             size *= PAGE_SIZE as i64;
             sbi.pm_size = u64::try_from(size).unwrap(); // should never fail - size is always positive
@@ -121,7 +121,7 @@ fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> Result<()> {
     }
 }
 
-fn hayleyfs_alloc_sbi(fc: *mut fs_context, sb: *mut super_block) -> Result<*mut c_void> {
+fn hayleyfs_alloc_sbi(fc: *mut fs_context, sb: *mut super_block) -> *mut c_void {
     // according to ramfs port, this is allocated the same as if we
     // used kzalloc with GFP_KERNEL
     let sbi = Box::<SbInfo>::try_new_zeroed();
@@ -135,9 +135,9 @@ fn hayleyfs_alloc_sbi(fc: *mut fs_context, sb: *mut super_block) -> Result<*mut 
             let sbi_ptr = Box::into_raw(sbi) as *mut c_void;
             unsafe { (*fc).s_fs_info = sbi_ptr };
             unsafe { (*sb).s_fs_info = sbi_ptr };
-            Ok(sbi_ptr)
+            sbi_ptr
         }
-        Err(_) => Err(Error::ENOMEM),
+        Err(_) => unsafe { hayleyfs_err_ptr(ENOMEM.into()) },
     }
 }
 
@@ -204,7 +204,18 @@ pub unsafe extern "C" fn hayleyfs_fill_super(
  */
 #[no_mangle]
 fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()> {
-    hayleyfs_alloc_sbi(fc, sb)?;
+    let result = hayleyfs_alloc_sbi(fc, sb);
+    // unsafe because we don't check whether the result is a valid error
+    unsafe {
+        if hayleyfs_is_err(result) {
+            // let err = hayleyfs_ptr_err(result);
+            // TODO: we should really use a more generic fxn to convert
+            // from u64 to kernel error, but those fxns aren't accessible from here
+            // right now. It should also be enomem, not einval, but for some reason
+            // the compiler won't let us use enomem here
+            return Err(EINVAL);
+        }
+    }
 
     let mut sbi = hayleyfs_get_sbi(sb);
     sbi.mount_opts = unsafe { *((*fc).fs_private as *mut HayleyfsMountOpts) }; // TODO: abstraction
@@ -387,14 +398,14 @@ pub extern "C" fn init_hayleyfs() -> c_int {
     unsafe { register_filesystem(&mut HayleyfsFsType) }
 }
 
-impl KernelModule for HayleyFS {
+impl kernel::Module for HayleyFS {
     fn init(_name: &'static CStr, _module: &'static ThisModule) -> Result<Self> {
         pr_info!("Hello! This is Hayley's Rust module!\n");
 
         let ret = init_hayleyfs();
         if ret < 0 {
             // TODO: convert and return the actual error
-            return Err(Error::EINVAL);
+            return Err(EINVAL);
         }
 
         Ok(HayleyFS {})

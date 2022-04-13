@@ -39,7 +39,7 @@ pub(crate) fn hayleyfs_iget(sb: *mut super_block, ino: usize) -> Result<&'static
     let inode = unsafe { &mut *(iget_locked(sb, ino as u64) as *mut inode) };
     if eq(inode, null_mut()) {
         unsafe { iget_failed(inode) };
-        return Err(Error::ENOMEM);
+        return Err(ENOMEM);
     }
     if (inode.i_state & I_NEW as u64) == 0 {
         return Ok(inode);
@@ -173,7 +173,7 @@ fn _hayleyfs_mkdir(
     let dentry_name = unsafe { CStr::from_char_ptr((*dentry).d_name.name as *const c_char) };
     if dentry_name.len() > MAX_FILENAME_LEN {
         pr_info!("dentry name {:?} is too long\n", dentry_name);
-        return Err(Error::ENAMETOOLONG);
+        return Err(ENAMETOOLONG);
     }
     pr_info!("creating {:?}\n", dentry_name);
 
@@ -340,11 +340,11 @@ pub(crate) fn _hayleyfs_lookup(
                 let inode = hayleyfs_iget(sb, ino)?;
                 Ok(unsafe { d_splice_alias(inode, dentry) })
             }
-            Err(Error::ENOENT) => Ok(unsafe { d_splice_alias(core::ptr::null_mut(), dentry) }),
+            Err(ENOENT) => Ok(unsafe { d_splice_alias(core::ptr::null_mut(), dentry) }),
             Err(e) => Err(e),
         }
     } else {
-        Err(Error::EACCES)
+        Err(EACCES)
     }
 }
 
@@ -386,7 +386,7 @@ fn _hayleyfs_create(
     let file_name = unsafe { CStr::from_char_ptr((*dentry).d_name.name as *const c_char) };
     if file_name.len() > MAX_FILENAME_LEN {
         pr_info!("file_name name {:?} is too long\n", file_name);
-        return Err(Error::ENAMETOOLONG);
+        return Err(ENAMETOOLONG);
     }
 
     pr_info!("create {:?}, mode {:?}\n", file_name, mode);
@@ -474,7 +474,7 @@ fn _hayleyfs_rmdir(
             "Tried to rmdir inode {:?}, but it is not a directory\n",
             inode.i_ino
         );
-        return Err(Error::ENOTDIR);
+        return Err(ENOTDIR);
     } else {
         pr_info!("inode {:?} is a directory\n", inode.i_ino);
     }

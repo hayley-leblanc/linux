@@ -115,7 +115,7 @@ pub(crate) mod hayleyfs_bitmap {
         /// as in the set_bits! macro
         pub(crate) unsafe fn set_bit_unsafe(&mut self, bit: usize) -> Result<()> {
             if bit > PAGE_SIZE * 8 {
-                return Err(Error::EINVAL);
+                return Err(EINVAL);
             }
             unsafe { hayleyfs_set_bit(bit, self.bitmap as *mut _ as *mut c_void) };
             self.dirty_cache_lines
@@ -128,7 +128,7 @@ pub(crate) mod hayleyfs_bitmap {
             bit: usize,
         ) -> Result<BitmapWrapper<'a, Dirty, Alloc, Type>> {
             if bit > PAGE_SIZE * 8 {
-                return Err(Error::EINVAL);
+                return Err(EINVAL);
             }
             self.dirty_cache_lines
                 .try_insert(get_cacheline_num(bit), ())?;
@@ -178,7 +178,7 @@ pub(crate) mod hayleyfs_bitmap {
         ) -> Result<BitmapWrapper<'a, Dirty, Zero, Inode>> {
             let bit = inode.get_ino();
             if bit > PAGE_SIZE * 8 {
-                return Err(Error::EINVAL);
+                return Err(EINVAL);
             }
             self.dirty_cache_lines
                 .try_insert(get_cacheline_num(bit), ())?;
@@ -222,7 +222,7 @@ pub(crate) mod hayleyfs_bitmap {
                 None => Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines)),
                 Some(bit) => {
                     if bit > PAGE_SIZE * 8 {
-                        return Err(Error::EINVAL);
+                        return Err(EINVAL);
                     }
                     self.dirty_cache_lines
                         .try_insert(get_cacheline_num(bit), ())?;
@@ -323,7 +323,7 @@ pub(crate) mod hayleyfs_bitmap {
 
             if bit == (PAGE_SIZE * 8) {
                 pr_info!("no space, ran out of bits to allocate\n");
-                return Err(Error::ENOSPC);
+                return Err(ENOSPC);
             }
 
             Ok((bit, self.set_bit(bit)?))

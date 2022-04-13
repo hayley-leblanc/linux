@@ -48,6 +48,10 @@ KCFLAGS
 -------
 Additional options to the C compiler (for built-in and modules).
 
+KRUSTFLAGS
+----------
+Additional options to the Rust compiler (for built-in and modules).
+
 CFLAGS_KERNEL
 -------------
 Additional options for $(CC) when used to compile
@@ -57,9 +61,14 @@ CFLAGS_MODULE
 -------------
 Additional module specific options to use for $(CC).
 
-KRUSTFLAGS
-----------
-Additional options to the Rust compiler (for built-in and modules).
+RUSTFLAGS_KERNEL
+----------------
+Additional options for $(RUSTC) when used to compile
+code that is compiled as built-in.
+
+RUSTFLAGS_MODULE
+----------------
+Additional module specific options to use for $(RUSTC).
 
 LDFLAGS_MODULE
 --------------
@@ -72,6 +81,10 @@ Additional flags to be passed to $(HOSTCC) when building host programs.
 HOSTCXXFLAGS
 ------------
 Additional flags to be passed to $(HOSTCXX) when building host programs.
+
+HOSTRUSTFLAGS
+-------------
+Additional flags to be passed to $(HOSTRUSTC) when building host programs.
 
 HOSTLDFLAGS
 -----------

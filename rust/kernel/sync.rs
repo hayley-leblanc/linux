@@ -31,11 +31,12 @@ mod mutex;
 mod revocable_mutex;
 mod rwsem;
 mod seqlock;
+pub mod smutex;
 mod spinlock;
 
 pub use arc::{Ref, RefBorrow, UniqueRef};
 pub use condvar::CondVar;
-pub use guard::{CreatableLock, Guard, Lock, ReadLock, WriteLock};
+pub use guard::{CreatableLock, Guard, Lock, LockInfo, ReadLock, WriteLock};
 pub use locked_by::LockedBy;
 pub use mutex::Mutex;
 pub use revocable_mutex::{RevocableMutex, RevocableMutexGuard};

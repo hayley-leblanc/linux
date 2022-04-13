@@ -546,7 +546,7 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
 
             #[cfg(not(MODULE))]
             #[cfg(CONFIG_HAVE_ARCH_PREL32_RELOCATIONS)]
-            global_asm!(
+            core::arch::global_asm!(
                 r#\".section \"{initcall_section}\", \"a\"
                 __{name}_initcall:
                     .long   __{name}_init - .
@@ -569,7 +569,7 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
             }}
 
             fn __init() -> kernel::c_types::c_int {{
-                match <{type_} as kernel::KernelModule>::init(kernel::c_str!(\"{name}\"), &THIS_MODULE) {{
+                match <{type_} as kernel::Module>::init(kernel::c_str!(\"{name}\"), &THIS_MODULE) {{
                     Ok(m) => {{
                         unsafe {{
                             __MOD = Some(m);

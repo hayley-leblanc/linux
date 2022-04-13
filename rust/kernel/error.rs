@@ -15,30 +15,17 @@ use core::fmt;
 use core::num::TryFromIntError;
 use core::str::{self, Utf8Error};
 
-macro_rules! declare_err {
-    ($err:tt) => {
-        pub const $err: Self = Error(-(bindings::$err as i32));
-    };
-    ($err:tt, $($doc:expr),+) => {
-        $(
-        #[doc = $doc]
-        )*
-        pub const $err: Self = Error(-(bindings::$err as i32));
-    };
-}
+/// Contains the C-compatible error codes.
+pub mod code {
+    macro_rules! declare_err {
+        ($err:tt $(,)? $($doc:expr),+) => {
+            $(
+            #[doc = $doc]
+            )*
+            pub const $err: super::Error = super::Error(-(crate::bindings::$err as i32));
+        };
+    }
 
-/// Generic integer kernel error.
-///
-/// The kernel defines a set of integer generic error codes based on C and
-/// POSIX ones. These codes may have a more specific meaning in some contexts.
-///
-/// # Invariants
-///
-/// The value is a valid `errno` (i.e. `>= -MAX_ERRNO && < 0`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Error(c_types::c_int);
-
-impl Error {
     declare_err!(EPERM, "Operation not permitted.");
 
     declare_err!(ENOENT, "No such file or directory.");
@@ -118,10 +105,10 @@ impl Error {
         "Invalid system call number.",
         "",
         "This error code is special: arch syscall entry code will return",
-        "[`Self::ENOSYS`] if users try to call a syscall that doesn't exist.",
+        "[`ENOSYS`] if users try to call a syscall that doesn't exist.",
         "To keep failures of syscalls that really do exist distinguishable from",
         "failures due to attempts to use a nonexistent syscall, syscall",
-        "implementations should refrain from returning [`Self::ENOSYS`]."
+        "implementations should refrain from returning [`ENOSYS`]."
     );
 
     declare_err!(ENOTEMPTY, "Directory not empty.");
@@ -317,7 +304,20 @@ impl Error {
     declare_err!(ERESTARTSYS, "Restart the system call.");
 
     declare_err!(ENOTSUPP, "Operation is not supported.");
+}
 
+/// Generic integer kernel error.
+///
+/// The kernel defines a set of integer generic error codes based on C and
+/// POSIX ones. These codes may have a more specific meaning in some contexts.
+///
+/// # Invariants
+///
+/// The value is a valid `errno` (i.e. `>= -MAX_ERRNO && < 0`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Error(c_types::c_int);
+
+impl Error {
     /// Creates an [`Error`] from a kernel error code.
     ///
     /// It is a bug to pass an out-of-range `errno`. `EINVAL` would
@@ -329,7 +329,7 @@ impl Error {
                 "attempted to create `Error` with out of range `errno`: {}",
                 errno
             );
-            return Error::EINVAL;
+            return code::EINVAL;
         }
 
         // INVARIANT: The check above ensures the type invariant
@@ -352,53 +352,77 @@ impl Error {
     pub fn to_kernel_errno(self) -> c_types::c_int {
         self.0
     }
+
+    /// Returns a string representing the error, if one exists.
+    #[cfg(not(testlib))]
+    pub fn name(&self) -> Option<&'static CStr> {
+        // SAFETY: Just an FFI call, there are no extra safety requirements.
+        let ptr = unsafe { bindings::errname(-self.0) };
+        if ptr.is_null() {
+            None
+        } else {
+            // SAFETY: The string returned by `errname` is static and `NUL`-terminated.
+            Some(unsafe { CStr::from_char_ptr(ptr) })
+        }
+    }
+
+    /// Returns a string representing the error, if one exists.
+    ///
+    /// When `testlib` is configured, this always returns `None` to avoid the dependency on a
+    /// kernel function so that tests that use this (e.g., by calling [`Result::unwrap`]) can still
+    /// run in userspace.
+    #[cfg(testlib)]
+    pub fn name(&self) -> Option<&'static CStr> {
+        None
+    }
 }
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // SAFETY: FFI call.
-        let name = unsafe { bindings::errname(-self.0) };
-
-        if name.is_null() {
+        match self.name() {
             // Print out number if no name can be found.
-            return f.debug_tuple("Error").field(&-self.0).finish();
+            None => f.debug_tuple("Error").field(&-self.0).finish(),
+            // SAFETY: These strings are ASCII-only.
+            Some(name) => f
+                .debug_tuple(unsafe { str::from_utf8_unchecked(name) })
+                .finish(),
         }
-
-        // SAFETY: `'static` string from C, and is not NULL.
-        let cstr = unsafe { CStr::from_char_ptr(name) };
-        // SAFETY: These strings are ASCII-only.
-        let str = unsafe { str::from_utf8_unchecked(cstr) };
-        f.debug_tuple(str).finish()
     }
 }
 
 impl From<TryFromIntError> for Error {
     fn from(_: TryFromIntError) -> Error {
-        Error::EINVAL
+        code::EINVAL
     }
 }
 
 impl From<Utf8Error> for Error {
     fn from(_: Utf8Error) -> Error {
-        Error::EINVAL
+        code::EINVAL
     }
 }
 
 impl From<TryReserveError> for Error {
     fn from(_: TryReserveError) -> Error {
-        Error::ENOMEM
+        code::ENOMEM
     }
 }
 
 impl From<LayoutError> for Error {
     fn from(_: LayoutError) -> Error {
-        Error::ENOMEM
+        code::ENOMEM
     }
 }
 
 impl From<core::fmt::Error> for Error {
     fn from(_: core::fmt::Error) -> Error {
-        Error::EINVAL
+        code::EINVAL
+    }
+}
+
+impl From<core::convert::Infallible> for Error {
+    fn from(e: core::convert::Infallible) -> Error {
+        match e {}
     }
 }
 
@@ -426,7 +450,7 @@ pub type Result<T = ()> = core::result::Result<T, Error>;
 
 impl From<AllocError> for Error {
     fn from(_: AllocError) -> Error {
-        Error::ENOMEM
+        code::ENOMEM
     }
 }
 
