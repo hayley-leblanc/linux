@@ -70,13 +70,22 @@ pub(crate) mod hayleyfs_dir {
         }
     }
 
-    fn get_data_page_addr(sbi: &SbInfo, page_no: PmPage) -> *mut c_void {
-        (sbi.virt_addr as usize + (page_no * PAGE_SIZE)) as *mut c_void
+    fn get_data_page_addr(sbi: &SbInfo, page_no: PmPage) -> Result<*mut c_void> {
+        // TODO: the type conversions here are super weird
+        if page_no > (sbi.pm_size / PAGE_SIZE as u64).try_into()? {
+            Err(ENOSPC)
+        } else {
+            Ok((sbi.virt_addr as usize + (page_no * PAGE_SIZE)) as *mut c_void)
+        }
     }
 
     // TODO: should probably not have the static lifetime
-    fn get_dir_page(sbi: &SbInfo, page_no: PmPage) -> &'static mut DirPage {
-        unsafe { &mut *(get_data_page_addr(sbi, page_no) as *mut DirPage) }
+    fn get_dir_page(sbi: &SbInfo, page_no: PmPage) -> Result<&'static mut DirPage> {
+        let addr = get_data_page_addr(sbi, page_no);
+        match addr {
+            Ok(addr) => Ok(unsafe { &mut *(addr as *mut DirPage) }),
+            Err(e) => Err(e),
+        }
     }
 
     #[no_mangle]
@@ -104,29 +113,38 @@ pub(crate) mod hayleyfs_dir {
         if page_no != 0 {
             // iterate over dentries and give to dir_emit
             let dir_page = hayleyfs_dir::get_dir_page(sbi, page_no);
-            for i in 0..DENTRIES_PER_PAGE {
-                // TODO: should make a function that iterates over dentries in a page
-                // and takes a closure to perform the operation you want
-                // instead of directly reading the dentries here
-                let dentry = &dir_page.dentries[i];
-                if !dentry.is_valid() {
+            match dir_page {
+                Ok(dir_page) => {
+                    for i in 0..DENTRIES_PER_PAGE {
+                        // TODO: should make a function that iterates over dentries in a page
+                        // and takes a closure to perform the operation you want
+                        // instead of directly reading the dentries here
+                        let dentry = &dir_page.dentries[i];
+                        if !dentry.is_valid() {
+                            ctx.pos = READDIR_END;
+                            return 0;
+                        }
+                        if unsafe {
+                            !hayleyfs_dir_emit(
+                                ctx,
+                                dentry.name.as_ptr() as *const i8,
+                                dentry.name_len.try_into().unwrap(),
+                                pi.get_ino().try_into().unwrap(),
+                                0,
+                            )
+                        } {
+                            ctx.pos = READDIR_END;
+                            return 0;
+                        }
+                    }
                     ctx.pos = READDIR_END;
-                    return 0;
+                    0
                 }
-                if unsafe {
-                    !hayleyfs_dir_emit(
-                        ctx,
-                        dentry.name.as_ptr() as *const i8,
-                        dentry.name_len.try_into().unwrap(),
-                        pi.get_ino().try_into().unwrap(),
-                        0,
-                    )
-                } {
-                    return 0;
+                Err(e) => {
+                    ctx.pos = READDIR_END;
+                    return e.to_kernel_errno();
                 }
             }
-            ctx.pos = READDIR_END;
-            0
         } else {
             pr_info!("readdir: inode has no data page\n");
             -(ENOTDIR as c_int)
@@ -138,7 +156,7 @@ pub(crate) mod hayleyfs_dir {
         page_no: PmPage,
         name: &[u8],
     ) -> Result<InodeNum> {
-        let dir_page = get_dir_page(sbi, page_no);
+        let dir_page = get_dir_page(sbi, page_no)?;
         dir_page.lookup_name(name)
     }
 
