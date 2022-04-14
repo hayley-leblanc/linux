@@ -4,13 +4,14 @@
 #![deny(clippy::used_underscore_binding)]
 
 use crate::def::*;
+use crate::file::hayleyfs_file::*;
 use crate::h_inode::hayleyfs_inode::*;
 use crate::h_inode::*;
 use crate::pm::*;
 use crate::super_def::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
-use kernel::bindings::{dir_context, file, file_operations, inode, ENOTDIR};
+use kernel::bindings::{dir_context, file, file_operations, inode};
 use kernel::c_types::{c_int, c_void};
 use kernel::prelude::*;
 use kernel::{c_default_struct, PAGE_SIZE};
@@ -94,6 +95,7 @@ pub(crate) mod hayleyfs_dir {
         ctx_raw: *mut dir_context,
     ) -> i32 {
         pr_info!("READDIR\n");
+
         // TODO: check that the file is actually a directory
         // TODO: use in-memory inodes
         // TODO: nicer abstractions for unsafe code here
@@ -101,54 +103,99 @@ pub(crate) mod hayleyfs_dir {
         let inode = unsafe { &mut *(hayleyfs_file_inode(file) as *mut inode) };
         let sb = inode.i_sb;
         let sbi = hayleyfs_get_sbi(sb);
-        let pi =
-            hayleyfs_inode::InodeWrapper::read_dir_inode(sbi, &(inode.i_ino.try_into().unwrap()));
         let ctx = unsafe { &mut *(ctx_raw as *mut dir_context) };
 
         if ctx.pos == READDIR_END {
             return 0;
         }
 
-        let page_no = pi.get_data_page_no();
-        if page_no != 0 {
-            // iterate over dentries and give to dir_emit
-            let dir_page = hayleyfs_dir::get_dir_page(sbi, page_no);
-            match dir_page {
-                Ok(dir_page) => {
-                    for i in 0..DENTRIES_PER_PAGE {
-                        // TODO: should make a function that iterates over dentries in a page
-                        // and takes a closure to perform the operation you want
-                        // instead of directly reading the dentries here
-                        let dentry = &dir_page.dentries[i];
-                        if !dentry.is_valid() {
-                            ctx.pos = READDIR_END;
-                            return 0;
-                        }
-                        if unsafe {
-                            !hayleyfs_dir_emit(
-                                ctx,
-                                dentry.name.as_ptr() as *const i8,
-                                dentry.name_len.try_into().unwrap(),
-                                pi.get_ino().try_into().unwrap(),
-                                0,
-                            )
-                        } {
-                            ctx.pos = READDIR_END;
-                            return 0;
-                        }
-                    }
+        let result = _hayleyfs_readdir(sbi, inode, ctx);
+        match result {
+            Ok(_) => 0,
+            Err(e) => e.to_kernel_errno(),
+        }
+
+        // let page_no = pi.get_data_page_no();
+        // if page_no != 0 {
+        //     // iterate over dentries and give to dir_emit
+        //     let dir_page = hayleyfs_dir::get_dir_page(sbi, page_no);
+        //     match dir_page {
+        //         Ok(dir_page) => {
+        //             for i in 0..DENTRIES_PER_PAGE {
+        //                 // TODO: should make a function that iterates over dentries in a page
+        //                 // and takes a closure to perform the operation you want
+        //                 // instead of directly reading the dentries here
+        //                 let dentry = &dir_page.dentries[i];
+        //                 if !dentry.is_valid() {
+        //                     ctx.pos = READDIR_END;
+        //                     return 0;
+        //                 }
+        //                 if unsafe {
+        //                     !hayleyfs_dir_emit(
+        //                         ctx,
+        //                         dentry.name.as_ptr() as *const i8,
+        //                         dentry.name_len.try_into().unwrap(),
+        //                         pi.get_ino().try_into().unwrap(),
+        //                         0,
+        //                     )
+        //                 } {
+        //                     ctx.pos = READDIR_END;
+        //                     return 0;
+        //                 }
+        //             }
+        //             ctx.pos = READDIR_END;
+        //             0
+        //         }
+        //         Err(e) => {
+        //             ctx.pos = READDIR_END;
+        //             return e.to_kernel_errno();
+        //         }
+        //     }
+        // } else {
+        //     pr_info!("readdir: inode has no data page\n");
+        //     -(ENOTDIR as c_int)
+        // }
+    }
+
+    #[no_mangle]
+    fn _hayleyfs_readdir<'a>(sbi: &SbInfo, inode: &mut inode, ctx: &mut dir_context) -> Result<()> {
+        // iterate over direct pages first
+        // TODO: handle indirect pages (but they aren't implemented so don't worry about that yet)
+        // let direct_pages_in_use = pi.size / PAGE_SIZE;
+
+        let pi =
+            hayleyfs_inode::InodeWrapper::read_dir_inode(sbi, &(inode.i_ino.try_into().unwrap()));
+
+        // sanity check that the directory has at least one page
+        if pi.get_size() == 0 {
+            return Err(ENOTDIR);
+        }
+
+        let dir_emit_closure = |page: DataPageWrapper<'a, Clean, Read>| {
+            // convert page to a dir page
+            // let dir_page = page as DirPage;
+            let dir_page = unsafe { page.convert_to_dir_page(sbi) };
+            for dentry in dir_page.iter_mut() {
+                if !dentry.is_valid() {
                     ctx.pos = READDIR_END;
-                    0
+                    break;
                 }
-                Err(e) => {
+                let res = hayleyfs_dir_emit(
+                    ctx,
+                    dentry.dentry.name.as_ptr() as *const i8,
+                    dentry.dentry.name_len.try_into().unwrap(),
+                    pi.get_ino().try_into().unwrap(),
+                    0,
+                );
+                if !res {
                     ctx.pos = READDIR_END;
-                    return e.to_kernel_errno();
+                    break;
                 }
             }
-        } else {
-            pr_info!("readdir: inode has no data page\n");
-            -(ENOTDIR as c_int)
-        }
+        };
+
+        let result = pi.read_direct_pages(sbi, dir_emit_closure)?;
+        Ok(())
     }
 
     pub(crate) fn lookup_ino_by_name(

@@ -45,15 +45,20 @@ pub(crate) mod hayleyfs_inode {
         atime: i64, // access time
         size: i64,  // size of data in bytes
         ino: InodeNum,
-        data0: PmPage, // set to 0 when there is not a page associated with this file
-                       // pad up to 72 bytes
+        // pages are set to 0 when there is no page associated with them because
+        // reading Rust Options from PM doesn't work very well
+        // 12 direct pointers, one indirect pointer
+        // TODO: pointers to pm pages could be smaller than usize since we don't
+        // really need 64 bits to represent pages
+        direct_pages: [PmPage; DIRECT_PAGES_PER_INODE],
+        indirect_page: PmPage,
     }
 
     impl HayleyfsInode {
-        fn set_page(&mut self, page: PmPage) {
-            pr_info!("setting inode {:?} to page {:?}\n", self.ino, page);
-            self.data0 = page;
-        }
+        // fn set_page(&mut self, page: PmPage) {
+        //     pr_info!("setting inode {:?} to page {:?}\n", self.ino, page);
+        //     self.data0 = page;
+        // }
 
         fn inc_links(&mut self) {
             self.link_count += 1;
@@ -92,11 +97,31 @@ pub(crate) mod hayleyfs_inode {
             }
         }
 
-        pub(crate) fn get_data_page_no(&self) -> PmPage {
-            if self.inode.data0 == 0 {
-                pr_info!("inode {:?} has no data page\n", self.ino);
+        // pub(crate) fn get_data_page_no(&self) -> PmPage {
+        //     if self.inode.data0 == 0 {
+        //         pr_info!("inode {:?} has no data page\n", self.ino);
+        //     }
+        //     self.inode.data0
+        // }
+
+        /// Applies a closure to each direct page in the inode.
+        /// Primarily used for readdir
+        /// NOTE: this function reads pages as DATA PAGES, not dir pages. if you
+        /// want to operate on dir pages, you need to convert them to dir pages
+        /// yourself in the closure you pass in.
+        /// TODO: the data page wrapper state stuff might get funky?
+        pub(crate) fn read_direct_pages<F>(&self, sbi: &SbInfo, f: F) -> Result<()>
+        where
+            F: FnMut(DataPageWrapper<'a, Clean, Read>),
+        {
+            let direct_pages_in_use: usize = (self.inode.size / PAGE_SIZE as i64).try_into()?;
+            for index in 0..direct_pages_in_use {
+                let direct_page_no = self.inode.direct_pages[index];
+                let page = DataPageWrapper::read_data_page(sbi, direct_page_no)?;
+                f(page);
             }
-            self.inode.data0
+
+            Ok(())
         }
 
         pub(crate) fn get_ino(&self) -> InodeNum {
@@ -154,28 +179,66 @@ pub(crate) mod hayleyfs_inode {
     impl<'a> InodeWrapper<'a, Clean, Init, Dir> {
         pub(crate) fn add_dir_page(
             self,
+            sbi: &SbInfo,
+            inode: &mut inode,
             page: PmPage,
             _self_dentry: DentryWrapper<'a, Clean, Init>,
             _parent_dentry: DentryWrapper<'a, Clean, Init>,
-        ) -> InodeWrapper<'a, Flushed, AddPage, Dir> {
+        ) -> Result<InodeWrapper<'a, Flushed, AddPage, Dir>> {
+            check_page_no(sbi, page)?;
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
-            self.inode.set_page(page);
-            clwb(&self.inode.data0, CACHELINE_SIZE, false);
-            InodeWrapper::new(self.inode)
+            let current_size = self.inode.size;
+            let page_size_i64: i64 = PAGE_SIZE.try_into()?;
+            let pages_per_inode_i64 = DIRECT_PAGES_PER_INODE.try_into()?;
+            // if we are initializing the inode
+            if current_size == page_size_i64 && self.inode.direct_pages[0] == 0 {
+                self.inode.direct_pages[0] = page;
+            } else {
+                let index = current_size / page_size_i64;
+                if index >= pages_per_inode_i64 {
+                    pr_alert!("All direct pages are full, need to set up indirect\n");
+                    return Err(ENOSPC);
+                }
+                self.inode.size += page_size_i64;
+                unsafe { hayleyfs_i_size_write(inode, self.inode.size) };
+            }
+
+            // TODO: just flush the page you modified and the size of the inode
+            clwb(&self.inode, CACHELINE_SIZE, false);
+            Ok(InodeWrapper::new(self.inode))
         }
 
         pub(crate) fn add_dir_page_fence(
             self,
+            sbi: &SbInfo,
+            inode: &mut inode,
             page: PmPage,
             _: DentryWrapper<'a, Clean, Init>,
             _: DentryWrapper<'a, Clean, Init>,
-        ) -> InodeWrapper<'a, Clean, AddPage, Dir> {
+        ) -> Result<InodeWrapper<'a, Clean, AddPage, Dir>> {
+            check_page_no(sbi, page)?;
             // TODO: should probably have some wrappers that return the dirty inode and force
             // some clearer flush/fence ordering to make sure you remember to actually do it
-            self.inode.set_page(page);
-            clwb(&self.inode.data0, CACHELINE_SIZE, true);
-            InodeWrapper::new(self.inode)
+            let current_size = self.inode.size;
+            let page_size_i64: i64 = PAGE_SIZE.try_into()?;
+            let pages_per_inode_i64 = DIRECT_PAGES_PER_INODE.try_into()?;
+            // if we are initializing the inode
+            if current_size == page_size_i64 && self.inode.direct_pages[0] == 0 {
+                self.inode.direct_pages[0] = page;
+            } else {
+                let index = current_size / page_size_i64;
+                if index >= pages_per_inode_i64 {
+                    pr_alert!("All direct pages are full, need to set up indirect\n");
+                    return Err(ENOSPC);
+                }
+                self.inode.size += page_size_i64;
+                unsafe { hayleyfs_i_size_write(inode, self.inode.size) };
+            }
+
+            // TODO: just flush the page you modified and the size of the inode
+            clwb(&self.inode, CACHELINE_SIZE, true);
+            Ok(InodeWrapper::new(self.inode))
         }
     }
 
@@ -328,7 +391,8 @@ pub(crate) mod hayleyfs_inode {
             self.inode.ino = inode.i_ino as usize;
             self.inode.mode = inode.i_mode;
             self.inode.link_count = unsafe { inode.__bindgen_anon_1.i_nlink };
-            self.inode.data0 = 0;
+            self.inode.direct_pages = [0; DIRECT_PAGES_PER_INODE];
+            self.inode.indirect_page = 0;
             self.inode.ctime = inode.i_ctime.tv_sec;
             self.inode.mtime = inode.i_mtime.tv_sec;
             self.inode.atime = inode.i_atime.tv_sec;
@@ -349,7 +413,8 @@ pub(crate) mod hayleyfs_inode {
         ) -> InodeWrapper<'a, Flushed, Init, Dir> {
             let current_time = unsafe { current_time(root_inode) };
             self.inode.mode = root_inode.i_mode;
-            self.inode.data0 = 0;
+            self.inode.direct_pages = [0; DIRECT_PAGES_PER_INODE];
+            self.inode.indirect_page = 0;
             unsafe {
                 self.inode.uid = from_kuid(&mut init_user_ns as *mut user_namespace, sbi.uid);
                 self.inode.gid = from_kgid(&mut init_user_ns as *mut user_namespace, sbi.gid);

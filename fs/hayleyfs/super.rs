@@ -286,7 +286,8 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // add page to inode
         // TODO: how do we enforce the use of the fence?
         // TODO: finalize inode wrapper more explicitly
-        let _inode_wrapper = inode_wrapper.add_dir_page_fence(page_no, self_dentry, parent_dentry);
+        let _inode_wrapper =
+            inode_wrapper.add_dir_page_fence(sbi, root_i, page_no, self_dentry, parent_dentry)?;
     } // else {
       // hayleyfs_recovery(sbi)?;
       //}

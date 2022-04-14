@@ -166,7 +166,6 @@ fn _hayleyfs_mkdir(
     mode: umode_t,
 ) -> Result<()> {
     pr_info!("MKDIR!\n");
-    // TODO: more graceful way of checking crashes. find a way that doesn't introduce so much redundant code
     let sb = unsafe { &mut *(dir.i_sb as *mut super_block) };
     let sbi = hayleyfs_get_sbi(sb);
 
@@ -240,7 +239,7 @@ fn _hayleyfs_mkdir(
 
     // add page with newly initialized dentries to the new inode
     pr_info!("adding dir page {:?}\n", page_no);
-    let pi = pi.add_dir_page(page_no, self_dentry, parent_dentry);
+    let pi = pi.add_dir_page(sbi, inode, page_no, self_dentry, parent_dentry)?;
     let (pi, parent_pi) = fence_all!(pi, parent_pi);
 
     // TODO: do something with last new_dentry variable

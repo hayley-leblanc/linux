@@ -4,6 +4,7 @@
 #![deny(clippy::used_underscore_binding)]
 
 use crate::def::*;
+use crate::dir::hayleyfs_dir::*;
 use crate::finalize::*;
 use crate::h_inode::hayleyfs_inode::*;
 use crate::h_inode::*;
@@ -150,6 +151,21 @@ pub(crate) mod hayleyfs_file {
         pub(crate) fn fence(self) -> DataPageWrapper<'a, Clean, Op> {
             sfence();
             DataPageWrapper::new(self.page_no, self.data_page)
+        }
+    }
+
+    impl<'a, Op> DataPageWrapper<'a, Clean, Op> {
+        // TODO: should this be unsafe? it feels very sketchy since we don't have dir
+        // page wrappers, although we shouldn't be able to modify the returned dir page.
+        // need to be careful about concurrency with this, potentially?
+        pub(crate) unsafe fn convert_to_dir_page(self, sbi: &SbInfo) -> &'a DirPage {
+            // TODO: can we do this without reading from PM?
+            // the page number was already checked when we created the dir page wrapper,
+            // so we don't need to check it again
+            // let dir_page = sbi.virt_addr as usize + (self.page_no * PAGE_SIZE)) as *mut c_void;
+            let dir_page =
+                &mut *((sbi.virt_addr as usize + (self.page_no + PAGE_SIZE)) as *mut DirPage);
+            dir_page
         }
     }
 
