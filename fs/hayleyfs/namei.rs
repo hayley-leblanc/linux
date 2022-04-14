@@ -489,7 +489,7 @@ fn _hayleyfs_rmdir(
     // read the parent inode from PM
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
     // obtain the dentry to delete
-    let delete_dentry = parent_pi.lookup_dentry_in_inode(sbi, dentry_name)?;
+    let delete_dentry = parent_pi.lookup_dentry_by_name(sbi, dentry_name)?;
     let child_ino = delete_dentry.get_ino();
     pr_info!("deleting inode {:?}\n", child_ino);
     // and set it invalid
@@ -503,12 +503,6 @@ fn _hayleyfs_rmdir(
     // 3. now that there isn't a pointer to the deleted directory, we can clean it up
     let child_inode = InodeWrapper::read_dir_inode(sbi, &child_ino);
     pr_info!("{:?}\n", child_inode);
-    // TODO: we actually can probably ignore errors reading . and .. here
-    // let self_dentry = child_inode.lookup_dentry_in_inode(sbi, b".")?;
-    // let parent_dentry = child_inode.lookup_dentry_in_inode(sbi, b"..")?;
-
-    // let self_dentry = unsafe { self_dentry.set_invalid() };
-    // let parent_dentry = unsafe { parent_dentry.set_invalid() };
 
     pr_info!("parent page: {:?}\n", parent_pi.get_data_page_no());
 
@@ -598,7 +592,7 @@ fn _hayleyfs_unlink(
 
     // otherwise, nlinks is 1 so we can just delete the inode
     // remove the dentry for this file from the parent
-    let delete_dentry = parent_pi.lookup_dentry_in_inode(sbi, dentry_name)?;
+    let delete_dentry = parent_pi.lookup_dentry_by_name(sbi, dentry_name)?;
     let delete_dentry = unsafe { delete_dentry.set_invalid() }.fence();
 
     // TODO: handle multiple data pages

@@ -229,55 +229,72 @@ pub(crate) mod hayleyfs_file {
             pos
         );
 
-        // obtain our inode and its data page
-        // TODO: logic here will have to change when there is more than one page
-        // associated with a file
         let pi = InodeWrapper::read_file_inode(sbi, &ino);
+        let has_pages = pi.has_data_page();
+        let num_blks: i64 = pi.get_num_blks().try_into()?;
 
-        // pi may or may not have a block already associated with it. if it doesn't,
-        // we need to allocate a block for it
+        let required_capacity: i64 = len as i64 + pos;
+        let current_capacity: i64 = PAGE_SIZE as i64 * num_blks;
+        let page_size_i64: i64 = PAGE_SIZE.try_into()?;
+        let blks_per_inode_i64: i64 = DIRECT_PAGES_PER_INODE.try_into()?;
 
-        let mut page_no = pi.get_data_page_no();
+        // check if we have to allocate new pages for the inode
+        if required_capacity > current_capacity || !has_pages {
+            // figure out how many new pages need to be allocated
+            if has_pages {
+                // if we already have pages, but not enough, subtract out any spare space
+                // in the last block from the required capacity
+                required_capacity -= current_capacity - pi.get_size();
+            }
+            let mut num_pages_to_alloc = (required_capacity / page_size_i64) + 1;
 
-        // if page_no is none, we need to allocate a page and add it to the inode
-        // which changes the inode's state. to make things easier to reason about,
-        // lets coerce the inode into that same state even if we DON'T add a page,
-        // since all that state tells us is that the inode has a valid allocated page
-        // that can hold data
-        // TODO: variables are weird here due to scoping and shadowing, try to figure
-        // out a nicer way to handle it?
-        let pi_temp;
-        if page_no == 0 {
-            // allocate a page
-            // save it in the inode
-            let data_bitmap = BitmapWrapper::read_data_bitmap(sbi);
-            let (page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
-            let data_bitmap = data_bitmap.persist();
-            pi_temp = pi.add_data_page_fence(page_no, data_bitmap);
-            // page_no = page_no_temp;
-        } else {
-            pi_temp = pi.coerce_to_addpage();
+            // TODO: update this when we can have more pages per inode
+            // rather than returning enospc, we just need to limit the number of
+            // blocks that we allocate to the number we actually have space for in the file
+
+            if num_pages_to_alloc + num_blks >= blks_per_inode_i64 {
+                // return Err(ENOSPC);
+                num_pages_to_alloc = blks_per_inode_i64 - num_blks;
+            }
+
+            // now allocate the required number of pages
+            let allocated_page_nos = Vec::new();
+            let (bits, data_bitmap) =
+                BitmapWrapper::read_data_bitmap(sbi).allocate_bits(num_pages_to_alloc)?;
+            let data_bitmap = data_bitmap.fence();
+
+            // for now, returns ENOSPC if we run out of direct pages
+            // it's safe to add the pages now because we haven't updated the
+            // file size yet - they aren't accessible yet
+            let pi = pi.add_data_pages(allocated_page_nos, data_bitmap)?;
         }
-        let pi = pi_temp;
-        // let page_no = page_no.unwrap();
 
-        // TODO: should reading data page require an AddPage or higher inode?
-        let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
-        // TODO: if there's no more space in the file to write, return ENOSPC?
-        let (data_page, bytes_written) = data_page.write_data(buf, len, pos.try_into()?);
-        let data_page = data_page.fence();
+        // now copy the data into the pages
+        // we have already checked if the write will put us beyond the capacity of
+        // the file, so we should be safe to just go ahead and write without checks
+        let mut bytes_written = 0;
+        let mut current_page_no = pos / page_size_i64;
+        let mut page_offset = pos - ((current_page_no - 1) * page_size_i64);
 
-        pos += bytes_written as i64;
-        *ppos = pos;
-        unsafe { hayleyfs_i_size_write(inode, pos) };
-        inode.i_blocks = 1;
-        // right now, we can just set the file size to pos + bytes written
-        // TODO: in the future when the file can have multiple pages that won't be enough
-        let pi = pi.set_size(pos, &data_page);
+        // now update size stuff
 
-        let token = WriteFinalizeToken::new(pi, data_page);
-        pr_info!("bytes written: {:?}\n", bytes_written);
-        Ok((token, bytes_written.try_into()?))
+        // // TODO: should reading data page require an AddPage or higher inode?
+        // let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
+        // // TODO: if there's no more space in the file to write, return ENOSPC?
+        // let (data_page, bytes_written) = data_page.write_data(buf, len, pos.try_into()?);
+        // let data_page = data_page.fence();
+
+        // pos += bytes_written as i64;
+        // *ppos = pos;
+        // unsafe { hayleyfs_i_size_write(inode, pos) };
+        // inode.i_blocks = 1;
+        // // right now, we can just set the file size to pos + bytes written
+        // // TODO: in the future when the file can have multiple pages that won't be enough
+        // let pi = pi.set_size(pos, &data_page);
+
+        // let token = WriteFinalizeToken::new(pi, data_page);
+        // pr_info!("bytes written: {:?}\n", bytes_written);
+        // Ok((token, bytes_written.try_into()?))
     }
 
     #[no_mangle]

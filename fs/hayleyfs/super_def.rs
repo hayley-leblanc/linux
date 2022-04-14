@@ -328,6 +328,38 @@ pub(crate) mod hayleyfs_bitmap {
 
             Ok((bit, self.set_bit(bit)?))
         }
+
+        pub(crate) fn allocate_bits(
+            self,
+            nr: i64,
+        ) -> Result<(Vec<PmPage>, BitmapWrapper<'a, Flushed, Alloc, Type>)> {
+            if nr <= 0 {
+                return Err(EINVAL);
+            }
+            let bits_vec = Vec::<PmPage>::new();
+            for i in 0..nr {
+                let bit = unsafe {
+                    hayleyfs_find_next_zero_bit(
+                        self.bitmap as *mut _ as *mut u64,
+                        (PAGE_SIZE * 8).try_into().unwrap(),
+                        1,
+                    )
+                };
+
+                if bit == (PAGE_SIZE * 8) {
+                    pr_info!("no space, ran out of bits to allocate\n");
+                    return Err(ENOSPC);
+                }
+
+                unsafe { self.set_bit_unsafe(bit)? };
+
+                bits_vec.try_push(bit)?;
+            }
+            // quick hack to get the bitmap in the correct state
+            // TODO: this is inefficient, do it better
+            let bitmap = self.set_bit(bits_vec[0])?;
+            Ok((bits_vec, bitmap.flush()))
+        }
     }
 
     impl<'a, Type> BitmapWrapper<'a, Clean, Read, Type> {

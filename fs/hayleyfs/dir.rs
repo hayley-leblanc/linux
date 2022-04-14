@@ -295,27 +295,6 @@ pub(crate) mod hayleyfs_dir {
         }
     }
 
-    impl<'a> DentryWrapper<'a, Clean, Read> {
-        pub(crate) fn lookup_dentry_by_name(
-            sbi: &'a SbInfo,
-            child_name: &[u8],
-            parent_inode: &InodeWrapper<'a, Clean, Read, Dir>,
-        ) -> Result<Self> {
-            let page_no = parent_inode.get_data_page_no();
-            if page_no != 0 {
-                let dir_page = DirPage::read_dir_page(sbi, page_no)?;
-                for dentry in dir_page.iter_mut() {
-                    if dentry.is_valid() && compare_dentry_name(dentry.get_name(), child_name) {
-                        return Ok(dentry);
-                    }
-                }
-                Err(ENOENT)
-            } else {
-                Err(ENOENT)
-            }
-        }
-    }
-
     impl<'a> DentryWrapper<'a, Clean, Alloc> {
         // TODO: should this state be read or alloc?
 
