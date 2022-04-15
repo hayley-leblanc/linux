@@ -263,7 +263,7 @@ pub(crate) mod hayleyfs_inode {
             self,
             pages: Vec<PmPage>,
             _: BitmapWrapper<'a, Clean, Alloc, Data>,
-        ) -> Result<InodeWrapper<'a, Clean, Alloc, Data>> {
+        ) -> Result<InodeWrapper<'a, Clean, AddPage, Data>> {
             if pages.len() as i32 + self.inode.num_blks >= DIRECT_PAGES_PER_INODE.try_into()? {
                 // this should actually never happen since we adjust the number of blocks
                 // to allocate and add based on available capacity prior to calling this
@@ -304,11 +304,50 @@ pub(crate) mod hayleyfs_inode {
         pub(crate) fn set_size(
             self,
             pos: i64,
-            _: &DataPageWrapper<'a, Clean, WriteData>,
+            pages_allocated: i64,
+            _: &Vec<DataPageWrapper<'a, Clean, WriteData>>,
         ) -> InodeWrapper<'a, Clean, Size, Data> {
             self.inode.size = pos;
-            clwb(&self.inode.size, CACHELINE_SIZE, true);
+            self.inode.num_blks += pages_allocated;
+            // TODO: we don't have to flush the whole thing
+            clwb(&self.inode, size_of::<HayleyfsInode>(), true);
             InodeWrapper::new(self.inode)
+        }
+
+        pub(crate) fn write_data(
+            &self,
+            sbi: &SbInfo,
+            len: i64,
+            offset: i64,
+            buf: *const i8,
+        ) -> Result<(Vec<DataPageWrapper<'a, Clean, WriteData>>, i64)> {
+            let mut page_wrapper_vec = Vec::new();
+            let page_size_i64: i64 = PAGE_SIZE.try_into()?;
+            let mut bytes_written = 0;
+            let mut buffer_offset = 0;
+            let mut current_page_index = offset / page_size_i64; // this is an index into the direct pages array
+                                                                 // TODO: this logic will change for indirect pages
+            let mut page_offset = offset - ((current_page_index - 1) * page_size_i64);
+
+            while bytes_written < len {
+                let bytes_to_write = if (page_size_i64 - page_offset) < len {
+                    page_size_i64 - page_offset
+                } else {
+                    len
+                };
+                let data_page = DataPageWrapper::read_data_page(
+                    sbi,
+                    self.inode.direct_pages[current_page_index],
+                );
+                // TODO: what happens if we don't write enough bytes to one page for some reason?
+                // we could end up with a weird hole?
+                let (data_page, written) =
+                    data_page.write_data(bytes_to_write, page_offset, buf, bytes_written);
+                bytes_written += written;
+                page_wrapper_vec.try_push(data_page)?;
+            }
+            sfence();
+            (page_wrapper_vec, bytes_written)
         }
     }
 

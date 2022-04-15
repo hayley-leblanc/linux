@@ -31,6 +31,7 @@ pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 pub(crate) const CACHELINE_BIT_SHIFT: usize = 9;
 pub(crate) const NUM_BITMAP_CACHELINES: usize = PAGE_SIZE / CACHELINE_SIZE;
 pub(crate) const DIRECT_PAGES_PER_INODE: usize = 12;
+pub(crate) const MAX_FILE_SIZE: usize = PAGE_SIZE * DIRECT_PAGES_PER_INODE;
 
 pub(crate) const LONG_MAX: usize = 9223372036854775807;
 pub(crate) const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;

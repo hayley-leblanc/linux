@@ -8,6 +8,7 @@ use crate::dir::hayleyfs_dir::*;
 use crate::file::hayleyfs_file::*;
 use crate::h_inode::hayleyfs_inode::*;
 use crate::super_def::hayleyfs_bitmap::*;
+use kernel::prelude::*;
 
 pub(crate) struct RmdirFinalizeToken;
 pub(crate) struct WriteFinalizeToken;
@@ -29,7 +30,7 @@ impl<'a> RmdirFinalizeToken {
 impl<'a> WriteFinalizeToken {
     pub(crate) fn new(
         _inode: InodeWrapper<'a, Clean, Size, Data>,
-        _page: DataPageWrapper<'a, Clean, WriteData>,
+        _page: Vec<DataPageWrapper<'a, Clean, WriteData>>,
     ) -> Self {
         Self {}
     }

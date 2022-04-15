@@ -91,41 +91,41 @@ pub(crate) mod hayleyfs_file {
             DataPageWrapper::new(self.page_no, self.data_page)
         }
 
-        pub(crate) fn write_data(
-            self,
-            buf: *const i8,
-            len: usize,
-            offset: usize,
-        ) -> (DataPageWrapper<'a, Flushed, WriteData>, usize) {
-            // TODO: non-temporal stores
-            // figure out how many bytes to write
-            let bytes_to_write = if PAGE_SIZE - offset < len {
-                PAGE_SIZE - offset
-            } else {
-                len
-            };
-            // TODO: do you end up writing to the correct place with these type conversions?
-            // TODO: what does the return value here actually mean?????
-            let data_ptr = self.data_page.data.as_ptr() as *mut i8;
-            let bytes_written = bytes_to_write
-                - unsafe {
-                    hayleyfs_copy_from_user_nt(
-                        data_ptr.offset(offset.try_into().unwrap()) as *const c_void, // TODO: handle error properly
-                        buf as *const c_void,
-                        bytes_to_write.try_into().unwrap(), // TODO: handle error properly
-                    ) as usize
-                };
-            // TODO: MUST FLUSH FIRST AND LAST CACHE LINES (or check if they need to be flushed)
-            clwb(
-                unsafe { data_ptr.offset(offset.try_into().unwrap()) },
-                bytes_to_write,
-                false,
-            );
-            (
-                DataPageWrapper::new(self.page_no, self.data_page),
-                bytes_written.try_into().unwrap(), // TODO: handle error properly
-            )
-        }
+        // pub(crate) fn write_data(
+        //     self,
+        //     buf: *const i8,
+        //     len: usize,
+        //     offset: usize,
+        // ) -> (DataPageWrapper<'a, Flushed, WriteData>, usize) {
+        //     // TODO: non-temporal stores
+        //     // figure out how many bytes to write
+        //     let bytes_to_write = if PAGE_SIZE - offset < len {
+        //         PAGE_SIZE - offset
+        //     } else {
+        //         len
+        //     };
+        //     // TODO: do you end up writing to the correct place with these type conversions?
+        //     // TODO: what does the return value here actually mean?????
+        //     let data_ptr = self.data_page.data.as_ptr() as *mut i8;
+        //     let bytes_written = bytes_to_write
+        //         - unsafe {
+        //             hayleyfs_copy_from_user_nt(
+        //                 data_ptr.offset(offset.try_into().unwrap()) as *const c_void, // TODO: handle error properly
+        //                 buf as *const c_void,
+        //                 bytes_to_write.try_into().unwrap(), // TODO: handle error properly
+        //             ) as usize
+        //         };
+        //     // TODO: MUST FLUSH FIRST AND LAST CACHE LINES (or check if they need to be flushed)
+        //     clwb(
+        //         unsafe { data_ptr.offset(offset.try_into().unwrap()) },
+        //         bytes_to_write,
+        //         false,
+        //     );
+        //     (
+        //         DataPageWrapper::new(self.page_no, self.data_page),
+        //         bytes_written.try_into().unwrap(), // TODO: handle error properly
+        //     )
+        // }
 
         pub(crate) fn read_data(&self, buf: *mut i8, len: usize, offset: usize) -> usize {
             let data_ptr = self.data_page.data.as_ptr() as *mut i8;
@@ -166,6 +166,24 @@ pub(crate) mod hayleyfs_file {
             let dir_page =
                 &mut *((sbi.virt_addr as usize + (self.page_no + PAGE_SIZE)) as *mut DirPage);
             dir_page
+        }
+
+        /// the len and page_offset to this method are relative to the current page,
+        /// not to the file as a whole
+        /// managing the size of the file should be handled in the caller
+        pub(crate) fn write_data(
+            self,
+            len: i64,
+            page_offset: i64,
+            buf: *const i8,
+            buf_offset: i64,
+        ) -> Result<(DataPageWrapper<'a, Clean, WriteData>, i64)> {
+            let dst = self.data_page.data.as_ptr().offset(page_offset.try_into()?) as *const c_void;
+            let src = buf.offset(buf_offset.try_into()?) as *const c_void;
+            let res: i64 =
+                unsafe { hayleyfs_copy_from_user_nt(dst, src, len.try_into()?).try_into()? };
+            let written = len - res;
+            Ok((DataPageWrapper::new(self.page_no, self.data_page), written))
         }
     }
 
@@ -231,22 +249,36 @@ pub(crate) mod hayleyfs_file {
 
         let pi = InodeWrapper::read_file_inode(sbi, &ino);
         let has_pages = pi.has_data_page();
+        let pi_size = pi.get_size();
         let num_blks: i64 = pi.get_num_blks().try_into()?;
 
-        let required_capacity: i64 = len as i64 + pos;
+        // TODO: get rid of all these, this is ridiculous
+        let mut required_capacity: i64 = len as i64 + pos;
         let current_capacity: i64 = PAGE_SIZE as i64 * num_blks;
         let page_size_i64: i64 = PAGE_SIZE.try_into()?;
         let blks_per_inode_i64: i64 = DIRECT_PAGES_PER_INODE.try_into()?;
+        let max_file_size_i64: i64 = MAX_FILE_SIZE.try_into()?;
 
+        // manage number of bytes we can write before moving on too far.
+        // make sure the number of bytes to write is capped at the max size of the file
+        if required_capacity > max_file_size_i64 {
+            required_capacity = max_file_size_i64;
+            len = (max_file_size_i64 - pi_size).try_into()?;
+        }
+
+        let len_i64: i64 = len.try_into()?;
+
+        let pi_temp;
+        let mut num_pages_to_alloc = 0;
         // check if we have to allocate new pages for the inode
-        if required_capacity > current_capacity || !has_pages {
+        if required_capacity >= current_capacity || !has_pages {
             // figure out how many new pages need to be allocated
             if has_pages {
                 // if we already have pages, but not enough, subtract out any spare space
                 // in the last block from the required capacity
                 required_capacity -= current_capacity - pi.get_size();
             }
-            let mut num_pages_to_alloc = (required_capacity / page_size_i64) + 1;
+            num_pages_to_alloc = (required_capacity / page_size_i64) + 1;
 
             // TODO: update this when we can have more pages per inode
             // rather than returning enospc, we just need to limit the number of
@@ -266,35 +298,31 @@ pub(crate) mod hayleyfs_file {
             // for now, returns ENOSPC if we run out of direct pages
             // it's safe to add the pages now because we haven't updated the
             // file size yet - they aren't accessible yet
-            let pi = pi.add_data_pages(allocated_page_nos, data_bitmap)?;
+            pi_temp = pi.add_data_pages(allocated_page_nos, data_bitmap)?;
+        } else {
+            // TODO: this is necessary so we don't have issues with uninitialized vals
+            // but it's so dumb.
+            pi_temp = pi.coerce_to_addpage();
         }
+        let pi = pi_temp;
 
-        // now copy the data into the pages
-        // we have already checked if the write will put us beyond the capacity of
-        // the file, so we should be safe to just go ahead and write without checks
-        let mut bytes_written = 0;
-        let mut current_page_no = pos / page_size_i64;
-        let mut page_offset = pos - ((current_page_no - 1) * page_size_i64);
+        let len_i64: i64 = len.try_into()?;
+        let (pages_written, bytes_written) = pi.write_data(sbi, len_i64, pos, buf)?;
 
         // now update size stuff
 
-        // // TODO: should reading data page require an AddPage or higher inode?
-        // let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
-        // // TODO: if there's no more space in the file to write, return ENOSPC?
-        // let (data_page, bytes_written) = data_page.write_data(buf, len, pos.try_into()?);
-        // let data_page = data_page.fence();
+        pos += bytes_written;
+        *ppos = pos;
+        if pos > pi_size {
+            inode.i_blocks += num_pages_to_alloc as u64; // TODO: Handle conversion better
+            unsafe { hayleyfs_i_size_write(inode, pos) };
+        }
 
-        // pos += bytes_written as i64;
-        // *ppos = pos;
-        // unsafe { hayleyfs_i_size_write(inode, pos) };
-        // inode.i_blocks = 1;
-        // // right now, we can just set the file size to pos + bytes written
-        // // TODO: in the future when the file can have multiple pages that won't be enough
-        // let pi = pi.set_size(pos, &data_page);
+        let pi = pi.set_size(pos, num_pages_to_alloc, &pages_written);
 
-        // let token = WriteFinalizeToken::new(pi, data_page);
-        // pr_info!("bytes written: {:?}\n", bytes_written);
-        // Ok((token, bytes_written.try_into()?))
+        let token = WriteFinalizeToken::new(pi, pages_written);
+        pr_info!("bytes written: {:?}\n", bytes_written);
+        Ok((token, bytes_written.try_into()?))
     }
 
     #[no_mangle]
