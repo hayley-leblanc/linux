@@ -37,10 +37,10 @@ pub(crate) mod hayleyfs_inode {
     #[derive(Debug)]
     struct HayleyfsInode {
         mode: u16, // file mode (directory, regular, etc.)
-        num_blks: i32,
         link_count: u32,
         uid: u32,
         gid: u32,
+        num_blks: i64,
         flags: u32,
         ctime: i64, // inode change time
         mtime: i64, // modification time
@@ -158,7 +158,7 @@ pub(crate) mod hayleyfs_inode {
             self.inode.mtime
         }
 
-        pub(crate) fn get_num_blks(&self) -> i32 {
+        pub(crate) fn get_num_blks(&self) -> i64 {
             self.inode.num_blks
         }
 
@@ -264,7 +264,7 @@ pub(crate) mod hayleyfs_inode {
             pages: Vec<PmPage>,
             _: BitmapWrapper<'a, Clean, Alloc, Data>,
         ) -> Result<InodeWrapper<'a, Clean, AddPage, Data>> {
-            if pages.len() as i32 + self.inode.num_blks >= DIRECT_PAGES_PER_INODE.try_into()? {
+            if pages.len() as i64 + self.inode.num_blks >= DIRECT_PAGES_PER_INODE.try_into()? {
                 // this should actually never happen since we adjust the number of blocks
                 // to allocate and add based on available capacity prior to calling this
                 // function
@@ -284,7 +284,7 @@ pub(crate) mod hayleyfs_inode {
             // runtime check to make sure the coercion is valid
             // TODO: this isn't GREAT, but should be ok since can't
             // check at compile time?
-            assert!(self.get_data_page_no() != 0);
+            assert!(self.has_data_page());
             InodeWrapper::new(self.inode)
         }
 
@@ -308,7 +308,7 @@ pub(crate) mod hayleyfs_inode {
             _: &Vec<DataPageWrapper<'a, Clean, WriteData>>,
         ) -> InodeWrapper<'a, Clean, Size, Data> {
             self.inode.size = pos;
-            self.inode.num_blks += pages_allocated;
+            self.inode.num_blks = pages_allocated;
             // TODO: we don't have to flush the whole thing
             clwb(&self.inode, size_of::<HayleyfsInode>(), true);
             InodeWrapper::new(self.inode)
@@ -337,17 +337,17 @@ pub(crate) mod hayleyfs_inode {
                 };
                 let data_page = DataPageWrapper::read_data_page(
                     sbi,
-                    self.inode.direct_pages[current_page_index],
-                );
+                    self.inode.direct_pages[current_page_index as usize],
+                )?;
                 // TODO: what happens if we don't write enough bytes to one page for some reason?
                 // we could end up with a weird hole?
                 let (data_page, written) =
-                    data_page.write_data(bytes_to_write, page_offset, buf, bytes_written);
+                    data_page.write_data(bytes_to_write, page_offset, buf, bytes_written)?;
                 bytes_written += written;
                 page_wrapper_vec.try_push(data_page)?;
             }
             sfence();
-            (page_wrapper_vec, bytes_written)
+            Ok((page_wrapper_vec, bytes_written))
         }
     }
 
@@ -366,7 +366,7 @@ pub(crate) mod hayleyfs_inode {
         }
         pub(crate) fn lookup_dentry_by_name(
             &self,
-            sbi: &SbInfo,
+            sbi: &'a SbInfo,
             name: &[u8],
         ) -> Result<DentryWrapper<'a, Clean, Read>> {
             let direct_pages_in_use: usize = (self.inode.size / PAGE_SIZE as i64).try_into()?;

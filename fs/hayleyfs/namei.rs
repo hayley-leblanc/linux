@@ -504,8 +504,6 @@ fn _hayleyfs_rmdir(
     let child_inode = InodeWrapper::read_dir_inode(sbi, &child_ino);
     pr_info!("{:?}\n", child_inode);
 
-    pr_info!("parent page: {:?}\n", parent_pi.get_data_page_no());
-
     // 4. zero the deleted inode
     // better handling in case the child directory doesn't have dir page for some reason
     let child_dir_page = child_inode.get_data_page_no();
