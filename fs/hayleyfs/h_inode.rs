@@ -10,6 +10,7 @@ use crate::file::hayleyfs_file::*;
 use crate::pm::*;
 use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::*;
+// use crate::{fence_all_vecs, fence_vec};
 use core::marker::PhantomData;
 use core::mem::size_of;
 use core::ptr::write_bytes;
@@ -119,7 +120,7 @@ pub(crate) mod hayleyfs_inode {
         }
 
         pub(crate) fn get_ino(&self) -> InodeNum {
-            self.inode.ino
+            self.ino
         }
 
         pub(crate) fn is_dir(&self) -> bool {
@@ -288,15 +289,67 @@ pub(crate) mod hayleyfs_inode {
             InodeWrapper::new(self.inode)
         }
 
-        pub(crate) fn clear_data_page(&self, sbi: &SbInfo) -> Result<Box<dyn EmptyFilePage>> {
-            if self.inode.data0 == 0 {
-                let page_no = self.inode.data0;
-                let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
-                let data_page = data_page.zero_page().fence();
-                Ok(Box::try_new(data_page)?)
-            } else {
-                Ok(Box::try_new(EmptyPage {})?)
+        /// TODO: return something other than the vector of emptied pages
+        /// Maybe a DataPages wrapper or something?
+        pub(crate) fn clear_data_pages(
+            &self,
+            sbi: &SbInfo,
+        ) -> Result<Vec<DataPageWrapper<'a, Clean, Zero>>> {
+            // if self.inode.data0 == 0 {
+            //     let page_no = self.inode.data0;
+            //     let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
+            //     let data_page = data_page.zero_page().fence();
+            //     Ok(Box::try_new(data_page)?)
+            // } else {
+            //     Ok(Box::try_new(EmptyPage {})?)
+            // }
+
+            // TODO: update for indirect blocks
+            let num_pages = self.inode.num_blks;
+            let zeroed_pages = Vec::new();
+            assert!(num_pages <= DIRECT_PAGES_PER_INODE.try_into()?);
+            for i in 0..num_pages {
+                let i: usize = i.try_into()?;
+                let data_page = DataPageWrapper::read_data_page(sbi, self.inode.direct_pages[i])?;
+                let data_page = data_page.zero_page();
+                zeroed_pages.try_push(data_page)?;
             }
+            // let zeroed_pages = fence_all_vecs!(zeroed_pages);
+            let zeroed_pages = fence_pages_vec(zeroed_pages)?;
+            Ok(zeroed_pages)
+        }
+    }
+
+    impl<'a, State, Op> InodeWrapper<'a, State, Op, Data> {
+        /// TODO: should probably return clean inode with updated access time?
+        pub(crate) fn read_data(
+            &self,
+            sbi: &SbInfo,
+            len: i64,
+            offset: i64,
+            buf: *mut i8,
+        ) -> Result<i64> {
+            let page_size_i64: i64 = PAGE_SIZE.try_into()?;
+            let mut bytes_read = 0;
+            let mut buffer_offset = 0;
+            let mut current_page_index = offset / page_size_i64; // this is an index into the direct pages array
+                                                                 // TODO: this logic will change for indirect pages
+            let mut page_offset = offset - ((current_page_index - 1) * page_size_i64);
+            while bytes_read < len {
+                let bytes_to_read = if (page_size_i64 - page_offset) < len {
+                    page_size_i64 - page_offset
+                } else {
+                    len
+                };
+                let data_page = DataPageWrapper::read_data_page(
+                    sbi,
+                    self.inode.direct_pages[current_page_index as usize],
+                )?;
+                let read = data_page.read_data(bytes_to_read, page_offset, buf, bytes_read)?;
+                bytes_read += read;
+                page_offset = 0;
+            }
+            Ok(bytes_read)
         }
     }
 
@@ -344,6 +397,7 @@ pub(crate) mod hayleyfs_inode {
                 let (data_page, written) =
                     data_page.write_data(bytes_to_write, page_offset, buf, bytes_written)?;
                 bytes_written += written;
+                page_offset = 0;
                 page_wrapper_vec.try_push(data_page)?;
             }
             sfence();

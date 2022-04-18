@@ -71,6 +71,10 @@ pub(crate) mod hayleyfs_file {
                 data_page,
             }
         }
+
+        pub(crate) fn get_page_no(&self) -> PmPage {
+            self.page_no
+        }
     }
 
     impl<'a> DataPageWrapper<'a, Clean, Read> {
@@ -127,18 +131,18 @@ pub(crate) mod hayleyfs_file {
         //     )
         // }
 
-        pub(crate) fn read_data(&self, buf: *mut i8, len: usize, offset: usize) -> usize {
-            let data_ptr = self.data_page.data.as_ptr() as *mut i8;
-            let bytes_copied = len
-                - unsafe {
-                    hayleyfs_copy_to_user(
-                        buf as *mut c_void,
-                        data_ptr.offset(offset.try_into().unwrap()) as *const c_void, // TODO: include offset
-                        len.try_into().unwrap(), // TODO: handle error properly
-                    ) as usize
-                };
-            bytes_copied.try_into().unwrap() // TODO: handle error properly
-        }
+        // pub(crate) fn read_data(&self, buf: *mut i8, len: usize, offset: usize) -> usize {
+        //     let data_ptr = self.data_page.data.as_ptr() as *mut i8;
+        //     let bytes_copied = len
+        //         - unsafe {
+        //             hayleyfs_copy_to_user(
+        //                 buf as *mut c_void,
+        //                 data_ptr.offset(offset.try_into().unwrap()) as *const c_void, // TODO: include offset
+        //                 len.try_into().unwrap(), // TODO: handle error properly
+        //             ) as usize
+        //         };
+        //     bytes_copied.try_into().unwrap() // TODO: handle error properly
+        // }
     }
 
     impl<'a> DataPageWrapper<'a, Clean, Zero> {}
@@ -184,6 +188,20 @@ pub(crate) mod hayleyfs_file {
                 unsafe { hayleyfs_copy_from_user_nt(dst, src, len.try_into()?).try_into()? };
             let written = len - res;
             Ok((DataPageWrapper::new(self.page_no, self.data_page), written))
+        }
+
+        pub(crate) fn read_data(
+            self,
+            len: i64,
+            page_offset: i64,
+            buf: *mut i8,
+            buf_offset: i64,
+        ) -> Result<i64> {
+            let dst = buf.offset(buf_offset.try_into()?) as *mut c_void;
+            let src = self.data_page.data.as_ptr().offset(page_offset.try_into()?) as *const c_void;
+            let res: i64 = unsafe { hayleyfs_copy_to_user(dst, src, len.try_into()?).try_into()? };
+            let written = len - res;
+            Ok(written)
         }
     }
 
@@ -300,8 +318,6 @@ pub(crate) mod hayleyfs_file {
             // file size yet - they aren't accessible yet
             pi_temp = pi.add_data_pages(allocated_page_nos, data_bitmap)?;
         } else {
-            // TODO: this is necessary so we don't have issues with uninitialized vals
-            // but it's so dumb.
             pi_temp = pi.coerce_to_addpage();
         }
         let pi = pi_temp;
@@ -347,7 +363,6 @@ pub(crate) mod hayleyfs_file {
 
     #[no_mangle]
     pub(crate) fn _hayleyfs_file_read(
-        // filep: &mut file,
         buf: *mut i8,
         mut len: usize,
         ppos: &mut i64,
@@ -378,23 +393,29 @@ pub(crate) mod hayleyfs_file {
         let sb = inode.i_sb;
         let sbi = hayleyfs_get_sbi(sb);
 
-        // TODO: logic here will have to change when there is more than one page
-        // associated with a file
         let pi = InodeWrapper::read_file_inode(sbi, &ino);
-        let page_no = pi.get_data_page_no();
-        if page_no != 0 {
-            let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
-            let bytes_read = data_page.read_data(buf, len, pos.try_into()?);
-            pos += bytes_read as i64;
-            *ppos = pos;
-            Ok(bytes_read.try_into()?)
-        } else {
-            Ok(0)
-        }
+        let len_i64: i64 = len.try_into()?;
+        let bytes_read = pi.read_data(sbi, len_i64, pos, buf)?;
+        pos += bytes_read;
+        *ppos = pos;
+
+        Ok(bytes_read.try_into()?)
     }
 
     #[no_mangle]
     pub(crate) unsafe extern "C" fn hayleyfs_open(inode: *mut inode, filep: *mut file) -> c_int {
         unsafe { generic_file_open(inode, filep) }
+    }
+
+    pub(crate) fn fence_pages_vec<'a, Op>(
+        vec: Vec<DataPageWrapper<'a, Flushed, Op>>,
+    ) -> Result<Vec<DataPageWrapper<'a, Clean, Op>>> {
+        sfence();
+        let clean_vec = Vec::new();
+        for wrapper in vec {
+            let clean_wrapper = DataPageWrapper::new(wrapper.page_no, wrapper.data_page);
+            clean_vec.try_push(clean_wrapper)?;
+        }
+        Ok(clean_vec)
     }
 }

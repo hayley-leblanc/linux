@@ -40,7 +40,7 @@ impl<'a> UnlinkFinalizeToken {
     pub(crate) fn new(
         _parent_inode: InodeWrapper<'a, Clean, Read, Dir>,
         _deleted_inode: InodeWrapper<'a, Clean, Zero, Data>,
-        _deleted_page: &dyn EmptyFilePage,
+        _deleted_page: Vec<DataPageWrapper<'a, Clean, Zero>>,
         _inode_bitmap: BitmapWrapper<'a, Clean, Zero, Inode>,
         _data_bitmap: BitmapWrapper<'a, Clean, Zero, Data>,
     ) -> Self {

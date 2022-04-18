@@ -601,23 +601,17 @@ fn _hayleyfs_unlink(
     // TODO: if the inode does have pages, there is an unnecessary fence here.
     // not sure how (if possible) to manage keeping track of cleanliness of
     // real pages within the empty page trait
-    let zeroed_page = pi.clear_data_page(sbi)?;
+    let zeroed_pages = pi.clear_data_pages(sbi)?;
 
     let pi = pi.zero_inode(&delete_dentry).fence();
 
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi)
         .clear_bit(&pi)?
         .flush();
-    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi)
-        .clear_bit(&*zeroed_page)? // TODO: weird syntax.....
-        .flush();
+    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi).clear_bits(zeroed_pages)?;
 
     let (inode_bitmap, data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
 
-    let token = UnlinkFinalizeToken::new(parent_pi, pi, &*zeroed_page, inode_bitmap, data_bitmap);
-
-    // TODO: finalization
-    // at the end we should have: clean parent inode, zeroed dentry,
-    // zeroed data page, zeroed inode, both zeroed bitmaps
+    let token = UnlinkFinalizeToken::new(parent_pi, pi, zeroed_pages, inode_bitmap, data_bitmap);
     Ok(token)
 }

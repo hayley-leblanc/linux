@@ -142,6 +142,20 @@ pub(crate) mod hayleyfs_bitmap {
         //     bit: usize,
         // ) -> Result<BitmapWrapper<'a, Dirty, Zero, Type>> {
         //     if bit > PAGE_SIZE * 8 {
+        //         return Err(EINVAL);
+        //     }
+        //     self.dirty_cache_lines
+        //         .try_insert(get_cacheline_num(bit), ())?;
+        //     unsafe { hayleyfs_clear_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+
+        //     Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
+        // }
+
+        // pub(crate) fn clear_bit(
+        //     mut self,
+        //     bit: usize,
+        // ) -> Result<BitmapWrapper<'a, Dirty, Zero, Type>> {
+        //     if bit > PAGE_SIZE * 8 {
         //         return Err(Error::EINVAL);
         //     }
         //     self.dirty_cache_lines
@@ -171,14 +185,29 @@ pub(crate) mod hayleyfs_bitmap {
         //     Ok(BitmapWrapper::new(bitmap.bitmap, bitmap.dirty_cache_lines))
         // }
 
+        //     pub(crate) fn clear_bit<Type>(
+        //         mut self,
+        //         // bit: usize,
+        //         inode: &InodeWrapper<'a, Clean, Zero, Type>,
+        //     ) -> Result<BitmapWrapper<'a, Dirty, Zero, Inode>> {
+        //         let bit = inode.get_ino();
+        //         if bit > PAGE_SIZE * 8 {
+        //             return Err(EINVAL);
+        //         }
+        //         self.dirty_cache_lines
+        //             .try_insert(get_cacheline_num(bit), ())?;
+        //         unsafe { hayleyfs_clear_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+
+        //         Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
+        //     }
+
         pub(crate) fn clear_bit<Type>(
             mut self,
-            // bit: usize,
-            inode: &InodeWrapper<'a, Clean, Zero, Type>,
+            pi: &InodeWrapper<'a, Clean, Zero, Type>,
         ) -> Result<BitmapWrapper<'a, Dirty, Zero, Inode>> {
-            let bit = inode.get_ino();
+            let bit = pi.get_ino();
             if bit > PAGE_SIZE * 8 {
-                return Err(EINVAL);
+                return Err(Error::EINVAL);
             }
             self.dirty_cache_lines
                 .try_insert(get_cacheline_num(bit), ())?;
@@ -189,49 +218,50 @@ pub(crate) mod hayleyfs_bitmap {
     }
 
     impl<'a, State, Op> BitmapWrapper<'a, State, Op, Data> {
-        // pub(crate) fn clear_invalid_page_bits(
-        //     self,
-        //     invalid_pages: Vec<PmPage>,
-        //     _: Vec<DataPageWrapper<'a, Clean, Zero>>,
-        // ) -> Result<BitmapWrapper<'a, Flushed, Zero, Data>> {
-        //     if invalid_pages.len() == 0 {
-        //         return Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines));
-        //     }
-        //     for ino in invalid_pages.iter() {
-        //         unsafe { hayleyfs_set_bit(*ino, self.bitmap as *mut _ as *mut c_void) };
-        //     }
-        //     // redundant, but make sure that we get a dirty bitmap out of this without re-creating
-        //     // it every time we set a bit
-        //     let bitmap = self.set_bit(*(invalid_pages.last()).unwrap())?;
-        //     let bitmap = bitmap.flush();
-        //     Ok(BitmapWrapper::new(bitmap.bitmap, bitmap.dirty_cache_lines))
-        // }
-
-        /// this returns a dirty bitmap even if there isn't actually
-        /// a bit to clear. this is a bit inefficient, since we still have
-        /// to call flush and fence, but it's easier (for now at least) than
-        /// messing with dynamic dispatch.
-        /// we do end up incurring an extra fence because I don't know how to manage
-        /// page cleanliness with the trait object if the file does have pages
-        pub(crate) fn clear_bit(
-            mut self,
-            page: &dyn EmptyFilePage,
-        ) -> Result<BitmapWrapper<'a, Dirty, Zero, Data>> {
-            let bit = page.get_page_no();
-            match bit {
-                None => Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines)),
-                Some(bit) => {
-                    if bit > PAGE_SIZE * 8 {
-                        return Err(EINVAL);
-                    }
-                    self.dirty_cache_lines
-                        .try_insert(get_cacheline_num(bit), ())?;
-                    unsafe { hayleyfs_clear_bit(bit, self.bitmap as *mut _ as *mut c_void) };
-
-                    Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
-                }
+        pub(crate) fn clear_bits(
+            self,
+            pages: Vec<DataPageWrapper<'a, Clean, Zero>>,
+        ) -> Result<BitmapWrapper<'a, Flushed, Zero, Data>> {
+            if pages.len() == 0 {
+                return Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines));
             }
+            for pg in pages.iter() {
+                unsafe {
+                    hayleyfs_clear_bit(pg.get_page_no(), self.bitmap as *mut _ as *mut c_void)
+                };
+            }
+            // redundant, but make sure that we get a dirty bitmap out of this without re-creating
+            // it every time we set a bit
+            let bitmap = self.clear_bit(*(pages.last()).unwrap())?;
+            let bitmap = bitmap.flush();
+            Ok(BitmapWrapper::new(bitmap.bitmap, bitmap.dirty_cache_lines))
         }
+
+        // /// this returns a dirty bitmap even if there isn't actually
+        // /// a bit to clear. this is a bit inefficient, since we still have
+        // /// to call flush and fence, but it's easier (for now at least) than
+        // /// messing with dynamic dispatch.
+        // /// we do end up incurring an extra fence because I don't know how to manage
+        // /// page cleanliness with the trait object if the file does have pages
+        // pub(crate) fn clear_bit(
+        //     mut self,
+        //     page: &dyn EmptyFilePage,
+        // ) -> Result<BitmapWrapper<'a, Dirty, Zero, Data>> {
+        //     let bit = page.get_page_no();
+        //     match bit {
+        //         None => Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines)),
+        //         Some(bit) => {
+        //             if bit > PAGE_SIZE * 8 {
+        //                 return Err(EINVAL);
+        //             }
+        //             self.dirty_cache_lines
+        //                 .try_insert(get_cacheline_num(bit), ())?;
+        //             unsafe { hayleyfs_clear_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+
+        //             Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
+        //         }
+        //     }
+        // }
     }
 
     impl<'a> BitmapWrapper<'a, Clean, Read, Inode> {
