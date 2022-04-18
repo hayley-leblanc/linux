@@ -207,7 +207,7 @@ pub(crate) mod hayleyfs_bitmap {
         ) -> Result<BitmapWrapper<'a, Dirty, Zero, Inode>> {
             let bit = pi.get_ino();
             if bit > PAGE_SIZE * 8 {
-                return Err(Error::EINVAL);
+                return Err(EINVAL);
             }
             self.dirty_cache_lines
                 .try_insert(get_cacheline_num(bit), ())?;

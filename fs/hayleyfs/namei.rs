@@ -501,43 +501,45 @@ fn _hayleyfs_rmdir(
     let parent_pi = parent_pi.dec_links();
 
     // 3. now that there isn't a pointer to the deleted directory, we can clean it up
-    let child_inode = InodeWrapper::read_dir_inode(sbi, &child_ino);
-    pr_info!("{:?}\n", child_inode);
+    let pi = InodeWrapper::read_dir_inode(sbi, &child_ino);
+    pr_info!("{:?}\n", pi);
 
-    // 4. zero the deleted inode
-    // better handling in case the child directory doesn't have dir page for some reason
-    let child_dir_page = child_inode.get_data_page_no();
+    // rather than zeroing dentries directly, just zero all pages associated with the inode
+    // TODO: this will be slow and involve a lot of unnecessary flushes or nt stores
+    // unless you automatically free pages when they have no more dentries
+    // TODO: this should require parent dentry deletion
+    let zeroed_pages = pi.clear_pages(sbi, delete_dentry)?;
 
-    assert!(child_dir_page != 0);
+    let pi = pi.zero_inode(&delete_dentry);
 
-    // rather than zeroing dentries individually just zero the whole page
-    // this is slower but makes some correctness stuff easier
-    // TODO: find a way to make this work without zeroing the whole page;
-    // maybe optimizations in the zero page method?
-    let dir_page = DataPageWrapper::read_data_page(sbi, child_dir_page)?.zero_page();
+    // TODO: fence everything with a single fence. right now we don't have a good way to fence
+    // vec and non vec types together with a single fence. the zeroed pages are currently
+    // fenced at the end of clear_pages
+    let (parent_pi, pi) = fence_all!(parent_pi, pi);
 
-    let child_inode = child_inode.zero_inode(&delete_dentry);
+    // // 5. clear bits in the bitmaps
+    // // TODO: make it harder to clear the wrong bits? that would hopefully show
+    // // up in regular testing though
+    // let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi)
+    //     .clear_bit(&child_inode)?
+    //     .flush();
+    // let data_bitmap = BitmapWrapper::read_data_bitmap(sbi)
+    //     .clear_bit(&dir_page)?
+    //     .flush();
 
-    let (parent_pi, dir_page, child_inode) = fence_all!(parent_pi, dir_page, child_inode);
-
-    // 5. clear bits in the bitmaps
-    // TODO: make it harder to clear the wrong bits? that would hopefully show
-    // up in regular testing though
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi)
-        .clear_bit(&child_inode)?
+        .clear_bit(&pi)?
         .flush();
-    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi)
-        .clear_bit(&dir_page)?
-        .flush();
+    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi).clear_bits(zeroed_pages)?;
 
     let (inode_bitmap, data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
 
-    pr_info!("RMDIR DONE\n");
+    // pr_info!("RMDIR DONE\n");
 
     let token = RmdirFinalizeToken::new(
         parent_pi,
         delete_dentry,
-        dir_page,
+        zeroed_pages,
         child_inode,
         inode_bitmap,
         data_bitmap,
@@ -601,7 +603,7 @@ fn _hayleyfs_unlink(
     // TODO: if the inode does have pages, there is an unnecessary fence here.
     // not sure how (if possible) to manage keeping track of cleanliness of
     // real pages within the empty page trait
-    let zeroed_pages = pi.clear_data_pages(sbi)?;
+    let zeroed_pages = pi.clear_pages(sbi, delete_dentry)?;
 
     let pi = pi.zero_inode(&delete_dentry).fence();
 

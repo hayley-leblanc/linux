@@ -289,35 +289,26 @@ pub(crate) mod hayleyfs_inode {
             InodeWrapper::new(self.inode)
         }
 
-        /// TODO: return something other than the vector of emptied pages
-        /// Maybe a DataPages wrapper or something?
-        pub(crate) fn clear_data_pages(
-            &self,
-            sbi: &SbInfo,
-        ) -> Result<Vec<DataPageWrapper<'a, Clean, Zero>>> {
-            // if self.inode.data0 == 0 {
-            //     let page_no = self.inode.data0;
-            //     let data_page = DataPageWrapper::read_data_page(sbi, page_no)?;
-            //     let data_page = data_page.zero_page().fence();
-            //     Ok(Box::try_new(data_page)?)
-            // } else {
-            //     Ok(Box::try_new(EmptyPage {})?)
-            // }
-
-            // TODO: update for indirect blocks
-            let num_pages = self.inode.num_blks;
-            let zeroed_pages = Vec::new();
-            assert!(num_pages <= DIRECT_PAGES_PER_INODE.try_into()?);
-            for i in 0..num_pages {
-                let i: usize = i.try_into()?;
-                let data_page = DataPageWrapper::read_data_page(sbi, self.inode.direct_pages[i])?;
-                let data_page = data_page.zero_page();
-                zeroed_pages.try_push(data_page)?;
-            }
-            // let zeroed_pages = fence_all_vecs!(zeroed_pages);
-            let zeroed_pages = fence_pages_vec(zeroed_pages)?;
-            Ok(zeroed_pages)
-        }
+        // /// TODO: return something other than the vector of emptied pages
+        // /// Maybe a DataPages wrapper or something?
+        // pub(crate) fn clear_data_pages(
+        //     &self,
+        //     sbi: &SbInfo,
+        // ) -> Result<Vec<DataPageWrapper<'a, Clean, Zero>>> {
+        //     // TODO: update for indirect blocks
+        //     let num_pages = self.inode.num_blks;
+        //     let zeroed_pages = Vec::new();
+        //     assert!(num_pages <= DIRECT_PAGES_PER_INODE.try_into()?);
+        //     for i in 0..num_pages {
+        //         let i: usize = i.try_into()?;
+        //         let data_page = DataPageWrapper::read_data_page(sbi, self.inode.direct_pages[i])?;
+        //         let data_page = data_page.zero_page();
+        //         zeroed_pages.try_push(data_page)?;
+        //     }
+        //     // let zeroed_pages = fence_all_vecs!(zeroed_pages);
+        //     let zeroed_pages = fence_pages_vec(zeroed_pages)?;
+        //     Ok(zeroed_pages)
+        // }
     }
 
     impl<'a, State, Op> InodeWrapper<'a, State, Op, Data> {
@@ -475,6 +466,27 @@ pub(crate) mod hayleyfs_inode {
             self.inode.dec_links();
             clwb(self.inode, size_of::<HayleyfsInode>(), false);
             InodeWrapper::new(self.inode)
+        }
+
+        /// TODO: return something other than the vector of emptied pages
+        /// Maybe a DataPages wrapper or something?
+        pub(crate) fn clear_pages(
+            &self,
+            sbi: &SbInfo,
+            _: DentryWrapper<'a, Clean, Zero>,
+        ) -> Result<Vec<DataPageWrapper<'a, Clean, Zero>>> {
+            // TODO: update for indirect blocks
+            let num_pages = self.inode.num_blks;
+            let zeroed_pages = Vec::new();
+            assert!(num_pages <= DIRECT_PAGES_PER_INODE.try_into()?);
+            for i in 0..num_pages {
+                let i: usize = i.try_into()?;
+                let data_page = DataPageWrapper::read_data_page(sbi, self.inode.direct_pages[i])?;
+                let data_page = data_page.zero_page();
+                zeroed_pages.try_push(data_page)?;
+            }
+            let zeroed_pages = fence_pages_vec(zeroed_pages)?;
+            Ok(zeroed_pages)
         }
     }
 
