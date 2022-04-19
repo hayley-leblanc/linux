@@ -194,14 +194,20 @@ fn _hayleyfs_mkdir(
 
     pr_info!("parent inode: {:?}\n", parent_ino);
 
-    // add new dentry to parent
-    // we can read the dentry at any time, but we can't actually modify it without methods
-    // that require proof of link inc and new inode init
-    // TODO: handle panic
-    // do this early so that if the directory is full, we don't create a vfs inode
-    let parent_page = parent_pi.get_data_page_no();
-    assert!(parent_page != 0);
-    let new_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_page)?;
+    // // add new dentry to parent
+    // // we can read the dentry at any time, but we can't actually modify it without methods
+    // // that require proof of link inc and new inode init
+    // // TODO: handle panic
+    // // do this early so that if the directory is full, we don't create a vfs inode
+    // let parent_page = parent_pi.get_data_page_no();
+    // assert!(parent_page != 0);
+    // let new_dentry = hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_page)?;
+
+    // determine if there is enough space for a new dentry, and allocate the dentry
+    // if there is (potentially allocating a new page and adding it to the parent).
+    // we do this step early so that we don't create a vfs inode if the dir is full
+    // HOWEVER it is too early to actually add the dentry. we are just allocating it here
+    let (new_dentry, parent_pi) = parent_pi.get_new_dentry(sbi)?;
 
     // set up vfs inode
     // TODO: at what point should this actually happen?
@@ -221,26 +227,36 @@ fn _hayleyfs_mkdir(
     };
 
     pr_info!("initializing inode\n");
-    let pi = pi.initialize_inode(
-        mode.into(),
-        parent_pi.get_flags(),
-        &mut inode,
-        &inode_bitmap,
-    );
+    let pi = pi
+        .initialize_inode(
+            mode.into(),
+            parent_pi.get_flags(),
+            &mut inode,
+            &inode_bitmap,
+        )
+        .fence();
+
+    // // add page with newly initialized dentries to the new inode
+    // pr_info!("adding dir page {:?}\n", page_no);
+    // let pi = pi.add_dir_page(sbi, inode, page_no)?.fence();
 
     pr_info!("initializing dentries\n");
-    let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, ino)?;
-    let parent_dentry = hayleyfs_dir::initialize_parent_dentry(sbi, page_no, ino)?;
-    let (pi, self_dentry, parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
+    let (self_dentry, pi) = pi.get_new_dentry(sbi)?;
+    let self_dentry = self_dentry.initialize_dentry(ino, ".");
+    let (parent_dentry, pi) = pi.get_new_dentry(sbi)?;
+    let parent_dentry = parent_dentry.initialize_dentry(parent_ino, "..");
+    // let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, ino)?;
+    // let self_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(ino, ".")?;
+    // let parent_dentry = hayleyfs_dir::initialize_parent_dentry(sbi, page_no, ino)?;
+    // let parent_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(ino, "..")?;
+    let (pi, parent_pi, self_dentry, parent_dentry) =
+        fence_all!(pi, parent_pi, self_dentry, parent_dentry);
     pr_info!("done initializing dentries\n");
 
     // increment parent link count
     let parent_pi = parent_pi.inc_links(); // TODO: increment vfs link count as well?
 
-    // add page with newly initialized dentries to the new inode
-    pr_info!("adding dir page {:?}\n", page_no);
-    let pi = pi.add_dir_page(sbi, inode, page_no, self_dentry, parent_dentry)?;
-    let (pi, parent_pi) = fence_all!(pi, parent_pi);
+    let parent_pi = parent_pi.fence();
 
     // TODO: do something with last new_dentry variable
     // TODO: this should rely on the vfs inode being valid?
@@ -403,8 +419,9 @@ fn _hayleyfs_create(
     pr_info!("parent ino: {:?}\n", parent_ino);
 
     // do this early so that if the directory is full, we don't create a vfs inode
-    let new_dentry =
-        hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no())?;
+    // let new_dentry =
+    hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no())?;
+    // let new_dentry = hayleyfs_dir::Dentrywrapper::get_new_dentry(sbi, parent_pi)
 
     pr_info!("allocated dentry\n");
 
@@ -540,7 +557,7 @@ fn _hayleyfs_rmdir(
         parent_pi,
         delete_dentry,
         zeroed_pages,
-        child_inode,
+        pi,
         inode_bitmap,
         data_bitmap,
     );

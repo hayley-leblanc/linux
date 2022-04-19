@@ -277,8 +277,12 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         );
 
         // initialize root dir page
-        let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, root_ino)?;
-        let parent_dentry = hayleyfs_dir::initialize_parent_dentry(sbi, page_no, root_ino)?;
+        let self_dentry = inode_wrapper
+            .get_new_dentry(sbi)?
+            .initialize_dentry(root_ino, ".")?;
+        let parent_dentry = inode_wrapper
+            .get_new_dentry(sbi)?
+            .initialize_dentry(root_ino, "..")?;
 
         let (inode_wrapper, self_dentry, parent_dentry) =
             fence_all!(inode_wrapper, self_dentry, parent_dentry);

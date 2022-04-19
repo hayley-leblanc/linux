@@ -57,6 +57,15 @@ pub(crate) mod hayleyfs_dir {
                 iter: self.dentries.as_mut_slice()[..].iter_mut(),
             }
         }
+
+        pub(crate) fn get_next_free_dentry(&'a self) -> Result<DentryWrapper<'a, Clean, Alloc>> {
+            for dentry in self.iter_mut() {
+                if !dentry.is_valid() {
+                    return Ok(DentryWrapper::new(dentry.dentry));
+                }
+            }
+            Err(ENOSPC)
+        }
     }
 
     pub(crate) struct DirPageIterator<'a> {
@@ -263,7 +272,8 @@ pub(crate) mod hayleyfs_dir {
     impl<'a, State, Op> PmObjWrapper for DentryWrapper<'a, State, Op> {}
 
     impl<'a, State, Op> DentryWrapper<'a, State, Op> {
-        fn new(dentry: &'a mut HayleyfsDentry) -> Self {
+        // TODO: is it dangerous to have this public?
+        pub(crate) fn new(dentry: &'a mut HayleyfsDentry) -> Self {
             Self {
                 state: PhantomData,
                 op: PhantomData,
@@ -298,23 +308,27 @@ pub(crate) mod hayleyfs_dir {
     impl<'a> DentryWrapper<'a, Clean, Alloc> {
         // TODO: should this state be read or alloc?
 
-        /// returns the next unused dentry on the given page
-        pub(crate) fn get_new_dentry(sbi: &SbInfo, page_no: PmPage) -> Result<Self> {
-            let page_addr = sbi.virt_addr as usize + (page_no * PAGE_SIZE);
-            let page = unsafe { &mut *(page_addr as *mut DirPage) };
+        // /// returns the next unused dentry on the given page
+        // pub(crate) fn get_new_dentry(sbi: &SbInfo, page_no: PmPage) -> Result<Self> {
+        //     let page_addr = sbi.virt_addr as usize + (page_no * PAGE_SIZE);
+        //     let page = unsafe { &mut *(page_addr as *mut DirPage) };
 
-            // obtain the next unused dentry
-            for dentry in page.dentries.iter_mut() {
-                if !dentry.valid {
-                    // pr_info!("allocating dentry #{:?}\n", i);
-                    return Ok(DentryWrapper::new(dentry));
-                }
-            }
-            // if we get here, all dentries are in use
-            Err(ENOSPC)
-        }
+        //     // obtain the next unused dentry
+        //     for dentry in page.dentries.iter_mut() {
+        //         if !dentry.valid {
+        //             // pr_info!("allocating dentry #{:?}\n", i);
+        //             return Ok(DentryWrapper::new(dentry));
+        //         }
+        //     }
+        //     // if we get here, all dentries are in use
+        //     Err(ENOSPC)
+        // }
 
-        fn initialize_dentry(self, ino: InodeNum, name: &str) -> DentryWrapper<'a, Flushed, Init> {
+        pub(crate) fn initialize_dentry(
+            self,
+            ino: InodeNum,
+            name: &str,
+        ) -> DentryWrapper<'a, Flushed, Init> {
             self.dentry.set_up(ino, name);
             DentryWrapper::new(self.dentry)
         }
@@ -340,23 +354,23 @@ pub(crate) mod hayleyfs_dir {
         }
     }
 
-    // TODO: should require dir inode wrapper?
-    pub(crate) fn initialize_self_dentry<'a>(
-        sbi: &SbInfo,
-        page_no: PmPage,
-        self_ino: InodeNum,
-    ) -> Result<DentryWrapper<'a, Flushed, Init>> {
-        Ok(DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(self_ino, "."))
-    }
+    // // TODO: should require dir inode wrapper?
+    // pub(crate) fn initialize_self_dentry<'a>(
+    //     sbi: &SbInfo,
+    //     page_no: PmPage,
+    //     self_ino: InodeNum,
+    // ) -> Result<DentryWrapper<'a, Flushed, Init>> {
+    //     Ok(DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(self_ino, "."))
+    // }
 
-    // TODO: should require dir inode wrapper?
-    pub(crate) fn initialize_parent_dentry<'a>(
-        sbi: &SbInfo,
-        page_no: PmPage,
-        parent_ino: InodeNum,
-    ) -> Result<DentryWrapper<'a, Flushed, Init>> {
-        Ok(DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(parent_ino, ".."))
-    }
+    // // TODO: should require dir inode wrapper?
+    // pub(crate) fn initialize_parent_dentry<'a>(
+    //     sbi: &SbInfo,
+    //     page_no: PmPage,
+    //     parent_ino: InodeNum,
+    // ) -> Result<DentryWrapper<'a, Flushed, Init>> {
+    //     Ok(DentryWrapper::get_new_dentry(sbi, page_no)?.initialize_dentry(parent_ino, ".."))
+    // }
 
     impl<'a, Op> DentryWrapper<'a, Flushed, Op> {
         pub(crate) unsafe fn fence_unsafe(self) -> DentryWrapper<'a, Clean, Op> {

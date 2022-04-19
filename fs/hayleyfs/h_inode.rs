@@ -175,39 +175,72 @@ pub(crate) mod hayleyfs_inode {
         }
     }
 
-    impl<'a> InodeWrapper<'a, Clean, Init, Dir> {
-        pub(crate) fn add_dir_page(
+    impl<'a, State, Op> InodeWrapper<'a, State, Op, Dir> {
+        pub(crate) fn get_new_dentry(
             self,
-            sbi: &SbInfo,
-            inode: &mut inode,
-            page: PmPage,
-            _self_dentry: DentryWrapper<'a, Clean, Init>,
-            _parent_dentry: DentryWrapper<'a, Clean, Init>,
-        ) -> Result<InodeWrapper<'a, Flushed, AddPage, Dir>> {
-            check_page_no(sbi, page)?;
-            // TODO: should probably have some wrappers that return the dirty inode and force
-            // some clearer flush/fence ordering to make sure you remember to actually do it
-            let current_size = self.inode.size;
-            let page_size_i64: i64 = PAGE_SIZE.try_into()?;
-            let pages_per_inode_i64 = DIRECT_PAGES_PER_INODE.try_into()?;
-            // if we are initializing the inode
-            if current_size == page_size_i64 && self.inode.direct_pages[0] == 0 {
-                self.inode.direct_pages[0] = page;
-            } else {
-                let index = current_size / page_size_i64;
-                if index >= pages_per_inode_i64 {
-                    pr_alert!("All direct pages are full, need to set up indirect\n");
-                    return Err(ENOSPC);
-                }
-                self.inode.size += page_size_i64;
-                unsafe { hayleyfs_i_size_write(inode, self.inode.size) };
+            sbi: &'a SbInfo,
+        ) -> Result<(
+            DentryWrapper<'a, Clean, Alloc>,
+            InodeWrapper<'a, Flushed, AddPage, Dir>,
+        )> {
+            // search for the first available dentry. if there are no free dentries on
+            // the currently allocated pages, try to allocate a new page.
+            // TODO: linear search through the dentries seems slow?
+            // TODO: handle indirect pages
+            let num_blks = self.inode.num_blks;
+            for i in 0..num_blks {
+                let i: usize = i.try_into()?;
+                let page_no = self.inode.direct_pages[i];
+                let dir_page = DirPage::read_dir_page(sbi, page_no)?;
+                let dentry = dir_page.get_next_free_dentry()?;
             }
-            self.inode.num_blks += 1;
-
-            // TODO: just flush the page you modified and the size of the inode
-            clwb(&self.inode, CACHELINE_SIZE, false);
-            Ok(InodeWrapper::new(self.inode))
+            // if we get here, we need to allocate a new page
+            // TODO: check for enospc BEFORE iterating over the entire directory
+            let (page_no, bitmap) =
+                BitmapWrapper::read_data_bitmap(sbi).find_and_set_next_zero_bit()?;
+            let bitmap = bitmap.flush().fence();
+            let pi = self.add_dir_page(page_no, bitmap)?;
+            // TODO: should read dir page require proof that the page is allocated?
+            let dir_page = DirPage::read_dir_page(sbi, page_no)?;
+            // let dentry = dir_page.dentries[0];
+            let dentry = dir_page.get_next_free_dentry()?;
+            Ok((dentry, pi))
         }
+    }
+
+    impl<'a> InodeWrapper<'a, Clean, Init, Dir> {
+        // pub(crate) fn add_dir_page(
+        //     self,
+        //     sbi: &SbInfo,
+        //     inode: &mut inode,
+        //     page: PmPage,
+        //     // _self_dentry: DentryWrapper<'a, Clean, Init>,
+        //     // _parent_dentry: DentryWrapper<'a, Clean, Init>,
+        // ) -> Result<InodeWrapper<'a, Flushed, AddPage, Dir>> {
+        //     check_page_no(sbi, page)?;
+        //     // TODO: should probably have some wrappers that return the dirty inode and force
+        //     // some clearer flush/fence ordering to make sure you remember to actually do it
+        //     let current_size = self.inode.size;
+        //     let page_size_i64: i64 = PAGE_SIZE.try_into()?;
+        //     let pages_per_inode_i64 = DIRECT_PAGES_PER_INODE.try_into()?;
+        //     // if we are initializing the inode
+        //     if current_size == page_size_i64 && self.inode.direct_pages[0] == 0 {
+        //         self.inode.direct_pages[0] = page;
+        //     } else {
+        //         let index = current_size / page_size_i64;
+        //         if index >= pages_per_inode_i64 {
+        //             pr_alert!("All direct pages are full, need to set up indirect\n");
+        //             return Err(ENOSPC);
+        //         }
+        //         self.inode.size += page_size_i64;
+        //         unsafe { hayleyfs_i_size_write(inode, self.inode.size) };
+        //     }
+        //     self.inode.num_blks += 1;
+
+        //     // TODO: just flush the page you modified and the size of the inode
+        //     clwb(&self.inode, CACHELINE_SIZE, false);
+        //     Ok(InodeWrapper::new(self.inode))
+        // }
 
         pub(crate) fn add_dir_page_fence(
             self,
@@ -241,6 +274,41 @@ pub(crate) mod hayleyfs_inode {
             clwb(&self.inode, CACHELINE_SIZE, true);
             Ok(InodeWrapper::new(self.inode))
         }
+
+        // pub(crate) fn get_new_dentry(
+        //     self,
+        //     sbi: &'a SbInfo,
+        // ) -> Result<(
+        //     DentryWrapper<'a, Clean, Read>,
+        //     InodeWrapper<'a, Clean, AddPage, Dir>,
+        // )> {
+        //     // search for the first available dentry. if there are no free dentries on
+        //     // the currently allocated pages, try to allocate a new page.
+        //     // TODO: linear search through the dentries seems slow?
+        //     // TODO: handle indirect pages
+        //     let num_blks = self.inode.num_blks;
+        //     for i in 0..num_blks {
+        //         let i: usize = i.try_into()?;
+        //         let page_no = self.inode.direct_pages[i];
+        //         let dir_page = DirPage::read_dir_page(sbi, page_no)?;
+        //         for dentry in dir_page.iter_mut() {
+        //             if !dentry.is_valid() {
+        //                 return Ok((dentry, InodeWrapper::new(self.inode)));
+        //             }
+        //         }
+        //     }
+        //     // if we get here, we need to allocate a new page
+        //     // TODO: check for enospc BEFORE iterating over the entire directory
+        //     let (page_no, bitmap) =
+        //         BitmapWrapper::read_data_bitmap(sbi).find_and_set_next_zero_bit()?;
+        //     let bitmap = bitmap.flush().fence();
+        //     let pi = self.add_dir_page(page_no, bitmap)?;
+        //     // TODO: should read dir page require proof that the page is allocated?
+        //     let dir_page = DirPage::read_dir_page(sbi, page_no)?;
+        //     // let dentry = dir_page.dentries[0];
+        //     let dentry = dir_page.get_next_free_dentry()?;
+        //     Ok((dentry, pi))
+        // }
     }
 
     // TODO: some redundant code here because we need different read methods
@@ -265,7 +333,8 @@ pub(crate) mod hayleyfs_inode {
             pages: Vec<PmPage>,
             _: BitmapWrapper<'a, Clean, Alloc, Data>,
         ) -> Result<InodeWrapper<'a, Clean, AddPage, Data>> {
-            if pages.len() as i64 + self.inode.num_blks >= DIRECT_PAGES_PER_INODE.try_into()? {
+            let num_pages: i64 = pages.len().try_into()?;
+            if num_pages + self.inode.num_blks > DIRECT_PAGES_PER_INODE.try_into()? {
                 // this should actually never happen since we adjust the number of blocks
                 // to allocate and add based on available capacity prior to calling this
                 // function
@@ -275,7 +344,24 @@ pub(crate) mod hayleyfs_inode {
                 for i in index..pages.len() {
                     self.inode.direct_pages[i] = pages[i - index];
                 }
+                self.inode.num_blks += num_pages;
                 // TODO: you don't have to flush the whole thing
+                clwb(&self.inode, size_of::<HayleyfsInode>(), true);
+                Ok(InodeWrapper::new(self.inode))
+            }
+        }
+
+        pub(crate) fn add_data_page(
+            self,
+            page_no: PmPage,
+            _: BitmapWrapper<'a, Clean, Alloc, Data>,
+        ) -> Result<InodeWrapper<'a, Clean, AddPage, Data>> {
+            if (self.inode.num_blks + 1) > DIRECT_PAGES_PER_INODE.try_into()? {
+                Err(ENOSPC)
+            } else {
+                let num_pages: usize = self.inode.num_blks.try_into()?;
+                self.inode.direct_pages[num_pages - 1] = page_no;
+                self.inode.num_blks += 1;
                 clwb(&self.inode, size_of::<HayleyfsInode>(), true);
                 Ok(InodeWrapper::new(self.inode))
             }
@@ -344,6 +430,24 @@ pub(crate) mod hayleyfs_inode {
         }
     }
 
+    impl<'a, State, Op> InodeWrapper<'a, State, Op, Dir> {
+        pub(crate) fn add_dir_page(
+            self,
+            page_no: PmPage,
+            _: BitmapWrapper<'a, Clean, Alloc, Data>,
+        ) -> Result<InodeWrapper<'a, Flushed, AddPage, Dir>> {
+            if (self.inode.num_blks + 1) > DIRECT_PAGES_PER_INODE.try_into()? {
+                Err(ENOSPC)
+            } else {
+                let num_pages: usize = self.inode.num_blks.try_into()?;
+                self.inode.direct_pages[num_pages - 1] = page_no;
+                self.inode.num_blks += 1;
+                clwb(&self.inode, size_of::<HayleyfsInode>(), false);
+                Ok(InodeWrapper::new(self.inode))
+            }
+        }
+    }
+
     impl<'a> InodeWrapper<'a, Clean, AddPage, Data> {
         pub(crate) fn set_size(
             self,
@@ -409,6 +513,7 @@ pub(crate) mod hayleyfs_inode {
                 inode,
             }
         }
+
         pub(crate) fn lookup_dentry_by_name(
             &self,
             sbi: &'a SbInfo,
@@ -426,6 +531,57 @@ pub(crate) mod hayleyfs_inode {
             }
             Err(ENOENT)
         }
+
+        // pub(crate) fn get_new_dentry(
+        //     self,
+        //     sbi: &'a SbInfo,
+        // ) -> Result<(
+        //     DentryWrapper<'a, Clean, Read>,
+        //     InodeWrapper<'a, Clean, AddPage, Dir>,
+        // )> {
+        //     // search for the first available dentry. if there are no free dentries on
+        //     // the currently allocated pages, try to allocate a new page.
+        //     // TODO: linear search through the dentries seems slow?
+        //     // TODO: handle indirect pages
+        //     let num_blks = self.inode.num_blks;
+        //     for i in 0..num_blks {
+        //         let i: usize = i.try_into()?;
+        //         let page_no = self.inode.direct_pages[i];
+        //         let dir_page = DirPage::read_dir_page(sbi, page_no)?;
+        //         for dentry in dir_page.iter_mut() {
+        //             if !dentry.is_valid() {
+        //                 return Ok((dentry, InodeWrapper::new(self.inode)));
+        //             }
+        //         }
+        //     }
+        //     // if we get here, we need to allocate a new page
+        //     // TODO: check for enospc BEFORE iterating over the entire directory
+        //     let (page_no, bitmap) =
+        //         BitmapWrapper::read_data_bitmap(sbi).find_and_set_next_zero_bit()?;
+        //     let bitmap = bitmap.flush().fence();
+        //     let pi = self.add_dir_page(page_no, bitmap)?;
+        //     // TODO: should read dir page require proof that the page is allocated?
+        //     let dir_page = DirPage::read_dir_page(sbi, page_no)?;
+        //     // let dentry = dir_page.dentries[0];
+        //     let dentry = dir_page.get_next_free_dentry()?;
+        //     Ok((dentry, pi))
+        // }
+
+        // pub(crate) fn add_dir_page(
+        //     self,
+        //     page_no: PmPage,
+        //     _: BitmapWrapper<'a, Clean, Alloc, Data>,
+        // ) -> Result<InodeWrapper<'a, Clean, AddPage, Dir>> {
+        //     if (self.inode.num_blks + 1) > DIRECT_PAGES_PER_INODE.try_into()? {
+        //         Err(ENOSPC)
+        //     } else {
+        //         let num_pages: usize = self.inode.num_blks.try_into()?;
+        //         self.inode.direct_pages[num_pages - 1] = page_no;
+        //         self.inode.num_blks += 1;
+        //         clwb(&self.inode, size_of::<HayleyfsInode>(), true);
+        //         Ok(InodeWrapper::new(self.inode))
+        //     }
+        // }
     }
 
     impl<'a> InodeWrapper<'a, Clean, Read, Unknown> {
@@ -455,12 +611,12 @@ pub(crate) mod hayleyfs_inode {
     }
 
     impl<'a, Type> InodeWrapper<'a, Clean, Read, Type> {
-        // TODO: this might need to go in a different impl
-        pub(crate) fn inc_links(self) -> InodeWrapper<'a, Flushed, Link, Type> {
-            self.inode.inc_links();
-            clwb(self.inode, size_of::<HayleyfsInode>(), false);
-            InodeWrapper::new(self.inode)
-        }
+        // // TODO: this might need to go in a different impl
+        // pub(crate) fn inc_links(self) -> InodeWrapper<'a, Flushed, Link, Type> {
+        //     self.inode.inc_links();
+        //     clwb(self.inode, size_of::<HayleyfsInode>(), false);
+        //     InodeWrapper::new(self.inode)
+        // }
 
         pub(crate) fn dec_links(self) -> InodeWrapper<'a, Flushed, Link, Type> {
             self.inode.dec_links();
@@ -487,6 +643,15 @@ pub(crate) mod hayleyfs_inode {
             }
             let zeroed_pages = fence_pages_vec(zeroed_pages)?;
             Ok(zeroed_pages)
+        }
+    }
+
+    impl<'a, Op, Type> InodeWrapper<'a, Clean, Op, Type> {
+        // TODO: this might need to go in a different impl
+        pub(crate) fn inc_links(self) -> InodeWrapper<'a, Flushed, Link, Type> {
+            self.inode.inc_links();
+            clwb(self.inode, size_of::<HayleyfsInode>(), false);
+            InodeWrapper::new(self.inode)
         }
     }
 
