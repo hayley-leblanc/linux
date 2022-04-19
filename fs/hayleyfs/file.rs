@@ -162,13 +162,14 @@ pub(crate) mod hayleyfs_file {
         // TODO: should this be unsafe? it feels very sketchy since we don't have dir
         // page wrappers, although we shouldn't be able to modify the returned dir page.
         // need to be careful about concurrency with this, potentially?
-        pub(crate) unsafe fn convert_to_dir_page(self, sbi: &SbInfo) -> &'a DirPage {
+        pub(crate) unsafe fn convert_to_dir_page(self, sbi: &SbInfo) -> &'a mut DirPage {
             // TODO: can we do this without reading from PM?
             // the page number was already checked when we created the dir page wrapper,
             // so we don't need to check it again
             // let dir_page = sbi.virt_addr as usize + (self.page_no * PAGE_SIZE)) as *mut c_void;
-            let dir_page =
-                &mut *((sbi.virt_addr as usize + (self.page_no + PAGE_SIZE)) as *mut DirPage);
+            let dir_page = unsafe {
+                &mut *((sbi.virt_addr as usize + (self.page_no + PAGE_SIZE)) as *mut DirPage)
+            };
             dir_page
         }
 
@@ -182,8 +183,10 @@ pub(crate) mod hayleyfs_file {
             buf: *const i8,
             buf_offset: i64,
         ) -> Result<(DataPageWrapper<'a, Clean, WriteData>, i64)> {
-            let dst = self.data_page.data.as_ptr().offset(page_offset.try_into()?) as *const c_void;
-            let src = buf.offset(buf_offset.try_into()?) as *const c_void;
+            let dst = unsafe {
+                self.data_page.data.as_ptr().offset(page_offset.try_into()?) as *const c_void
+            };
+            let src = unsafe { buf.offset(buf_offset.try_into()?) as *const c_void };
             let res: i64 =
                 unsafe { hayleyfs_copy_from_user_nt(dst, src, len.try_into()?).try_into()? };
             let written = len - res;
@@ -197,8 +200,10 @@ pub(crate) mod hayleyfs_file {
             buf: *mut i8,
             buf_offset: i64,
         ) -> Result<i64> {
-            let dst = buf.offset(buf_offset.try_into()?) as *mut c_void;
-            let src = self.data_page.data.as_ptr().offset(page_offset.try_into()?) as *const c_void;
+            let dst = unsafe { buf.offset(buf_offset.try_into()?) as *mut c_void };
+            let src = unsafe {
+                self.data_page.data.as_ptr().offset(page_offset.try_into()?) as *const c_void
+            };
             let res: i64 = unsafe { hayleyfs_copy_to_user(dst, src, len.try_into()?).try_into()? };
             let written = len - res;
             Ok(written)
@@ -233,7 +238,7 @@ pub(crate) mod hayleyfs_file {
     fn _hayleyfs_file_write(
         filep: &mut file,
         buf: *const i8,
-        len: usize,
+        mut len: usize,
         ppos: &mut i64,
         inode: &mut inode,
     ) -> Result<(WriteFinalizeToken, isize)> {
@@ -284,7 +289,7 @@ pub(crate) mod hayleyfs_file {
             len = (max_file_size_i64 - pi_size).try_into()?;
         }
 
-        let len_i64: i64 = len.try_into()?;
+        // let len_i64: i64 = len.try_into()?;
 
         let pi_temp;
         let mut num_pages_to_alloc = 0;
@@ -309,7 +314,8 @@ pub(crate) mod hayleyfs_file {
 
             // now allocate the required number of pages
             let allocated_page_nos = Vec::new();
-            let (bits, data_bitmap) =
+            // TODO: finalize or don't return bits
+            let (_bits, data_bitmap) =
                 BitmapWrapper::read_data_bitmap(sbi).allocate_bits(num_pages_to_alloc)?;
             let data_bitmap = data_bitmap.fence();
 
@@ -411,7 +417,7 @@ pub(crate) mod hayleyfs_file {
         vec: Vec<DataPageWrapper<'a, Flushed, Op>>,
     ) -> Result<Vec<DataPageWrapper<'a, Clean, Op>>> {
         sfence();
-        let clean_vec = Vec::new();
+        let mut clean_vec = Vec::new();
         for wrapper in vec {
             let clean_wrapper = DataPageWrapper::new(wrapper.page_no, wrapper.data_page);
             clean_vec.try_push(clean_wrapper)?;

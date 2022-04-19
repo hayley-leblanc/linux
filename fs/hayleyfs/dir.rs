@@ -58,7 +58,9 @@ pub(crate) mod hayleyfs_dir {
             }
         }
 
-        pub(crate) fn get_next_free_dentry(&'a self) -> Result<DentryWrapper<'a, Clean, Alloc>> {
+        pub(crate) fn get_next_free_dentry(
+            &'a mut self,
+        ) -> Result<DentryWrapper<'a, Clean, Alloc>> {
             for dentry in self.iter_mut() {
                 if !dentry.is_valid() {
                     return Ok(DentryWrapper::new(dentry.dentry));
@@ -189,13 +191,15 @@ pub(crate) mod hayleyfs_dir {
                     ctx.pos = READDIR_END;
                     break;
                 }
-                let res = hayleyfs_dir_emit(
-                    ctx,
-                    dentry.dentry.name.as_ptr() as *const i8,
-                    dentry.dentry.name_len.try_into().unwrap(),
-                    pi.get_ino().try_into().unwrap(),
-                    0,
-                );
+                let res = unsafe {
+                    hayleyfs_dir_emit(
+                        ctx,
+                        dentry.dentry.name.as_ptr() as *const i8,
+                        dentry.dentry.name_len.try_into().unwrap(),
+                        pi.get_ino().try_into().unwrap(),
+                        0,
+                    )
+                };
                 if !res {
                     ctx.pos = READDIR_END;
                     break;
@@ -203,7 +207,8 @@ pub(crate) mod hayleyfs_dir {
             }
         };
 
-        let result = pi.read_direct_pages(sbi, dir_emit_closure)?;
+        // TODO: finalize
+        let _result = pi.read_direct_pages(sbi, dir_emit_closure)?;
         Ok(())
     }
 
@@ -273,7 +278,7 @@ pub(crate) mod hayleyfs_dir {
 
     impl<'a, State, Op> DentryWrapper<'a, State, Op> {
         // TODO: is it dangerous to have this public?
-        pub(crate) fn new(dentry: &'a mut HayleyfsDentry) -> Self {
+        fn new(dentry: &'a mut HayleyfsDentry) -> Self {
             Self {
                 state: PhantomData,
                 op: PhantomData,

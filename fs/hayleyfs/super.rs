@@ -267,9 +267,9 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         let (root_ino, inode_bitmap) = inode_bitmap.alloc_root_ino(&data_bitmap)?;
 
         // TODO: do we need to use data bitmap again?
-        let (_data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
+        let (data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
 
-        let inode_wrapper = InodeWrapper::read_dir_inode(sbi, &root_ino).initialize_root_inode(
+        let pi = InodeWrapper::read_dir_inode(sbi, &root_ino).initialize_root_inode(
             sb,
             sbi,
             root_i,
@@ -277,21 +277,21 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         );
 
         // initialize root dir page
-        let self_dentry = inode_wrapper
-            .get_new_dentry(sbi)?
-            .initialize_dentry(root_ino, ".")?;
-        let parent_dentry = inode_wrapper
-            .get_new_dentry(sbi)?
-            .initialize_dentry(root_ino, "..")?;
+        // let self_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(root_ino, ".")?;
+        // let parent_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(root_ino, "..")?;
+        let (self_dentry, pi) = pi.get_new_dentry(sbi)?;
+        let self_dentry = self_dentry.initialize_dentry(root_ino, ".");
+        let (parent_dentry, pi) = pi.get_new_dentry(sbi)?;
+        let parent_dentry = parent_dentry.initialize_dentry(root_ino, "..");
 
-        let (inode_wrapper, self_dentry, parent_dentry) =
-            fence_all!(inode_wrapper, self_dentry, parent_dentry);
+        // TODO: finalize dentries
+        let (pi, _self_dentry, _parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
 
         // add page to inode
         // TODO: how do we enforce the use of the fence?
         // TODO: finalize inode wrapper more explicitly
-        let _inode_wrapper =
-            inode_wrapper.add_dir_page_fence(sbi, root_i, page_no, self_dentry, parent_dentry)?;
+        // let _pi = pi.add_dir_page_fence(sbi, root_i, page_no, self_dentry, parent_dentry)?;
+        let _pi = pi.add_dir_page(page_no, data_bitmap)?;
     } // else {
       // hayleyfs_recovery(sbi)?;
       //}

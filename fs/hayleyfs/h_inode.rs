@@ -105,7 +105,7 @@ pub(crate) mod hayleyfs_inode {
         /// want to operate on dir pages, you need to convert them to dir pages
         /// yourself in the closure you pass in.
         /// TODO: the data page wrapper state stuff might get funky?
-        pub(crate) fn read_direct_pages<F>(&self, sbi: &SbInfo, f: F) -> Result<()>
+        pub(crate) fn read_direct_pages<F>(&self, sbi: &SbInfo, mut f: F) -> Result<()>
         where
             F: FnMut(DataPageWrapper<'a, Clean, Read>),
         {
@@ -196,7 +196,11 @@ pub(crate) mod hayleyfs_inode {
                 let i: usize = i.try_into()?;
                 let page_no = self.inode.direct_pages[i];
                 let dir_page = DirPage::read_dir_page(sbi, page_no)?;
-                let dentry = dir_page.get_next_free_dentry()?;
+                let res = dir_page.get_next_free_dentry();
+                if let Ok(dentry) = res {
+                    let pi = unsafe { self.coerce_to_addpage_flushed() };
+                    return Ok((dentry, pi));
+                }
             }
             // if we get here, we need to allocate a new page
             // TODO: check for enospc BEFORE iterating over the entire directory
@@ -209,6 +213,30 @@ pub(crate) mod hayleyfs_inode {
             // let dentry = dir_page.dentries[0];
             let dentry = dir_page.get_next_free_dentry()?;
             Ok((dentry, pi))
+        }
+
+        pub(crate) fn coerce_to_addpage(self) -> InodeWrapper<'a, Clean, AddPage, Dir> {
+            // runtime check to make sure the coercion is valid
+            // TODO: this isn't GREAT, but should be ok since can't
+            // check at compile time?
+            assert!(self.has_data_page());
+            InodeWrapper::new(self.inode)
+        }
+    }
+
+    // TODO: be careful with this - could accidentally use it to mark an inode flushed
+    // when it is actually dirty. that is why it is marked unsafe. i think you could get
+    // this to work without unsafe fns if you just go over the addpage coercion once
+    // direct/indirect blocks are worked out
+    impl<'a, State, Op> InodeWrapper<'a, State, Op, Dir> {
+        pub(crate) unsafe fn coerce_to_addpage_flushed(
+            self,
+        ) -> InodeWrapper<'a, Flushed, AddPage, Dir> {
+            // runtime check to make sure the coercion is valid
+            // TODO: this isn't GREAT, but should be ok since can't
+            // check at compile time?
+            assert!(self.has_data_page());
+            InodeWrapper::new(self.inode)
         }
     }
 
@@ -412,7 +440,6 @@ pub(crate) mod hayleyfs_inode {
         ) -> Result<i64> {
             let page_size_i64: i64 = PAGE_SIZE.try_into()?;
             let mut bytes_read = 0;
-            let mut buffer_offset = 0;
             let mut current_page_index = offset / page_size_i64; // this is an index into the direct pages array
                                                                  // TODO: this logic will change for indirect pages
             let mut page_offset = offset - ((current_page_index - 1) * page_size_i64);
@@ -476,7 +503,6 @@ pub(crate) mod hayleyfs_inode {
             let mut page_wrapper_vec = Vec::new();
             let page_size_i64: i64 = PAGE_SIZE.try_into()?;
             let mut bytes_written = 0;
-            let mut buffer_offset = 0;
             let mut current_page_index = offset / page_size_i64; // this is an index into the direct pages array
                                                                  // TODO: this logic will change for indirect pages
             let mut page_offset = offset - ((current_page_index - 1) * page_size_i64);
@@ -633,11 +659,11 @@ pub(crate) mod hayleyfs_inode {
         pub(crate) fn clear_pages(
             &self,
             sbi: &SbInfo,
-            _: DentryWrapper<'a, Clean, Zero>,
+            _: &DentryWrapper<'a, Clean, Zero>,
         ) -> Result<Vec<DataPageWrapper<'a, Clean, Zero>>> {
             // TODO: update for indirect blocks
             let num_pages = self.inode.num_blks;
-            let zeroed_pages = Vec::new();
+            let mut zeroed_pages = Vec::new();
             assert!(num_pages <= DIRECT_PAGES_PER_INODE.try_into()?);
             for i in 0..num_pages {
                 let i: usize = i.try_into()?;

@@ -219,22 +219,40 @@ pub(crate) mod hayleyfs_bitmap {
 
     impl<'a, State, Op> BitmapWrapper<'a, State, Op, Data> {
         pub(crate) fn clear_bits(
-            self,
-            pages: Vec<DataPageWrapper<'a, Clean, Zero>>,
+            mut self,
+            pages: &Vec<DataPageWrapper<'a, Clean, Zero>>,
         ) -> Result<BitmapWrapper<'a, Flushed, Zero, Data>> {
             if pages.len() == 0 {
                 return Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines));
             }
             for pg in pages.iter() {
+                self.dirty_cache_lines
+                    .try_insert(get_cacheline_num(pg.get_page_no()), ())?;
                 unsafe {
                     hayleyfs_clear_bit(pg.get_page_no(), self.bitmap as *mut _ as *mut c_void)
                 };
             }
             // redundant, but make sure that we get a dirty bitmap out of this without re-creating
             // it every time we set a bit
-            let bitmap = self.clear_bit(*(pages.last()).unwrap())?;
+            // let bitmap = self.clear_bit(*(pages.last()).unwrap())?;
+            let bitmap = BitmapWrapper::<Dirty, Op, Data>::new(self.bitmap, self.dirty_cache_lines);
             let bitmap = bitmap.flush();
             Ok(BitmapWrapper::new(bitmap.bitmap, bitmap.dirty_cache_lines))
+        }
+
+        pub(crate) fn clear_bit<Type>(
+            mut self,
+            pi: &InodeWrapper<'a, Clean, Zero, Type>,
+        ) -> Result<BitmapWrapper<'a, Dirty, Zero, Data>> {
+            let bit = pi.get_ino();
+            if bit > PAGE_SIZE * 8 {
+                return Err(EINVAL);
+            }
+            self.dirty_cache_lines
+                .try_insert(get_cacheline_num(bit), ())?;
+            unsafe { hayleyfs_clear_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+
+            Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
         }
 
         // /// this returns a dirty bitmap even if there isn't actually
@@ -360,14 +378,14 @@ pub(crate) mod hayleyfs_bitmap {
         }
 
         pub(crate) fn allocate_bits(
-            self,
+            mut self,
             nr: i64,
         ) -> Result<(Vec<PmPage>, BitmapWrapper<'a, Flushed, Alloc, Type>)> {
             if nr <= 0 {
                 return Err(EINVAL);
             }
-            let bits_vec = Vec::<PmPage>::new();
-            for i in 0..nr {
+            let mut bits_vec = Vec::<PmPage>::new();
+            for _ in 0..nr {
                 let bit = unsafe {
                     hayleyfs_find_next_zero_bit(
                         self.bitmap as *mut _ as *mut u64,

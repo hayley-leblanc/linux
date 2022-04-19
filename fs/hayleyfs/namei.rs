@@ -183,7 +183,8 @@ fn _hayleyfs_mkdir(
     let inode_bitmap = inode_bitmap.flush();
 
     pr_info!("mkdir {:?}, allocated inode {:?}\n", dentry_name, ino);
-    let (page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
+    // TODO: finalize page no or don't return it
+    let (_page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
     let data_bitmap = data_bitmap.flush();
     // TODO: do we need to use data bitmap again?
     let (inode_bitmap, _data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
@@ -249,7 +250,7 @@ fn _hayleyfs_mkdir(
     // let self_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(ino, ".")?;
     // let parent_dentry = hayleyfs_dir::initialize_parent_dentry(sbi, page_no, ino)?;
     // let parent_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(ino, "..")?;
-    let (pi, parent_pi, self_dentry, parent_dentry) =
+    let (pi, parent_pi, _self_dentry, _parent_dentry) =
         fence_all!(pi, parent_pi, self_dentry, parent_dentry);
     pr_info!("done initializing dentries\n");
 
@@ -263,6 +264,8 @@ fn _hayleyfs_mkdir(
     let _new_dentry = new_dentry
         .initialize_mkdir_dentry(ino, dentry_name.to_str()?, &pi, &parent_pi)
         .fence();
+
+    // TODO: finalize
 
     pr_info!("all done!\n");
     Ok(())
@@ -415,9 +418,7 @@ fn _hayleyfs_create(
     pr_info!("parent ino: {:?}\n", parent_ino);
 
     // do this early so that if the directory is full, we don't create a vfs inode
-    // let new_dentry =
-    hayleyfs_dir::DentryWrapper::get_new_dentry(sbi, parent_pi.get_data_page_no())?;
-    // let new_dentry = hayleyfs_dir::Dentrywrapper::get_new_dentry(sbi, parent_pi)
+    let (new_dentry, parent_pi) = parent_pi.get_new_dentry(sbi)?;
 
     pr_info!("allocated dentry\n");
 
@@ -521,7 +522,7 @@ fn _hayleyfs_rmdir(
     // TODO: this will be slow and involve a lot of unnecessary flushes or nt stores
     // unless you automatically free pages when they have no more dentries
     // TODO: this should require parent dentry deletion
-    let zeroed_pages = pi.clear_pages(sbi, delete_dentry)?;
+    let zeroed_pages = pi.clear_pages(sbi, &delete_dentry)?;
 
     let pi = pi.zero_inode(&delete_dentry);
 
@@ -543,7 +544,7 @@ fn _hayleyfs_rmdir(
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi)
         .clear_bit(&pi)?
         .flush();
-    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi).clear_bits(zeroed_pages)?;
+    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi).clear_bits(&zeroed_pages)?;
 
     let (inode_bitmap, data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
 
@@ -616,14 +617,14 @@ fn _hayleyfs_unlink(
     // TODO: if the inode does have pages, there is an unnecessary fence here.
     // not sure how (if possible) to manage keeping track of cleanliness of
     // real pages within the empty page trait
-    let zeroed_pages = pi.clear_pages(sbi, delete_dentry)?;
+    let zeroed_pages = pi.clear_pages(sbi, &delete_dentry)?;
 
     let pi = pi.zero_inode(&delete_dentry).fence();
 
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi)
         .clear_bit(&pi)?
         .flush();
-    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi).clear_bits(zeroed_pages)?;
+    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi).clear_bits(&zeroed_pages)?;
 
     let (inode_bitmap, data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
 
