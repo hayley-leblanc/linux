@@ -346,21 +346,17 @@ pub(crate) fn _hayleyfs_lookup(
     // TODO: check that this is actually a directory and return an error if it isn't
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &(dir.i_ino.try_into()?));
 
-    let page_no = parent_pi.get_data_page_no();
-    if page_no != 0 {
+    let direct_pages_in_use: usize = (parent_pi.get_size() / PAGE_SIZE as i64).try_into()?;
+    for index in 0..direct_pages_in_use {
+        let direct_page_no = parent_pi.get_direct_pages()[index];
         let lookup_res =
-            hayleyfs_dir::lookup_ino_by_name(sbi, page_no, dentry_name.as_bytes_with_nul());
-        match lookup_res {
-            Ok(ino) => {
-                let inode = hayleyfs_iget(sb, ino)?;
-                Ok(unsafe { d_splice_alias(inode, dentry) })
-            }
-            Err(ENOENT) => Ok(unsafe { d_splice_alias(core::ptr::null_mut(), dentry) }),
-            Err(e) => Err(e),
+            hayleyfs_dir::lookup_ino_by_name(sbi, direct_page_no, dentry_name.as_bytes_with_nul());
+        if let Ok(ino) = lookup_res {
+            let inode = hayleyfs_iget(sb, ino)?;
+            return Ok(unsafe { d_splice_alias(inode, dentry) });
         }
-    } else {
-        Err(EACCES)
     }
+    Err(EACCES)
 }
 
 #[no_mangle]

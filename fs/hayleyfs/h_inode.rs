@@ -163,6 +163,10 @@ pub(crate) mod hayleyfs_inode {
             self.inode.num_blks
         }
 
+        pub(crate) fn get_direct_pages(&self) -> &[PmPage] {
+            &self.inode.direct_pages
+        }
+
         // TODO: can we invalidate without overwriting the whole thing?
         // or implement a memset with nontemporal stores at least
         pub(crate) fn zero_inode(
