@@ -25,6 +25,7 @@ pub(crate) static mut HayleyfsDirOps: file_operations = file_operations {
 pub(crate) mod hayleyfs_dir {
     use super::*;
 
+    #[derive(Debug)]
     pub(crate) struct DirPage {
         dentries: [HayleyfsDentry; DENTRIES_PER_PAGE],
     }
@@ -105,8 +106,6 @@ pub(crate) mod hayleyfs_dir {
         file: *mut file,
         ctx_raw: *mut dir_context,
     ) -> i32 {
-        pr_info!("READDIR\n");
-
         // TODO: check that the file is actually a directory
         // TODO: use in-memory inodes
         // TODO: nicer abstractions for unsafe code here
@@ -173,6 +172,7 @@ pub(crate) mod hayleyfs_dir {
         // iterate over direct pages first
         // TODO: handle indirect pages (but they aren't implemented so don't worry about that yet)
         // let direct_pages_in_use = pi.size / PAGE_SIZE;
+        pr_info!("readdir\n");
 
         let pi =
             hayleyfs_inode::InodeWrapper::read_dir_inode(sbi, &(inode.i_ino.try_into().unwrap()));
@@ -209,6 +209,7 @@ pub(crate) mod hayleyfs_dir {
 
         // TODO: finalize
         let _result = pi.read_direct_pages(sbi, dir_emit_closure)?;
+        pr_info!("readdir done\n");
         Ok(())
     }
 
@@ -222,6 +223,7 @@ pub(crate) mod hayleyfs_dir {
     }
 
     // TODO: you can use the inode number to indicate validity
+    #[derive(Debug)]
     struct HayleyfsDentry {
         valid: bool,
         ino: InodeNum,
@@ -268,6 +270,7 @@ pub(crate) mod hayleyfs_dir {
     }
 
     #[must_use]
+    #[derive(Debug)]
     pub(crate) struct DentryWrapper<'a, State, Op> {
         state: PhantomData<State>,
         op: PhantomData<Op>,

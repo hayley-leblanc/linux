@@ -183,6 +183,7 @@ pub(crate) mod hayleyfs_inode {
         pub(crate) fn get_new_dentry(
             self,
             sbi: &'a SbInfo,
+            inode: &mut inode,
         ) -> Result<(
             DentryWrapper<'a, Clean, Alloc>,
             InodeWrapper<'a, Flushed, AddPage, Dir>,
@@ -207,7 +208,7 @@ pub(crate) mod hayleyfs_inode {
             let (page_no, bitmap) =
                 BitmapWrapper::read_data_bitmap(sbi).find_and_set_next_zero_bit()?;
             let bitmap = bitmap.flush().fence();
-            let pi = self.add_dir_page(page_no, bitmap)?;
+            let pi = self.add_dir_page(page_no, inode, bitmap)?;
             // TODO: should read dir page require proof that the page is allocated?
             let dir_page = DirPage::read_dir_page(sbi, page_no)?;
             // let dentry = dir_page.dentries[0];
@@ -465,14 +466,16 @@ pub(crate) mod hayleyfs_inode {
         pub(crate) fn add_dir_page(
             self,
             page_no: PmPage,
+            inode: &mut inode,
             _: BitmapWrapper<'a, Clean, Alloc, Data>,
         ) -> Result<InodeWrapper<'a, Flushed, AddPage, Dir>> {
             if (self.inode.num_blks + 1) > DIRECT_PAGES_PER_INODE.try_into()? {
                 Err(ENOSPC)
             } else {
+                self.inode.num_blks += 1;
+                inode.i_blocks = self.inode.num_blks.try_into()?;
                 let num_pages: usize = self.inode.num_blks.try_into()?;
                 self.inode.direct_pages[num_pages - 1] = page_no;
-                self.inode.num_blks += 1;
                 clwb(&self.inode, size_of::<HayleyfsInode>(), false);
                 Ok(InodeWrapper::new(self.inode))
             }

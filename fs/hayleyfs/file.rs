@@ -31,10 +31,12 @@ pub(crate) mod hayleyfs_file {
 
     // generic page structure that can be used to represent any page
     // without a known structure
+    #[derive(Debug)]
     struct DataPage {
         data: [i8; PAGE_SIZE],
     }
 
+    #[derive(Debug)]
     pub(crate) struct DataPageWrapper<'a, State, Op> {
         state: PhantomData<State>,
         op: PhantomData<Op>,
@@ -168,7 +170,7 @@ pub(crate) mod hayleyfs_file {
             // so we don't need to check it again
             // let dir_page = sbi.virt_addr as usize + (self.page_no * PAGE_SIZE)) as *mut c_void;
             let dir_page = unsafe {
-                &mut *((sbi.virt_addr as usize + (self.page_no + PAGE_SIZE)) as *mut DirPage)
+                &mut *((sbi.virt_addr as usize + (self.page_no * PAGE_SIZE)) as *mut DirPage)
             };
             dir_page
         }

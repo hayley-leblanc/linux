@@ -79,6 +79,7 @@ pub(crate) fn hayleyfs_iget(sb: *mut super_block, ino: usize) -> Result<&'static
 
     unsafe {
         if hayleyfs_isdir(inode.i_mode) {
+            pr_info!("setting dir iops\n");
             inode.i_op = &HayleyfsDirInodeOps;
         } else if hayleyfs_isreg(inode.i_mode) {
             inode.__bindgen_anon_3.i_fop = &HayleyfsFileOps; // fileOps has to be mutable so this has to be unsafe. Why does it have to be mutable???
@@ -208,7 +209,7 @@ fn _hayleyfs_mkdir(
     // if there is (potentially allocating a new page and adding it to the parent).
     // we do this step early so that we don't create a vfs inode if the dir is full
     // HOWEVER it is too early to actually add the dentry. we are just allocating it here
-    let (new_dentry, parent_pi) = parent_pi.get_new_dentry(sbi)?;
+    let (new_dentry, parent_pi) = parent_pi.get_new_dentry(sbi, dir)?;
 
     // set up vfs inode
     // TODO: at what point should this actually happen?
@@ -242,9 +243,9 @@ fn _hayleyfs_mkdir(
     // let pi = pi.add_dir_page(sbi, inode, page_no)?.fence();
 
     pr_info!("initializing dentries\n");
-    let (self_dentry, pi) = pi.get_new_dentry(sbi)?;
+    let (self_dentry, pi) = pi.get_new_dentry(sbi, inode)?;
     let self_dentry = self_dentry.initialize_dentry(ino, ".");
-    let (parent_dentry, pi) = pi.get_new_dentry(sbi)?;
+    let (parent_dentry, pi) = pi.get_new_dentry(sbi, inode)?;
     let parent_dentry = parent_dentry.initialize_dentry(parent_ino, "..");
     // let self_dentry = hayleyfs_dir::initialize_self_dentry(sbi, page_no, ino)?;
     // let self_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(ino, ".")?;
@@ -338,6 +339,7 @@ pub(crate) fn _hayleyfs_lookup(
     dentry: &mut dentry,
     _flags: u32,
 ) -> Result<*mut dentry> {
+    pr_info!("lookup\n");
     let dentry_name = unsafe { CStr::from_char_ptr((*dentry).d_name.name as *const c_char) };
 
     let dir = unsafe { &mut *(dir as *mut inode) };
@@ -359,6 +361,7 @@ pub(crate) fn _hayleyfs_lookup(
             return Ok(unsafe { d_splice_alias(inode, dentry) });
         }
     }
+    pr_info!("returning eacces\n");
     Err(EACCES)
 }
 
@@ -418,7 +421,7 @@ fn _hayleyfs_create(
     pr_info!("parent ino: {:?}\n", parent_ino);
 
     // do this early so that if the directory is full, we don't create a vfs inode
-    let (new_dentry, parent_pi) = parent_pi.get_new_dentry(sbi)?;
+    let (new_dentry, parent_pi) = parent_pi.get_new_dentry(sbi, inode)?;
 
     pr_info!("allocated dentry\n");
 

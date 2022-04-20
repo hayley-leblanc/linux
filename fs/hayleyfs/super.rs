@@ -229,8 +229,11 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
     let mut root_i = unsafe { &mut *(root_i as *mut inode) };
 
     root_i.i_mode = sbi.mode | S_IFDIR as u16;
+    pr_info!("setting root inode dir iops\n");
     root_i.i_op = &HayleyfsDirInodeOps;
     set_nlink_safe(root_i, 2);
+
+    // pr_info!("{:?}\n", root_i);
 
     if sbi.mount_opts.init {
         // TODO: we probably shouldn't actually do this. very slow. but it will let
@@ -279,19 +282,21 @@ fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()>
         // initialize root dir page
         // let self_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(root_ino, ".")?;
         // let parent_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(root_ino, "..")?;
-        let (self_dentry, pi) = pi.get_new_dentry(sbi)?;
+        let (self_dentry, pi) = pi.get_new_dentry(sbi, root_i)?;
         let self_dentry = self_dentry.initialize_dentry(root_ino, ".");
-        let (parent_dentry, pi) = pi.get_new_dentry(sbi)?;
+        let (parent_dentry, pi) = pi.get_new_dentry(sbi, root_i)?;
         let parent_dentry = parent_dentry.initialize_dentry(root_ino, "..");
 
         // TODO: finalize dentries
         let (pi, _self_dentry, _parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
 
+        pr_info!("{:?}\n", pi);
+
         // add page to inode
         // TODO: how do we enforce the use of the fence?
         // TODO: finalize inode wrapper more explicitly
         // let _pi = pi.add_dir_page_fence(sbi, root_i, page_no, self_dentry, parent_dentry)?;
-        let _pi = pi.add_dir_page(page_no, data_bitmap)?;
+        let _pi = pi.add_dir_page(page_no, root_i, data_bitmap)?;
     } // else {
       // hayleyfs_recovery(sbi)?;
       //}
