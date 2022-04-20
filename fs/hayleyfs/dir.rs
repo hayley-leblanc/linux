@@ -218,6 +218,7 @@ pub(crate) mod hayleyfs_dir {
         page_no: PmPage,
         name: &[u8],
     ) -> Result<InodeNum> {
+        pr_info!("looking up {:?} in page {:?}\n", name, page_no);
         let dir_page = get_dir_page(sbi, page_no)?;
         dir_page.lookup_name(name)
     }

@@ -469,6 +469,7 @@ pub(crate) mod hayleyfs_inode {
             inode: &mut inode,
             _: BitmapWrapper<'a, Clean, Alloc, Data>,
         ) -> Result<InodeWrapper<'a, Flushed, AddPage, Dir>> {
+            pr_info!("ADD DIR PAGE {:?}\n", page_no);
             if (self.inode.num_blks + 1) > DIRECT_PAGES_PER_INODE.try_into()? {
                 Err(ENOSPC)
             } else {

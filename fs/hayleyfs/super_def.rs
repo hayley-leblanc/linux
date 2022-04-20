@@ -348,7 +348,7 @@ pub(crate) mod hayleyfs_bitmap {
     impl<'a> BitmapWrapper<'a, Clean, Zero, Inode> {
         pub(crate) fn alloc_root_ino(
             mut self,
-            _: &BitmapWrapper<'a, Flushed, Alloc, Data>,
+            _: &BitmapWrapper<'a, Clean, Alloc, Data>,
         ) -> Result<(InodeNum, BitmapWrapper<'a, Flushed, Alloc, Inode>)> {
             let reserved_bit = 0;
             // set bits zero and one
@@ -368,6 +368,7 @@ pub(crate) mod hayleyfs_bitmap {
                     1,
                 )
             };
+            pr_info!("found and set {:?}\n", bit);
 
             if bit == (PAGE_SIZE * 8) {
                 pr_info!("no space, ran out of bits to allocate\n");

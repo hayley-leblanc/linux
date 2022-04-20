@@ -179,22 +179,20 @@ fn _hayleyfs_mkdir(
 
     // get an inode
     let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi);
-    let data_bitmap = BitmapWrapper::read_data_bitmap(sbi);
+    // let data_bitmap = BitmapWrapper::read_data_bitmap(sbi);
     let (ino, inode_bitmap) = inode_bitmap.find_and_set_next_zero_bit()?;
     let inode_bitmap = inode_bitmap.flush();
 
-    pr_info!("mkdir {:?}, allocated inode {:?}\n", dentry_name, ino);
     // TODO: finalize page no or don't return it
-    let (_page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
-    let data_bitmap = data_bitmap.flush();
+    // let (_page_no, data_bitmap) = data_bitmap.find_and_set_next_zero_bit()?;
+    // let data_bitmap = data_bitmap.flush();
     // TODO: do we need to use data bitmap again?
-    let (inode_bitmap, _data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
+    // let (inode_bitmap, _data_bitmap) = fence_all!(inode_bitmap, data_bitmap);
+    let inode_bitmap = inode_bitmap.fence();
 
     let pi = InodeWrapper::read_dir_inode(sbi, &ino);
     let parent_ino: InodeNum = dir.i_ino.try_into()?;
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &parent_ino);
-
-    pr_info!("parent inode: {:?}\n", parent_ino);
 
     // // add new dentry to parent
     // // we can read the dentry at any time, but we can't actually modify it without methods
@@ -350,6 +348,7 @@ pub(crate) fn _hayleyfs_lookup(
     // look up parent inode
     // TODO: check that this is actually a directory and return an error if it isn't
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &(dir.i_ino.try_into()?));
+    pr_info!("parent pi: {:?}\n", parent_pi);
 
     let direct_pages_in_use: usize = (parent_pi.get_size() / PAGE_SIZE as i64).try_into()?;
     for index in 0..direct_pages_in_use {
@@ -361,8 +360,9 @@ pub(crate) fn _hayleyfs_lookup(
             return Ok(unsafe { d_splice_alias(inode, dentry) });
         }
     }
-    pr_info!("returning eacces\n");
-    Err(EACCES)
+    Ok(unsafe { d_splice_alias(core::ptr::null_mut(), dentry) })
+    // pr_info!("returning eacces\n");
+    // Err(EACCES)
 }
 
 #[no_mangle]
