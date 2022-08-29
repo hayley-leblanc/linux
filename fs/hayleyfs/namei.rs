@@ -348,9 +348,10 @@ pub(crate) fn _hayleyfs_lookup(
     // look up parent inode
     // TODO: check that this is actually a directory and return an error if it isn't
     let parent_pi = InodeWrapper::read_dir_inode(sbi, &(dir.i_ino.try_into()?));
-    pr_info!("parent pi: {:?}\n", parent_pi);
 
-    let direct_pages_in_use: usize = (parent_pi.get_size() / PAGE_SIZE as i64).try_into()?;
+    // let direct_pages_in_use: usize = (parent_pi.get_size() / PAGE_SIZE as i64).try_into()?;
+    let direct_pages_in_use: usize = parent_pi.get_num_blks().try_into()?;
+    pr_info!("direct pages in use: {:?}\n", direct_pages_in_use);
     for index in 0..direct_pages_in_use {
         let direct_page_no = parent_pi.get_direct_pages()[index];
         let lookup_res =
@@ -595,7 +596,9 @@ fn _hayleyfs_unlink(
 
     let n_links = unsafe { inode.__bindgen_anon_1.i_nlink };
     if n_links > 1 {
-        assert!(false, "Unlinking files with hard links is not implemented");
+        // assert!(false, "Unlinking files with hard links is not implemented");
+        pr_info!("Unlinking files with hard links is not implemented");
+        return Err(EPERM);
     }
 
     unsafe { drop_nlink(inode) };

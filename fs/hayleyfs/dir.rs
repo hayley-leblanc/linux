@@ -192,10 +192,13 @@ pub(crate) mod hayleyfs_dir {
                     break;
                 }
                 let res = unsafe {
+                    pr_info!("{:?}\n", dentry);
+                    pr_alert!("DENTRY NAME LEN: {:?}\n", dentry.dentry.name_len);
+                    let len: i32 = dentry.dentry.name_len.try_into().unwrap();
                     hayleyfs_dir_emit(
                         ctx,
                         dentry.dentry.name.as_ptr() as *const i8,
-                        dentry.dentry.name_len.try_into().unwrap(),
+                        len,
                         pi.get_ino().try_into().unwrap(),
                         0,
                     )
@@ -218,7 +221,6 @@ pub(crate) mod hayleyfs_dir {
         page_no: PmPage,
         name: &[u8],
     ) -> Result<InodeNum> {
-        pr_info!("looking up {:?} in page {:?}\n", name, page_no);
         let dir_page = get_dir_page(sbi, page_no)?;
         dir_page.lookup_name(name)
     }

@@ -96,6 +96,7 @@ pub(crate) mod hayleyfs_inode {
         }
 
         pub(crate) fn has_data_page(&self) -> bool {
+            pr_info!("has data page ino {:?}: {:?}\n", self.ino, self.inode);
             self.inode.direct_pages[0] != 0
         }
 
@@ -193,6 +194,7 @@ pub(crate) mod hayleyfs_inode {
             // TODO: linear search through the dentries seems slow?
             // TODO: handle indirect pages
             let num_blks = self.inode.num_blks;
+            pr_info!("num blks: {:?}\n", num_blks);
             for i in 0..num_blks {
                 let i: usize = i.try_into()?;
                 let page_no = self.inode.direct_pages[i];
@@ -236,6 +238,9 @@ pub(crate) mod hayleyfs_inode {
             // runtime check to make sure the coercion is valid
             // TODO: this isn't GREAT, but should be ok since can't
             // check at compile time?
+            if !self.has_data_page() {
+                pr_info!("Inode {:?} does not have a data page\n", self.ino);
+            }
             assert!(self.has_data_page());
             InodeWrapper::new(self.inode)
         }
