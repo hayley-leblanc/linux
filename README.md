@@ -9,3 +9,29 @@ General discussions, announcements, questions, etc. take place on the mailing li
 All contributors to this effort are understood to have agreed to the Linux kernel development process as explained in the different files under [`Documentation/process`](https://www.kernel.org/doc/html/latest/process/index.html).
 
 <!-- XXX: Only for GitHub -- do not commit into mainline -->
+
+# Rust FS setup instructions
+TODO: come up with a nice name for it :)
+
+## VM setup
+TODO
+
+## Kernel setup
+TODO
+
+Building the kernel: `make LLVM=1 -j n`
+
+Installing the kernel: `sudo make modules modules_install install`
+
+## Mounting the file system
+
+To rebuild just the file system (not the whole kernel): `make LLVM=1 fs/hayleyfs/hayleyfs.ko`
+
+To load the file system module: `make LLVM=1 fs/hayleyfs/hayleyfs.ko`
+
+To mount the file system: `sudo mount -t hayleyfs -o init /dev/pmem0 /mnt/pmem`
+
+## Running tests
+### xfstests
+Building: TODO
+Running an individual test: `cd xfstests; sudo ./check generic/<test number>`
