@@ -39,9 +39,10 @@ The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <ima
     5. `rustup component add clippy` to install the `clippy` linter
 4. Run `yes "" | make config` to make a configuration file with the default options selected.
 5. Ensure the `CONFIG_RUST` option (`General Setup -> Rust support`) is set to Y. If this option isn't available, make sure that `make LLVM=1 rustavailable` returns success and `CONFIG_MODVERSIONS` and `CONFIG_DEBUG_INFO_BTF` are disabled.
-6. Set the following config options to avoid weird build issues:
+6. Set the following config options to avoid issues down the line:
     1. Set `CONFIG_SYSTEM_TRUSTED_KEYS` to an empty string
     2. Set `CONFIG_SYSTEM_REVOCATION_KEYS` to N
+    3. Set `CONFIG_MODULES` to Y to enable loadable module support
 8. Build the kernel with `make LLVM=1 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
 
 Installing the kernel: `sudo make modules modules_install install`
