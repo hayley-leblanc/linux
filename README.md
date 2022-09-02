@@ -39,13 +39,36 @@ The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <ima
     5. `rustup component add clippy` to install the `clippy` linter
 4. Run `make defconfig` to make a configuration file with the default options selected.
 5. Ensure the `CONFIG_RUST` option (`General Setup -> Rust support`) is set to Y. If this option isn't available, make sure that `make LLVM=1 rustavailable` returns success and `CONFIG_MODVERSIONS` and `CONFIG_DEBUG_INFO_BTF` are disabled.
-6. Set the following config options to avoid issues down the line:
+6. Set the following config options. These should be done in the order listed to ensure dependencies are satisfied.
     1. Set `CONFIG_SYSTEM_TRUSTED_KEYS` to an empty string
     2. Set `CONFIG_SYSTEM_REVOCATION_KEYS` to N
-    3. Set `CONFIG_MODULES` to Y to enable loadable module support
+    3. Set `CONFIG_MODULES` to Y 
+    4. Set `CONFIG_MEMORY_HOTPLUG` and `CONFIG_MEMORY_HOTREMOVE` to Y
+    5. Set `CONFIG_ZONE_DEVICE` to Y
+    6. Set `CONFIG_LIBNVDIMM`, `CONFIG_BTT`, `CONFIG_NVDIMM_PFN`, and `CONFIG_NVDIMM_DAX` to Y
+    7. Set `CONFIG_BLK_DEV_PMEM` to M
+    8. Set `CONFIG_DAX` to Y
+    9. Set `CONFIG_X86_PMEM_LEGACY` to Y
 8. Build the kernel with `make LLVM=1 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
+9. Edit `/etc/default/grub` by updating `GRUB_CMDLINE_LINUX` to `GRUB_CMDLINE_LINUX="memmap=1G!4G`. This reserves the region 4GB-5GB for PM. 
+10. Run `sudo update-grub2`
 
 Installing the kernel: `sudo make modules_install install`. 
+
+## Emulating storage devices
+
+### Persistent memory
+
+See here: https://pmem.io/blog/2016/02/how-to-emulate-persistent-memory/ for info on emulating PM.
+
+Config options 4-9 in the kernel setup section are related to PM emulation. Steps 9 and 10 ensure that memory is reserved for emulated PM. 
+
+To ensure that the PM is being emulated properly after following these stems, check that device `/dev/pmem0` exists.
+
+
+### CXL
+
+TODO
 
 ## Mounting the file system
 
