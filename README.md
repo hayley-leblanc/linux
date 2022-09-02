@@ -32,16 +32,16 @@ The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <ima
 1. Clone the kernel using `git clone --filter=blob:none git@github.com:hayley-leblanc/linux.git`
 2. Install Rust (see https://www.rust-lang.org/tools/install).
 3. `cd linux` and follow the instructions here https://github.com/Rust-for-Linux/linux/blob/rust/Documentation/rust/quick-start.rst to install Rust dependencies. Currently, those steps are:
-  - `rustup override set $(scripts/min-tool-version.sh rustc)` to set the correct version of the Rust compiler
-  - `rustup component add rust-src` to obtain the Rust standard library source
-  - `cargo install --locked --version $(scripts/min-tool-version.sh bindgen) bindgen` to install bindgen, which is used to set up C bindings in the Rust part of the kernel.
-  - `rustup component add rustfmt` to install a tool to automatically format Rust code. IDEs will use this to format data if they are configured to run a formatter on save.
-  - `rustup component add clippy` to install the `clippy` linter
+    1. `rustup override set $(scripts/min-tool-version.sh rustc)` to set the correct version of the Rust compiler
+    2. `rustup component add rust-src` to obtain the Rust standard library source
+    3. `cargo install --locked --version $(scripts/min-tool-version.sh bindgen) bindgen` to install bindgen, which is used to set up C bindings in the Rust part of the kernel.
+    4. `rustup component add rustfmt` to install a tool to automatically format Rust code. IDEs will use this to format data if they are configured to run a formatter on save.
+    5. `rustup component add clippy` to install the `clippy` linter
 4. Run `yes "" | make config` to make a configuration file with the default options selected.
 5. Ensure the `CONFIG_RUST` option (`General Setup -> Rust support`) is set to Y. If this option isn't available, make sure that `make LLVM=1 rustavailable` returns success and `CONFIG_MODVERSIONS` and `CONFIG_DEBUG_INFO_BTF` are disabled.
 6. Set the following config options to avoid weird build issues:
-  - Set `CONFIG_SYSTEM_TRUSTED_KEYS` to an empty string
-  - Set `CONFIG_SYSTEM_REVOCATION_KEYS` to N
+    1. Set `CONFIG_SYSTEM_TRUSTED_KEYS` to an empty string
+    2. Set `CONFIG_SYSTEM_REVOCATION_KEYS` to N
 8. Build the kernel with `make LLVM=1 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
 
 Installing the kernel: `sudo make modules modules_install install`
