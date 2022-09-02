@@ -23,8 +23,8 @@ TODO: create a script for this
 2. Download Ubuntu 20.04 and boot the VM using `qemu-system-x86_64 -boot d -cdrom <path to ubuntu ISO> -m 8G -hda <image name> -enable-kvm`.
 3. Follow the instructions in the graphical VM to install Ubuntu
 4. Quit the VM and boot it again, this time using `qemu-system-x86_64 -boot c -m 8G -hda <image name> -enable-kvm`. 
-5. Open a terminal in the graphical VM and run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang-11 lld-11`.
-6. Fix symlinks so the correct versions are used: `cd /usr/bin; sudo ln -s clang-11 clang; sudo sudo ln -s ld.lld-11 ld.lld sudo ln -s ld.lld-11 ld.lld; sudo ln -s llvm-nm-11 llvm-nm; sudo ln -s llvm-objcopy-11 llvm-objcopy`
+5. Open a terminal in the graphical VM and run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang-11 lld-11 zstd`.
+6. Fix symlinks so the correct versions are used: `cd /usr/bin; sudo ln -s clang-11 clang; sudo sudo ln -s ld.lld-11 ld.lld sudo ln -s ld.lld-11 ld.lld; sudo ln -s llvm-nm-11 llvm-nm; sudo ln -s llvm-objcopy-11 llvm-objcopy; sudo ln -s llvm-strip-11 llvm-strip; sudo ln -s llvm-objdump-11 llvm-objdump`
 
 The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <image name> -enable-kvm -net nic -net user,hostfwd=tcp::2222-:22 -cpu host -nographic -smp <cores>` and accessed via `ssh` over port 2222. 
 
