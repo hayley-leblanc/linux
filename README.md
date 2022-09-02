@@ -24,7 +24,7 @@ TODO: create a script for this
 3. Follow the instructions in the graphical VM to install Ubuntu
 4. Quit the VM and boot it again, this time using `qemu-system-x86_64 -boot c -m 8G -hda <image name> -enable-kvm`. 
 5. Open a terminal in the graphical VM and run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang-11 lld-11 zstd`.
-6. Fix symlinks so the correct versions are used: `cd /usr/bin; sudo ln -s clang-11 clang; sudo ln -s ld.lld-11 ld.lld; sudo ln -s llvm-nm-11 llvm-nm; sudo ln -s llvm-objcopy-11 llvm-objcopy; sudo ln -s llvm-strip-11 llvm-strip; sudo ln -s llvm-objdump-11 llvm-objdump`
+6. Fix symlinks so the correct versions are used: `cd /usr/bin; sudo ln -s clang-11 clang; sudo ln -s ld.lld-11 ld.lld; sudo ln -s llvm-nm-11 llvm-nm; sudo ln -s llvm-objcopy-11 llvm-objcopy; sudo ln -s llvm-strip-11 llvm-strip; sudo ln -s llvm-objdump-11 llvm-objdump; sudo ln -s llvm-ar-11 llvm-ar`
 
 The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <image name> -enable-kvm -net nic -net user,hostfwd=tcp::2222-:22 -cpu host -nographic -smp <cores>` and accessed via `ssh` over port 2222. 
 
@@ -37,7 +37,7 @@ The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <ima
     3. `cargo install --locked --version $(scripts/min-tool-version.sh bindgen) bindgen` to install bindgen, which is used to set up C bindings in the Rust part of the kernel.
     4. `rustup component add rustfmt` to install a tool to automatically format Rust code. IDEs will use this to format data if they are configured to run a formatter on save.
     5. `rustup component add clippy` to install the `clippy` linter
-4. Run `yes "" | make config` to make a configuration file with the default options selected.
+4. Run `make defconfig` to make a configuration file with the default options selected.
 5. Ensure the `CONFIG_RUST` option (`General Setup -> Rust support`) is set to Y. If this option isn't available, make sure that `make LLVM=1 rustavailable` returns success and `CONFIG_MODVERSIONS` and `CONFIG_DEBUG_INFO_BTF` are disabled.
 6. Set the following config options to avoid issues down the line:
     1. Set `CONFIG_SYSTEM_TRUSTED_KEYS` to an empty string
@@ -45,7 +45,7 @@ The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <ima
     3. Set `CONFIG_MODULES` to Y to enable loadable module support
 8. Build the kernel with `make LLVM=1 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
 
-Installing the kernel: `sudo make modules modules_install install`
+Installing the kernel: `sudo make modules_install install`. 
 
 ## Mounting the file system
 
