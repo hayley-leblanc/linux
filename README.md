@@ -14,9 +14,10 @@ All contributors to this effort are understood to have agreed to the Linux kerne
 TODO: come up with a nice name for it :)
 
 ## VM setup
-Easiest way to run this right now is to create a big VM and do everything inside it. Building the Linux kernel requires a lot of space - my first VM grew to 70GB. 
+Easiest way to run this right now is to create a big VM and do everything inside it. Building the Linux kernel requires a lot of space; 70GB seems safe. 50GB works but can run out of space on kernel rebuilds (which can be fixed by running `make clean` but that is annoying).
 
 TODO: figure out what the minimum size is
+
 TODO: create a script for this
 
 1. Create the VM image: `qemu-img create -f qcow2 <image name> <size>`.
@@ -37,19 +38,20 @@ The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <ima
     3. `cargo install --locked --version $(scripts/min-tool-version.sh bindgen) bindgen` to install bindgen, which is used to set up C bindings in the Rust part of the kernel.
     4. `rustup component add rustfmt` to install a tool to automatically format Rust code. IDEs will use this to format data if they are configured to run a formatter on save.
     5. `rustup component add clippy` to install the `clippy` linter
-4. Run `make defconfig` to make a configuration file with the default options selected.
-5. Ensure the `CONFIG_RUST` option (`General Setup -> Rust support`) is set to Y. If this option isn't available, make sure that `make LLVM=1 rustavailable` returns success and `CONFIG_MODVERSIONS` and `CONFIG_DEBUG_INFO_BTF` are disabled.
-6. Set the following config options. These should be done in the order listed to ensure dependencies are satisfied.
-    1. Set `CONFIG_SYSTEM_TRUSTED_KEYS` to an empty string
-    2. Set `CONFIG_SYSTEM_REVOCATION_KEYS` to N
-    3. Set `CONFIG_MODULES` to Y 
-    4. Set `CONFIG_MEMORY_HOTPLUG` and `CONFIG_MEMORY_HOTREMOVE` to Y
-    5. Set `CONFIG_ZONE_DEVICE` to Y
-    6. Set `CONFIG_LIBNVDIMM`, `CONFIG_BTT`, `CONFIG_NVDIMM_PFN`, and `CONFIG_NVDIMM_DAX` to Y
-    7. Set `CONFIG_BLK_DEV_PMEM` to M
-    8. Set `CONFIG_DAX` to Y
-    9. Set `CONFIG_X86_PMEM_LEGACY` to Y
-    10. Set `CONFIG_FS_DAX` to Y
+4. Use `CONFIG` to set up the kernel configuration OR:
+    1. run `make defconfig` to make a configuration file with the default options selected.
+    2. Ensure the `CONFIG_RUST` option (`General Setup -> Rust support`) is set to Y. If this option isn't available, make sure that `make LLVM=1 rustavailable` returns success and `CONFIG_MODVERSIONS` and `CONFIG_DEBUG_INFO_BTF` are disabled.
+    3. Set the following config options. These should be done in the order listed to ensure dependencies are satisfied. 
+        1. Set `CONFIG_SYSTEM_TRUSTED_KEYS` to an empty string
+        2. Set `CONFIG_SYSTEM_REVOCATION_KEYS` to N
+        3. Set `CONFIG_MODULES` to Y 
+        4. Set `CONFIG_MEMORY_HOTPLUG` and `CONFIG_MEMORY_HOTREMOVE` to Y
+        5. Set `CONFIG_ZONE_DEVICE` to Y
+        6. Set `CONFIG_LIBNVDIMM`, `CONFIG_BTT`, `CONFIG_NVDIMM_PFN`, and `CONFIG_NVDIMM_DAX` to Y
+        7. Set `CONFIG_BLK_DEV_PMEM` to M
+        8. Set `CONFIG_DAX` to Y
+        9. Set `CONFIG_X86_PMEM_LEGACY` to Y
+        10. Set `CONFIG_FS_DAX` to Y
 7. Optional: if you want to use rust-analyzer for development, run `make rust-analyzer` to generate the necessary files.
 8. Build the kernel with `make LLVM=1 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
 9. Edit `/etc/default/grub` by updating `GRUB_CMDLINE_LINUX` to `GRUB_CMDLINE_LINUX="memmap=1G!4G`. This reserves the region 4GB-5GB for PM. 
@@ -61,7 +63,7 @@ Installing the kernel: `sudo make modules_install install`
 
 To rebuild just the file system (not the whole kernel): `make LLVM=1 fs/hayleyfs/hayleyfs.ko`
 
-To load the file system module: `make LLVM=1 fs/hayleyfs/hayleyfs.ko`
+To load the file system module: `insmod fs/hayleyfs/hayleyfs.ko`
 
 To mount the file system: `sudo mount -t hayleyfs -o init /dev/pmem0 /mnt/pmem`
 

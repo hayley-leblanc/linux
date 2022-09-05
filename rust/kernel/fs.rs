@@ -707,6 +707,16 @@ pub struct SuperBlock<T: Type + ?Sized>(
     PhantomData<T>,
 );
 
+/// HL: added this impl so that we can actually access fields of the superblock
+/// outside of this crate
+impl<T: Type + ?Sized> SuperBlock<T> {
+    /// safety should be enfored by typestate; the SB has been initialized
+    /// and should have a valid pointer to a block device
+    pub fn get_bdev(&self) -> *mut bindings::block_device {
+        unsafe { (*self.0.get()).s_bdev }
+    }
+}
+
 /// Wraps the kernel's `struct inode`.
 ///
 /// # Invariants

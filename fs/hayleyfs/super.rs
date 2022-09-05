@@ -8,14 +8,17 @@
 #![deny(clippy::let_underscore_must_use)]
 #![deny(clippy::used_underscore_binding)]
 
-// mod def;
+mod def;
 // mod dir;
 // mod file;
 // mod finalize;
 // mod h_inode;
 // mod namei;
 // mod pm;
-// mod super_def;
+mod super_def;
+
+// use core::ffi::c_void;
+// use kernel::fs::SuperBlock;
 
 // use crate::def::*;
 // use crate::dir::*;
@@ -25,8 +28,7 @@
 // use crate::pm::*;
 // use crate::super_def::hayleyfs_bitmap::*;
 // use crate::super_def::hayleyfs_sb::*;
-// use crate::super_def::*;
-// use core::ffi::{c_int, c_void};
+use crate::super_def::*;
 // use core::ptr;
 
 // use kernel::bindings::{
@@ -36,6 +38,7 @@
 //     S_IFDIR,
 // };
 
+use kernel::bindings;
 use kernel::prelude::*;
 // use kernel::{c_default_struct, c_str, fs, PAGE_SIZE};
 use kernel::{c_str, fs};
@@ -48,51 +51,107 @@ module_fs! {
     license: "GPL v2",
 }
 
-struct HayleyFS {}
-
 #[vtable]
 impl fs::Context<Self> for HayleyFS {
-    type Data = ();
+    type Data = Box<SbInfo>;
 
-    kernel::define_fs_params! {(),
-        {flag, "flag", |_, v| { pr_info!("flag passed-in: {v}\n"); Ok(()) } },
-        {flag_no, "flagno", |_, v| { pr_info!("flagno passed-in: {v}\n"); Ok(()) } },
-        {bool, "bool", |_, v| { pr_info!("bool passed-in: {v}\n"); Ok(()) } },
-        {u32, "u32", |_, v| { pr_info!("u32 passed-in: {v}\n"); Ok(()) } },
-        {u32oct, "u32oct", |_, v| { pr_info!("u32oct passed-in: {v}\n"); Ok(()) } },
-        {u32hex, "u32hex", |_, v| { pr_info!("u32hex passed-in: {v}\n"); Ok(()) } },
-        {s32, "s32", |_, v| { pr_info!("s32 passed-in: {v}\n"); Ok(()) } },
-        {u64, "u64", |_, v| { pr_info!("u64 passed-in: {v}\n"); Ok(()) } },
-        {string, "string", |_, v| { pr_info!("string passed-in: {v}\n"); Ok(()) } },
-        {enum, "enum", [("first", 10), ("second", 20)], |_, v| {
-            pr_info!("enum passed-in: {v}\n"); Ok(()) }
-        },
+    kernel::define_fs_params! {Box<SbInfo>,
+        {flag, "init", |s, v| {s.mount_opts.init = Some(true); pr_info!("init {}", v); Ok(())}},
+        // {flag, "flag", |_, v| { pr_info!("flag passed-in: {v}\n"); Ok(()) } },
+        // {flag_no, "flagno", |_, v| { pr_info!("flagno passed-in: {v}\n"); Ok(()) } },
+        // {bool, "bool", |_, v| { pr_info!("bool passed-in: {v}\n"); Ok(()) } },
+        // {u32, "u32", |_, v| { pr_info!("u32 passed-in: {v}\n"); Ok(()) } },
+        // {u32oct, "u32oct", |_, v| { pr_info!("u32oct passed-in: {v}\n"); Ok(()) } },
+        // {u32hex, "u32hex", |_, v| { pr_info!("u32hex passed-in: {v}\n"); Ok(()) } },
+        // {s32, "s32", |_, v| { pr_info!("s32 passed-in: {v}\n"); Ok(()) } },
+        // {u64, "u64", |_, v| { pr_info!("u64 passed-in: {v}\n"); Ok(()) } },
+        // {string, "string", |_, v| { pr_info!("string passed-in: {v}\n"); Ok(()) } },
+        // {enum, "enum", [("first", 10), ("second", 20)], |_, v| {
+        //     pr_info!("enum passed-in: {v}\n"); Ok(()) }
+        // },
     }
 
-    fn try_new() -> Result {
-        pr_info!("context created!\n");
-        Ok(())
+    fn try_new() -> Result<Self::Data> {
+        pr_info!("creating context\n");
+        Ok(alloc_sbi()?)
     }
 }
 
 impl fs::Type for HayleyFS {
+    type Data = Box<SbInfo>;
     type Context = Self;
-    const SUPER_TYPE: fs::Super = fs::Super::Single; // TODO: or SingleReconf or BlockDev?
-    const NAME: &'static CStr = c_str!("rustfs");
+    const SUPER_TYPE: fs::Super = fs::Super::BlockDev; // TODO: or SingleReconf or BlockDev?
+    const NAME: &'static CStr = c_str!("hayleyfs");
     const FLAGS: i32 = fs::flags::USERNS_MOUNT | fs::flags::REQUIRES_DEV; // TODO: other options?
 
-    fn fill_super(_data: (), sb: fs::NewSuperBlock<'_, Self>) -> Result<&fs::SuperBlock<Self>> {
+    fn fill_super(
+        data: Self::Data,
+        sb: fs::NewSuperBlock<'_, Self>,
+    ) -> Result<&fs::SuperBlock<Self>> {
+        pr_info!("fill super\n");
+
         let sb = sb.init(
-            (),
+            data,
             &fs::SuperParams {
                 magic: 0x72757374,
                 ..fs::SuperParams::DEFAULT
             },
         )?;
+
         let sb = sb.init_root()?;
+
+        // TODO: need to fill in sbi at some point - might not be here
+        // let result = unsafe {
+        //     bindings::fs_dax_get_by_bdev(&sb.get_bdev(), &mut data.s_dev_offset as *mut u64)
+        // };
+        // data.s_daxdev = result;
+
         Ok(sb)
     }
 }
+
+#[no_mangle]
+fn alloc_sbi() -> Result<Box<SbInfo>> {
+    let sbi = Box::<SbInfo>::try_new_zeroed();
+    match sbi {
+        Ok(sbi) => {
+            let sbi = unsafe { sbi.assume_init() }; // TODO: safer way to do this
+            Ok(sbi)
+        }
+        Err(_) => Err(kernel::Error::from_kernel_errno(
+            bindings::ENOMEM.try_into()?,
+        )),
+    }
+}
+
+// #[no_mangle]
+// fn hayleyfs_fill_super(sb: &SuperBlock<HayleyFS>) -> Result<()> {
+//     // let registration = Registration::new();
+//     // Pin::new(&mut registration).register(ThisModule);
+
+//     // we previously handled parameters here but those have been taken care of already
+//     let mut superblock = sb.0.get();
+//     superblock.s_fs_info = result;
+
+//     Ok(())
+// }
+
+// #[no_mangle]
+// fn hayleyfs_alloc_sbi() -> Result<SbInfo> {
+
+//     // let sbi = Box::<SbInfo>::try_new_zeroed();
+//     // pr_info!("allocating sbi\n");
+//     // match sbi {
+//     //     Ok(sbi) => {
+//     //         let mut sbi = unsafe { sbi.assume_init() };
+//     //         sbi.s_dev_offset = 0;
+//     //         let sbi_ptr = Box::into_raw(sbi) as *mut c_void;
+
+//     //         sbi_ptr
+//     //     }
+//     //     Err(_) => unsafe { hayleyfs_err_ptr(ENOMEM.to_kernel_errno()) },
+//     // }
+// }
 
 // #[no_mangle]
 // static mut HayleyfsFsType: file_system_type = file_system_type {

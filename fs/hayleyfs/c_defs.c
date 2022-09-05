@@ -77,7 +77,7 @@ void hayleyfs_write_gid(struct inode *inode, gid_t gid) {
     i_gid_write(inode, gid);
 }
 
-void* hayleyfs_err_ptr(long error) {
+void* hayleyfs_err_ptr(int error) {
     return ERR_PTR(error);
 }
 
