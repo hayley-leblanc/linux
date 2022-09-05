@@ -56,7 +56,6 @@ impl Resource {
 ///
 ///     Ok(())
 /// }
-///
 /// ```
 pub struct IoMem<const SIZE: usize> {
     ptr: usize,
@@ -68,6 +67,7 @@ macro_rules! define_read {
         ///
         /// If the offset is not known at compile time, the build will fail.
         $(#[$attr])*
+        #[inline]
         pub fn $name(&self, offset: usize) -> $type_name {
             Self::check_offset::<$type_name>(offset);
             let ptr = self.ptr.wrapping_add(offset);
@@ -100,6 +100,7 @@ macro_rules! define_write {
         ///
         /// If the offset is not known at compile time, the build will fail.
         $(#[$attr])*
+        #[inline]
         pub fn $name(&self, value: $type_name, offset: usize) {
             Self::check_offset::<$type_name>(offset);
             let ptr = self.ptr.wrapping_add(offset);
@@ -164,6 +165,7 @@ impl<const SIZE: usize> IoMem<SIZE> {
         }
     }
 
+    #[inline]
     const fn offset_ok<T>(offset: usize) -> bool {
         let type_size = core::mem::size_of::<T>();
         if let Some(end) = offset.checked_add(type_size) {
@@ -183,6 +185,7 @@ impl<const SIZE: usize> IoMem<SIZE> {
         }
     }
 
+    #[inline]
     const fn check_offset<T>(offset: usize) {
         crate::build_assert!(Self::offset_ok::<T>(offset), "IoMem offset overflow");
     }
@@ -191,7 +194,6 @@ impl<const SIZE: usize> IoMem<SIZE> {
     ///
     /// # Examples
     /// ```
-    /// # use kernel::prelude::*;
     /// use kernel::io_mem::{self, IoMem, Resource};
     ///
     /// fn test(res: Resource) -> Result {

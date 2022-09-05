@@ -46,7 +46,7 @@
 //! When the waiter queue is non-empty, unlocking the mutex always results in the first waiter being
 //! popped form the queue and awakened.
 
-use super::{mutex::EmptyGuardContext, Guard, Lock, LockFactory, LockIniter};
+use super::{mutex::EmptyGuardContext, Guard, Lock, LockClassKey, LockFactory, LockIniter};
 use crate::{bindings, str::CStr, Opaque};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{cell::UnsafeCell, pin::Pin};
@@ -71,7 +71,7 @@ const LOCKED: usize = 1;
 ///     b: u32,
 /// }
 ///
-/// static EXAMPLE: Mutex<Example> = Mutex::new(Example{ a: 10, b: 20 });
+/// static EXAMPLE: Mutex<Example> = Mutex::new(Example { a: 10, b: 20 });
 ///
 /// fn inc_a(example: &Mutex<Example>) {
 ///     let mut guard = example.lock();
@@ -84,8 +84,18 @@ const LOCKED: usize = 1;
 /// }
 ///
 /// fn try_new(a: u32, b: u32) -> Result<Ref<Mutex<Example>>> {
-///     Ref::try_new(Mutex::new(Example {a, b}))
+///     Ref::try_new(Mutex::new(Example { a, b }))
 /// }
+///
+/// assert_eq!(EXAMPLE.lock().a, 10);
+/// assert_eq!(sum(&EXAMPLE), 30);
+///
+/// inc_a(&EXAMPLE);
+///
+/// assert_eq!(EXAMPLE.lock().a, 11);
+/// assert_eq!(sum(&EXAMPLE), 31);
+///
+/// # try_new(42, 43);
 /// ```
 pub struct Mutex<T: ?Sized> {
     /// A stack of waiters.
@@ -143,12 +153,7 @@ impl<T> LockFactory for Mutex<T> {
 }
 
 impl<T> LockIniter for Mutex<T> {
-    unsafe fn init_lock(
-        self: Pin<&mut Self>,
-        _name: &'static CStr,
-        _key: *mut bindings::lock_class_key,
-    ) {
-    }
+    fn init_lock(self: Pin<&mut Self>, _name: &'static CStr, _key: &'static LockClassKey) {}
 }
 
 // SAFETY: The mutex implementation ensures mutual exclusion.

@@ -38,6 +38,7 @@
 *.o.*
 *.patch
 *.rmeta
+*.rsi
 *.s
 *.so
 *.so.dbg
@@ -46,6 +47,7 @@
 *.symversions
 *.tab.[ch]
 *.tar
+*.usyms
 *.xz
 *.zst
 Module.symvers

@@ -6,8 +6,11 @@
 //!
 //! See <https://www.kernel.org/doc/Documentation/locking/spinlocks.txt>.
 
-use super::{mutex::EmptyGuardContext, Guard, Lock, LockFactory, LockInfo, LockIniter, WriteLock};
-use crate::{bindings, c_types, str::CStr, Opaque, True};
+use super::{
+    mutex::EmptyGuardContext, Guard, Lock, LockClassKey, LockFactory, LockInfo, LockIniter,
+    WriteLock,
+};
+use crate::{bindings, str::CStr, Opaque, True};
 use core::{cell::UnsafeCell, marker::PhantomPinned, pin::Pin};
 
 /// Safely initialises a [`SpinLock`] with the given name, generating a new lock class.
@@ -38,7 +41,6 @@ macro_rules! spinlock_init {
 /// # Examples
 ///
 /// ```
-/// # use kernel::prelude::*;
 /// # use kernel::sync::SpinLock;
 /// # use core::pin::Pin;
 ///
@@ -61,15 +63,18 @@ macro_rules! spinlock_init {
 ///     guard.b = 40;
 /// }
 ///
-/// // Initialises a spinlock and calls the example functions.
-/// pub fn spinlock_example() {
-///     // SAFETY: `spinlock_init` is called below.
-///     let mut value = unsafe { SpinLock::new(Example { a: 1, b: 2 }) };
-///     // SAFETY: We don't move `value`.
-///     kernel::spinlock_init!(unsafe { Pin::new_unchecked(&mut value) }, "value");
-///     lock_example(&value);
-///     lock_irqdisable_example(&value);
-/// }
+/// // Initialises a spinlock.
+/// // SAFETY: `spinlock_init` is called below.
+/// let mut value = unsafe { SpinLock::new(Example { a: 1, b: 2 }) };
+/// // SAFETY: We don't move `value`.
+/// kernel::spinlock_init!(unsafe { Pin::new_unchecked(&mut value) }, "value");
+///
+/// // Calls the example functions.
+/// assert_eq!(value.lock().a, 1);
+/// lock_example(&value);
+/// assert_eq!(value.lock().a, 10);
+/// lock_irqdisable_example(&value);
+/// assert_eq!(value.lock().a, 30);
 /// ```
 ///
 /// [`spinlock_t`]: ../../../include/linux/spinlock.h
@@ -135,12 +140,8 @@ impl<T> LockFactory for SpinLock<T> {
 }
 
 impl<T> LockIniter for SpinLock<T> {
-    unsafe fn init_lock(
-        self: Pin<&mut Self>,
-        name: &'static CStr,
-        key: *mut bindings::lock_class_key,
-    ) {
-        unsafe { bindings::__spin_lock_init(self.spin_lock.get(), name.as_char_ptr(), key) };
+    fn init_lock(self: Pin<&mut Self>, name: &'static CStr, key: &'static LockClassKey) {
+        unsafe { bindings::__spin_lock_init(self.spin_lock.get(), name.as_char_ptr(), key.get()) };
     }
 }
 
@@ -175,14 +176,14 @@ unsafe impl<T: ?Sized> Lock for SpinLock<T> {
 // SAFETY: The underlying kernel `spinlock_t` object ensures mutual exclusion.
 unsafe impl<T: ?Sized> Lock<DisabledInterrupts> for SpinLock<T> {
     type Inner = T;
-    type GuardContext = c_types::c_ulong;
+    type GuardContext = core::ffi::c_ulong;
 
-    fn lock_noguard(&self) -> c_types::c_ulong {
+    fn lock_noguard(&self) -> core::ffi::c_ulong {
         // SAFETY: `spin_lock` points to valid memory.
         unsafe { bindings::spin_lock_irqsave(self.spin_lock.get()) }
     }
 
-    unsafe fn unlock(&self, ctx: &mut c_types::c_ulong) {
+    unsafe fn unlock(&self, ctx: &mut core::ffi::c_ulong) {
         // SAFETY: The safety requirements of the function ensure that the spinlock is owned by
         // the caller.
         unsafe { bindings::spin_unlock_irqrestore(self.spin_lock.get(), *ctx) }
@@ -209,7 +210,6 @@ macro_rules! rawspinlock_init {
 /// # Examples
 ///
 /// ```
-/// # use kernel::prelude::*;
 /// # use kernel::sync::RawSpinLock;
 /// # use core::pin::Pin;
 ///
@@ -233,7 +233,7 @@ macro_rules! rawspinlock_init {
 /// }
 ///
 /// // Initialises a raw spinlock and calls the example functions.
-/// pub fn spinlock_example() {
+/// fn spinlock_example() {
 ///     // SAFETY: `rawspinlock_init` is called below.
 ///     let mut value = unsafe { RawSpinLock::new(Example { a: 1, b: 2 }) };
 ///     // SAFETY: We don't move `value`.
@@ -306,12 +306,10 @@ impl<T> LockFactory for RawSpinLock<T> {
 }
 
 impl<T> LockIniter for RawSpinLock<T> {
-    unsafe fn init_lock(
-        self: Pin<&mut Self>,
-        name: &'static CStr,
-        key: *mut bindings::lock_class_key,
-    ) {
-        unsafe { bindings::_raw_spin_lock_init(self.spin_lock.get(), name.as_char_ptr(), key) };
+    fn init_lock(self: Pin<&mut Self>, name: &'static CStr, key: &'static LockClassKey) {
+        unsafe {
+            bindings::_raw_spin_lock_init(self.spin_lock.get(), name.as_char_ptr(), key.get())
+        };
     }
 }
 
@@ -340,14 +338,14 @@ unsafe impl<T: ?Sized> Lock for RawSpinLock<T> {
 // SAFETY: The underlying kernel `raw_spinlock_t` object ensures mutual exclusion.
 unsafe impl<T: ?Sized> Lock<DisabledInterrupts> for RawSpinLock<T> {
     type Inner = T;
-    type GuardContext = c_types::c_ulong;
+    type GuardContext = core::ffi::c_ulong;
 
-    fn lock_noguard(&self) -> c_types::c_ulong {
+    fn lock_noguard(&self) -> core::ffi::c_ulong {
         // SAFETY: `spin_lock` points to valid memory.
         unsafe { bindings::raw_spin_lock_irqsave(self.spin_lock.get()) }
     }
 
-    unsafe fn unlock(&self, ctx: &mut c_types::c_ulong) {
+    unsafe fn unlock(&self, ctx: &mut core::ffi::c_ulong) {
         // SAFETY: The safety requirements of the function ensure that the raw spinlock is owned by
         // the caller.
         unsafe { bindings::raw_spin_unlock_irqrestore(self.spin_lock.get(), *ctx) };

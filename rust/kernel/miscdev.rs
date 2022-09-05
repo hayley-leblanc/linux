@@ -20,7 +20,7 @@ use core::{fmt, mem::MaybeUninit, pin::Pin};
 ///
 /// ```
 /// # use kernel::{c_str, device::RawDevice, file, miscdev, prelude::*};
-/// pub fn example(
+/// fn example(
 ///     reg: Pin<&mut miscdev::Registration<impl file::Operations<OpenData = ()>>>,
 ///     parent: &dyn RawDevice,
 /// ) -> Result {
@@ -266,18 +266,17 @@ impl<T: file::Operations<OpenData = ()>> crate::Module for Module<T> {
 ///
 /// module_misc_device! {
 ///     type: MyFile,
-///     name: b"my_miscdev_kernel_module",
-///     author: b"Rust for Linux Contributors",
-///     description: b"My very own misc device kernel module!",
-///     license: b"GPL v2",
+///     name: "my_miscdev_kernel_module",
+///     author: "Rust for Linux Contributors",
+///     description: "My very own misc device kernel module!",
+///     license: "GPL",
 /// }
 ///
 /// #[derive(Default)]
 /// struct MyFile;
 ///
-/// impl kernel::file::Operations for MyFile {
-///     kernel::declare_file_operations!();
-/// }
+/// #[vtable]
+/// impl kernel::file::Operations for MyFile {}
 /// ```
 #[macro_export]
 macro_rules! module_misc_device {

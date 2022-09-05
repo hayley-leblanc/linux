@@ -7,17 +7,16 @@ use kernel::{chrdev, file};
 
 module! {
     type: RustChrdev,
-    name: b"rust_chrdev",
-    author: b"Rust for Linux Contributors",
-    description: b"Rust character device sample",
-    license: b"GPL v2",
+    name: "rust_chrdev",
+    author: "Rust for Linux Contributors",
+    description: "Rust character device sample",
+    license: "GPL",
 }
 
 struct RustFile;
 
+#[vtable]
 impl file::Operations for RustFile {
-    kernel::declare_file_operations!();
-
     fn open(_shared: &(), _file: &file::File) -> Result {
         Ok(())
     }

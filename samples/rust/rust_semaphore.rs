@@ -15,7 +15,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 use kernel::{
-    condvar_init, declare_file_operations,
+    condvar_init,
     file::{self, File, IoctlCommand, IoctlHandler},
     io_buffer::{IoBufferReader, IoBufferWriter},
     miscdev::Registration,
@@ -27,10 +27,10 @@ use kernel::{
 
 module! {
     type: RustSemaphore,
-    name: b"rust_semaphore",
-    author: b"Rust for Linux Contributors",
-    description: b"Rust semaphore sample",
-    license: b"GPL v2",
+    name: "rust_semaphore",
+    author: "Rust for Linux Contributors",
+    description: "Rust semaphore sample",
+    license: "GPL",
 }
 
 struct SemaphoreInner {
@@ -61,11 +61,10 @@ impl FileState {
     }
 }
 
+#[vtable]
 impl file::Operations for FileState {
     type Data = Box<Self>;
     type OpenData = Ref<Semaphore>;
-
-    declare_file_operations!(read, write, ioctl);
 
     fn open(shared: &Ref<Semaphore>, _file: &File) -> Result<Box<Self>> {
         Ok(Box::try_new(Self {

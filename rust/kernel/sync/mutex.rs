@@ -4,7 +4,7 @@
 //!
 //! This module allows Rust code to use the kernel's [`struct mutex`].
 
-use super::{Guard, Lock, LockFactory, LockIniter};
+use super::{Guard, Lock, LockClassKey, LockFactory, LockIniter, WriteLock};
 use crate::{bindings, str::CStr, Opaque};
 use core::{cell::UnsafeCell, marker::PhantomPinned, pin::Pin};
 
@@ -82,12 +82,8 @@ impl<T> LockFactory for Mutex<T> {
 }
 
 impl<T> LockIniter for Mutex<T> {
-    unsafe fn init_lock(
-        self: Pin<&mut Self>,
-        name: &'static CStr,
-        key: *mut bindings::lock_class_key,
-    ) {
-        unsafe { bindings::__mutex_init(self.mutex.get(), name.as_char_ptr(), key) };
+    fn init_lock(self: Pin<&mut Self>, name: &'static CStr, key: &'static LockClassKey) {
+        unsafe { bindings::__mutex_init(self.mutex.get(), name.as_char_ptr(), key.get()) };
     }
 }
 
@@ -114,3 +110,40 @@ unsafe impl<T: ?Sized> Lock for Mutex<T> {
         &self.data
     }
 }
+
+/// A revocable mutex.
+///
+/// That is, a mutex to which access can be revoked at runtime. It is a specialisation of the more
+/// generic [`super::revocable::Revocable`].
+///
+/// # Examples
+///
+/// ```
+/// # use kernel::sync::RevocableMutex;
+/// # use kernel::revocable_init;
+/// # use core::pin::Pin;
+///
+/// struct Example {
+///     a: u32,
+///     b: u32,
+/// }
+///
+/// fn read_sum(v: &RevocableMutex<Example>) -> Option<u32> {
+///     let guard = v.try_write()?;
+///     Some(guard.a + guard.b)
+/// }
+///
+/// // SAFETY: We call `revocable_init` immediately below.
+/// let mut v = unsafe { RevocableMutex::new(Example { a: 10, b: 20 }) };
+/// // SAFETY: We never move out of `v`.
+/// let pinned = unsafe { Pin::new_unchecked(&mut v) };
+/// revocable_init!(pinned, "example::v");
+/// assert_eq!(read_sum(&v), Some(30));
+/// v.revoke();
+/// assert_eq!(read_sum(&v), None);
+/// ```
+pub type RevocableMutex<T> = super::revocable::Revocable<Mutex<()>, T>;
+
+/// A guard for a revocable mutex.
+pub type RevocableMutexGuard<'a, T, I = WriteLock> =
+    super::revocable::RevocableGuard<'a, Mutex<()>, T, I>;

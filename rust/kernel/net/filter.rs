@@ -5,7 +5,7 @@
 //! C header: [`include/linux/netfilter.h`](../../../../../include/linux/netfilter.h)
 
 use crate::{
-    bindings, c_types,
+    bindings,
     error::{code::*, to_result},
     net,
     types::PointerWrapper,
@@ -70,7 +70,7 @@ pub enum Family {
     /// IPv6 packets.
     Ipv6(ipv6::Hook, ipv6::PriorityBase),
 
-    /// Adress resolution protocol (ARP) packets.
+    /// Address resolution protocol (ARP) packets.
     Arp(arp::Hook),
 }
 
@@ -82,7 +82,6 @@ pub enum Family {
 /// all packets after printing their lengths) on the specified device (in the `init` ns).
 ///
 /// ```
-/// # use kernel::prelude::*;
 /// use kernel::net::{self, filter as netfilter};
 ///
 /// struct MyFilter;
@@ -153,7 +152,7 @@ impl<T: Filter> Registration<T> {
     /// registered.
     ///
     /// The priority is relative to the family's base priority. For example, if the base priority
-    /// is `100` and `priority` is -1, the actual priority will be `99`. If a family doesn't
+    /// is `100` and `priority` is `-1`, the actual priority will be `99`. If a family doesn't
     /// explicitly allow a base to be specified, `0` is assumed.
     pub fn register(
         self: Pin<&mut Self>,
@@ -214,7 +213,7 @@ impl<T: Filter> Registration<T> {
 
         // SAFETY: `ns` has a valid reference to the namespace, and `this.hook` was just
         // initialised above, so they're both valid.
-        to_result(|| unsafe { bindings::nf_register_net_hook(ns.0.get(), &this.hook) })?;
+        to_result(unsafe { bindings::nf_register_net_hook(ns.0.get(), &this.hook) })?;
 
         this.dev = dev;
         this.ns = Some(ns);
@@ -223,10 +222,10 @@ impl<T: Filter> Registration<T> {
     }
 
     unsafe extern "C" fn hook_callback(
-        priv_: *mut c_types::c_void,
+        priv_: *mut core::ffi::c_void,
         skb: *mut bindings::sk_buff,
         _state: *const bindings::nf_hook_state,
-    ) -> c_types::c_uint {
+    ) -> core::ffi::c_uint {
         // SAFETY: `priv_` was initialised on registration by a value returned from
         // `T::Data::into_pointer`, and it remains valid until the hook is unregistered.
         let data = unsafe { T::Data::borrow(priv_) };
@@ -432,7 +431,7 @@ pub mod inet {
         /// Inbound packets that are meant to be delivered locally.
         LocalIn = bindings::nf_inet_hooks_NF_INET_LOCAL_IN as _,
 
-        /// Inbound pakcets that are meant to be forwarded to another host.
+        /// Inbound packets that are meant to be forwarded to another host.
         Forward = bindings::nf_inet_hooks_NF_INET_FORWARD as _,
 
         /// Outbound packet created by the local networking stack.

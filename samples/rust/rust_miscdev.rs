@@ -12,10 +12,10 @@ use kernel::{
 
 module! {
     type: RustMiscdev,
-    name: b"rust_miscdev",
-    author: b"Rust for Linux Contributors",
-    description: b"Rust miscellaneous device sample",
-    license: b"GPL v2",
+    name: "rust_miscdev",
+    author: "Rust for Linux Contributors",
+    description: "Rust miscellaneous device sample",
+    license: "GPL",
 }
 
 const MAX_TOKENS: usize = 3;
@@ -51,11 +51,10 @@ impl SharedState {
 }
 
 struct Token;
+#[vtable]
 impl file::Operations for Token {
     type Data = Ref<SharedState>;
     type OpenData = Ref<SharedState>;
-
-    kernel::declare_file_operations!(read, write);
 
     fn open(shared: &Ref<SharedState>, _file: &File) -> Result<Self::Data> {
         Ok(shared.clone())

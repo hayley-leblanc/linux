@@ -21,8 +21,13 @@ ifdef CONFIG_CC_IS_CLANG
 RETPOLINE_CFLAGS	:= -mretpoline-external-thunk
 RETPOLINE_VDSO_CFLAGS	:= -mretpoline
 endif
-RETPOLINE_RUSTFLAGS	:= -Ctarget-feature=+retpoline-external-thunk
 
+ifdef CONFIG_RETHUNK
+RETHUNK_CFLAGS		:= -mfunction-return=thunk-extern
+RETPOLINE_CFLAGS	+= $(RETHUNK_CFLAGS)
+endif
+
+export RETHUNK_CFLAGS
 export RETPOLINE_CFLAGS
 export RETPOLINE_VDSO_CFLAGS
 
@@ -63,8 +68,7 @@ export BITS
 #    https://gcc.gnu.org/bugzilla/show_bug.cgi?id=53383
 #
 KBUILD_CFLAGS += -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx
-KBUILD_RUSTFLAGS += -Ctarget-feature=-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2
-KBUILD_RUSTFLAGS += -Ctarget-feature=-3dnow,-3dnowa,-avx,-avx2,+soft-float
+KBUILD_RUSTFLAGS += -Ctarget-feature=-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2
 
 ifeq ($(CONFIG_X86_KERNEL_IBT),y)
 #
@@ -198,7 +202,6 @@ ifdef CONFIG_RETPOLINE
   ifndef CONFIG_CC_IS_CLANG
     KBUILD_CFLAGS += -fno-jump-tables
   endif
-  KBUILD_RUSTFLAGS += $(RETPOLINE_RUSTFLAGS)
 endif
 
 ifdef CONFIG_SLS
@@ -285,8 +288,7 @@ $(BOOT_TARGETS): vmlinux
 
 PHONY += install
 install:
-	$(CONFIG_SHELL) $(srctree)/$(boot)/install.sh $(KERNELRELEASE) \
-		$(KBUILD_IMAGE) System.map "$(INSTALL_PATH)"
+	$(call cmd,install)
 
 PHONY += vdso_install
 vdso_install:
@@ -327,5 +329,6 @@ define archhelp
   echo  ''
   echo  '  kvm_guest.config	- Enable Kconfig items for running this kernel as a KVM guest'
   echo  '  xen.config		- Enable Kconfig items for running this kernel as a Xen guest'
+  echo  '  x86_debug.config	- Enable tip tree debugging options for testing'
 
 endef

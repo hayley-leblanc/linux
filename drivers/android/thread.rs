@@ -14,6 +14,7 @@ use kernel::{
     security,
     sync::{CondVar, Ref, SpinLock, UniqueRef},
     user_ptr::{UserSlicePtr, UserSlicePtrWriter},
+    Either,
 };
 
 use crate::{
@@ -22,7 +23,7 @@ use crate::{
     process::{AllocationInfo, Process},
     ptr_align,
     transaction::{FileInfo, Transaction},
-    DeliverCode, DeliverToRead, DeliverToReadListAdapter, Either,
+    DeliverCode, DeliverToRead, DeliverToReadListAdapter,
 };
 
 pub(crate) type BinderResult<T = ()> = core::result::Result<T, BinderError>;
@@ -245,7 +246,7 @@ impl Thread {
             process,
             // SAFETY: `inner` is initialised in the call to `spinlock_init` below.
             inner: unsafe { SpinLock::new(InnerThread::new()) },
-            // SAFETY: `work_condvar` is initalised in the call to `condvar_init` below.
+            // SAFETY: `work_condvar` is initialised in the call to `condvar_init` below.
             work_condvar: unsafe { CondVar::new() },
             links: Links::new(),
         })?);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 use proc_macro::{token_stream, Delimiter, Group, Literal, TokenStream, TokenTree};
+use std::fmt::Write;
 
 use crate::helpers::*;
 
@@ -52,8 +53,6 @@ impl<'a> ModInfoBuilder<'a> {
     }
 
     fn emit_base(&mut self, field: &str, content: &str, builtin: bool) {
-        use std::fmt::Write;
-
         let string = if builtin {
             // Built-in modules prefix their modinfo strings by `module.`.
             format!(
@@ -81,7 +80,7 @@ impl<'a> ModInfoBuilder<'a> {
             } else {
                 "#[cfg(MODULE)]"
             },
-            module = self.module,
+            module = self.module.to_uppercase(),
             counter = self.counter,
             length = string.len(),
             string = Literal::byte_string(string.as_bytes()),
@@ -257,13 +256,13 @@ impl ModuleInfo {
 
             match key.as_str() {
                 "type" => info.type_ = expect_ident(it),
-                "name" => info.name = expect_byte_string(it),
-                "author" => info.author = Some(expect_byte_string(it)),
-                "description" => info.description = Some(expect_byte_string(it)),
-                "license" => info.license = expect_byte_string(it),
-                "alias" => info.alias = Some(expect_byte_string(it)),
+                "name" => info.name = expect_string_ascii(it),
+                "author" => info.author = Some(expect_string(it)),
+                "description" => info.description = Some(expect_string(it)),
+                "license" => info.license = expect_string_ascii(it),
+                "alias" => info.alias = Some(expect_string_ascii(it)),
                 "alias_rtnl_link" => {
-                    info.alias = Some(format!("rtnl-link-{}", expect_byte_string(it)))
+                    info.alias = Some(format!("rtnl-link-{}", expect_string_ascii(it)))
                 }
                 "params" => info.params = Some(expect_group(it)),
                 _ => panic!(
@@ -348,7 +347,7 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
             let mut param_it = group.stream().into_iter();
             let param_default = get_default(&param_type, &mut param_it);
             let param_permissions = get_literal(&mut param_it, "permissions");
-            let param_description = get_byte_string(&mut param_it, "description");
+            let param_description = get_string(&mut param_it, "description");
             expect_end(&mut param_it);
 
             // TODO: More primitive types.
@@ -389,9 +388,15 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
             let read_func = if permissions_are_readonly(&param_permissions) {
                 format!(
                     "
-                        fn read(&self) -> &<{param_type_internal} as kernel::module_param::ModuleParam>::Value {{
-                            // SAFETY: Parameters do not need to be locked because they are read only or sysfs is not enabled.
-                            unsafe {{ <{param_type_internal} as kernel::module_param::ModuleParam>::value(&__{name}_{param_name}_value) }}
+                        fn read(&self)
+                            -> &<{param_type_internal} as kernel::module_param::ModuleParam>::Value {{
+                            // SAFETY: Parameters do not need to be locked because they are
+                            // read only or sysfs is not enabled.
+                            unsafe {{
+                                <{param_type_internal} as kernel::module_param::ModuleParam>::value(
+                                    &__{name}_{param_name}_value
+                                )
+                            }}
                         }}
                     ",
                     name = info.name,
@@ -401,9 +406,14 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
             } else {
                 format!(
                     "
-                        fn read<'lck>(&self, lock: &'lck kernel::KParamGuard) -> &'lck <{param_type_internal} as kernel::module_param::ModuleParam>::Value {{
+                        fn read<'lck>(&self, lock: &'lck kernel::KParamGuard)
+                            -> &'lck <{param_type_internal} as kernel::module_param::ModuleParam>::Value {{
                             // SAFETY: Parameters are locked by `KParamGuard`.
-                            unsafe {{ <{param_type_internal} as kernel::module_param::ModuleParam>::value(&__{name}_{param_name}_value) }}
+                            unsafe {{
+                                <{param_type_internal} as kernel::module_param::ModuleParam>::value(
+                                    &__{name}_{param_name}_value
+                                )
+                            }}
                         }}
                     ",
                     name = info.name,
@@ -414,47 +424,52 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
             let kparam = format!(
                 "
                     kernel::bindings::kernel_param__bindgen_ty_1 {{
-                        arg: unsafe {{ &__{name}_{param_name}_value }} as *const _ as *mut kernel::c_types::c_void,
+                        arg: unsafe {{ &__{name}_{param_name}_value }}
+                            as *const _ as *mut core::ffi::c_void,
                     }},
                 ",
                 name = info.name,
                 param_name = param_name,
             );
-            modinfo.buffer.push_str(
-                &format!(
-                    "
-                    static mut __{name}_{param_name}_value: {param_type_internal} = {param_default};
+            write!(
+                modinfo.buffer,
+                "
+                static mut __{name}_{param_name}_value: {param_type_internal} = {param_default};
 
-                    struct __{name}_{param_name};
+                struct __{name}_{param_name};
 
-                    impl __{name}_{param_name} {{ {read_func} }}
+                impl __{name}_{param_name} {{ {read_func} }}
 
-                    const {param_name}: __{name}_{param_name} = __{name}_{param_name};
+                const {param_name}: __{name}_{param_name} = __{name}_{param_name};
 
-                    // Note: the C macro that generates the static structs for the `__param` section
-                    // asks for them to be `aligned(sizeof(void *))`. However, that was put in place
-                    // in 2003 in commit 38d5b085d2 (\"[PATCH] Fix over-alignment problem on x86-64\")
-                    // to undo GCC over-alignment of static structs of >32 bytes. It seems that is
-                    // not the case anymore, so we simplify to a transparent representation here
-                    // in the expectation that it is not needed anymore.
-                    // TODO: Revisit this to confirm the above comment and remove it if it happened.
-                    #[repr(transparent)]
-                    struct __{name}_{param_name}_RacyKernelParam(kernel::bindings::kernel_param);
+                // Note: the C macro that generates the static structs for the `__param` section
+                // asks for them to be `aligned(sizeof(void *))`. However, that was put in place
+                // in 2003 in commit 38d5b085d2a0 (\"[PATCH] Fix over-alignment problem on x86-64\")
+                // to undo GCC over-alignment of static structs of >32 bytes. It seems that is
+                // not the case anymore, so we simplify to a transparent representation here
+                // in the expectation that it is not needed anymore.
+                // TODO: Revisit this to confirm the above comment and remove it if it happened.
+                #[repr(transparent)]
+                struct __{name}_{param_name}_RacyKernelParam(kernel::bindings::kernel_param);
 
-                    unsafe impl Sync for __{name}_{param_name}_RacyKernelParam {{
-                    }}
+                unsafe impl Sync for __{name}_{param_name}_RacyKernelParam {{
+                }}
 
-                    #[cfg(not(MODULE))]
-                    const __{name}_{param_name}_name: *const kernel::c_types::c_char = b\"{name}.{param_name}\\0\" as *const _ as *const kernel::c_types::c_char;
+                #[cfg(not(MODULE))]
+                const __{name}_{param_name}_name: *const core::ffi::c_char =
+                    b\"{name}.{param_name}\\0\" as *const _ as *const core::ffi::c_char;
 
-                    #[cfg(MODULE)]
-                    const __{name}_{param_name}_name: *const kernel::c_types::c_char = b\"{param_name}\\0\" as *const _ as *const kernel::c_types::c_char;
+                #[cfg(MODULE)]
+                const __{name}_{param_name}_name: *const core::ffi::c_char =
+                    b\"{param_name}\\0\" as *const _ as *const core::ffi::c_char;
 
-                    #[link_section = \"__param\"]
-                    #[used]
-                    static __{name}_{param_name}_struct: __{name}_{param_name}_RacyKernelParam = __{name}_{param_name}_RacyKernelParam(kernel::bindings::kernel_param {{
+                #[link_section = \"__param\"]
+                #[used]
+                static __{name}_{param_name}_struct: __{name}_{param_name}_RacyKernelParam =
+                    __{name}_{param_name}_RacyKernelParam(kernel::bindings::kernel_param {{
                         name: __{name}_{param_name}_name,
-                        // SAFETY: `__this_module` is constructed by the kernel at load time and will not be freed until the module is unloaded.
+                        // SAFETY: `__this_module` is constructed by the kernel at load time
+                        // and will not be freed until the module is unloaded.
                         #[cfg(MODULE)]
                         mod_: unsafe {{ &kernel::bindings::__this_module as *const _ as *mut _ }},
                         #[cfg(not(MODULE))]
@@ -465,17 +480,17 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
                         flags: 0,
                         __bindgen_anon_1: {kparam}
                     }});
-                    ",
-                    name = info.name,
-                    param_type_internal = param_type_internal,
-                    read_func = read_func,
-                    param_default = param_default,
-                    param_name = param_name,
-                    ops = ops,
-                    permissions = param_permissions,
-                    kparam = kparam,
-                )
-            );
+                ",
+                name = info.name,
+                param_type_internal = param_type_internal,
+                read_func = read_func,
+                param_default = param_default,
+                param_name = param_name,
+                ops = ops,
+                permissions = param_permissions,
+                kparam = kparam,
+            )
+            .unwrap();
         }
     }
 
@@ -483,7 +498,8 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
 
     for (vals, max_length) in array_types_to_generate {
         let ops_name = generated_array_ops_name(&vals, max_length);
-        generated_array_types.push_str(&format!(
+        write!(
+            generated_array_types,
             "
                 kernel::make_param_ops!(
                     {ops_name},
@@ -493,7 +509,8 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
             ops_name = ops_name,
             vals = vals,
             max_length = max_length,
-        ));
+        )
+        .unwrap();
     }
 
     format!(
@@ -514,17 +531,22 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
 
             static mut __MOD: Option<{type_}> = None;
 
-            // SAFETY: `__this_module` is constructed by the kernel at load time and will not be freed until the module is unloaded.
+            // SAFETY: `__this_module` is constructed by the kernel at load time and will not be
+            // freed until the module is unloaded.
             #[cfg(MODULE)]
-            static THIS_MODULE: kernel::ThisModule = unsafe {{ kernel::ThisModule::from_ptr(&kernel::bindings::__this_module as *const _ as *mut _) }};
+            static THIS_MODULE: kernel::ThisModule = unsafe {{
+                kernel::ThisModule::from_ptr(&kernel::bindings::__this_module as *const _ as *mut _)
+            }};
             #[cfg(not(MODULE))]
-            static THIS_MODULE: kernel::ThisModule = unsafe {{ kernel::ThisModule::from_ptr(core::ptr::null_mut()) }};
+            static THIS_MODULE: kernel::ThisModule = unsafe {{
+                kernel::ThisModule::from_ptr(core::ptr::null_mut())
+            }};
 
             // Loadable modules need to export the `{{init,cleanup}}_module` identifiers.
             #[cfg(MODULE)]
             #[doc(hidden)]
             #[no_mangle]
-            pub extern \"C\" fn init_module() -> kernel::c_types::c_int {{
+            pub extern \"C\" fn init_module() -> core::ffi::c_int {{
                 __init()
             }}
 
@@ -542,7 +564,7 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
             #[doc(hidden)]
             #[link_section = \"{initcall_section}\"]
             #[used]
-            pub static __{name}_initcall: extern \"C\" fn() -> kernel::c_types::c_int = __{name}_init;
+            pub static __{name}_initcall: extern \"C\" fn() -> core::ffi::c_int = __{name}_init;
 
             #[cfg(not(MODULE))]
             #[cfg(CONFIG_HAVE_ARCH_PREL32_RELOCATIONS)]
@@ -557,7 +579,7 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
             #[cfg(not(MODULE))]
             #[doc(hidden)]
             #[no_mangle]
-            pub extern \"C\" fn __{name}_init() -> kernel::c_types::c_int {{
+            pub extern \"C\" fn __{name}_init() -> core::ffi::c_int {{
                 __init()
             }}
 
@@ -568,7 +590,7 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
                 __exit()
             }}
 
-            fn __init() -> kernel::c_types::c_int {{
+            fn __init() -> core::ffi::c_int {{
                 match <{type_} as kernel::Module>::init(kernel::c_str!(\"{name}\"), &THIS_MODULE) {{
                     Ok(m) => {{
                         unsafe {{
@@ -598,7 +620,9 @@ pub(crate) fn module(ts: TokenStream) -> TokenStream {
         modinfo = modinfo.buffer,
         generated_array_types = generated_array_types,
         initcall_section = ".initcall6.init"
-    ).parse().expect("Error parsing formatted string into token stream.")
+    )
+    .parse()
+    .expect("Error parsing formatted string into token stream.")
 }
 
 #[cfg(test)]

@@ -9,17 +9,16 @@ use kernel::{
 
 module_platform_driver! {
     type: RngDriver,
-    name: b"bcm2835_rng_rust",
-    author: b"Rust for Linux Contributors",
-    description: b"BCM2835 Random Number Generator (RNG) driver",
-    license: b"GPL v2",
+    name: "bcm2835_rng_rust",
+    author: "Rust for Linux Contributors",
+    description: "BCM2835 Random Number Generator (RNG) driver",
+    license: "GPL v2",
 }
 
 struct RngDevice;
 
+#[vtable]
 impl file::Operations for RngDevice {
-    kernel::declare_file_operations!(read);
-
     fn open(_open_data: &(), _file: &File) -> Result {
         Ok(())
     }

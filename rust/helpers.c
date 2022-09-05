@@ -18,27 +18,28 @@
  * accidentally exposed.
  */
 
+#include <linux/amba/bus.h>
 #include <linux/bug.h>
 #include <linux/build_bug.h>
 #include <linux/clk.h>
-#include <linux/uaccess.h>
-#include <linux/sched/signal.h>
+#include <linux/errname.h>
+#include <linux/fs_parser.h>
 #include <linux/gfp.h>
 #include <linux/highmem.h>
-#include <linux/uio.h>
-#include <linux/errname.h>
-#include <linux/mutex.h>
-#include <linux/platform_device.h>
-#include <linux/security.h>
-#include <asm/io.h>
-#include <linux/irq.h>
+#include <linux/io.h>
 #include <linux/irqchip/chained_irq.h>
 #include <linux/irqdomain.h>
-#include <linux/amba/bus.h>
+#include <linux/irq.h>
+#include <linux/mutex.h>
+#include <linux/netdevice.h>
 #include <linux/of_device.h>
 #include <linux/dax.h>
+#include <linux/platform_device.h>
+#include <linux/sched/signal.h>
+#include <linux/security.h>
 #include <linux/skbuff.h>
-#include <linux/netdevice.h>
+#include <linux/uaccess.h>
+#include <linux/uio.h>
 
 __noreturn void rust_helper_BUG(void)
 {
@@ -162,26 +163,26 @@ EXPORT_SYMBOL_GPL(rust_helper_readq_relaxed);
 
 void rust_helper_writeb_relaxed(u8 value, volatile void __iomem *addr)
 {
-        writeb_relaxed(value, addr);
+	writeb_relaxed(value, addr);
 }
 EXPORT_SYMBOL_GPL(rust_helper_writeb_relaxed);
 
 void rust_helper_writew_relaxed(u16 value, volatile void __iomem *addr)
 {
-        writew_relaxed(value, addr);
+	writew_relaxed(value, addr);
 }
 EXPORT_SYMBOL_GPL(rust_helper_writew_relaxed);
 
 void rust_helper_writel_relaxed(u32 value, volatile void __iomem *addr)
 {
-        writel_relaxed(value, addr);
+	writel_relaxed(value, addr);
 }
 EXPORT_SYMBOL_GPL(rust_helper_writel_relaxed);
 
 #ifdef CONFIG_64BIT
 void rust_helper_writeq_relaxed(u64 value, volatile void __iomem *addr)
 {
-        writeq_relaxed(value, addr);
+	writeq_relaxed(value, addr);
 }
 EXPORT_SYMBOL_GPL(rust_helper_writeq_relaxed);
 #endif
@@ -218,7 +219,9 @@ EXPORT_SYMBOL_GPL(rust_helper_spin_unlock);
 unsigned long rust_helper_spin_lock_irqsave(spinlock_t *lock)
 {
 	unsigned long flags;
+
 	spin_lock_irqsave(lock, flags);
+
 	return flags;
 }
 EXPORT_SYMBOL_GPL(rust_helper_spin_lock_irqsave);
@@ -255,7 +258,9 @@ EXPORT_SYMBOL_GPL(rust_helper_raw_spin_unlock);
 unsigned long rust_helper_raw_spin_lock_irqsave(raw_spinlock_t *lock)
 {
 	unsigned long flags;
+
 	raw_spin_lock_irqsave(lock, flags);
+
 	return flags;
 }
 EXPORT_SYMBOL_GPL(rust_helper_raw_spin_lock_irqsave);
@@ -272,6 +277,13 @@ void rust_helper_init_wait(struct wait_queue_entry *wq_entry)
 	init_wait(wq_entry);
 }
 EXPORT_SYMBOL_GPL(rust_helper_init_wait);
+
+void rust_helper_init_waitqueue_func_entry(struct wait_queue_entry *wq_entry,
+					   wait_queue_func_t func)
+{
+	init_waitqueue_func_entry(wq_entry, func);
+}
+EXPORT_SYMBOL_GPL(rust_helper_init_waitqueue_func_entry);
 
 int rust_helper_signal_pending(struct task_struct *t)
 {
@@ -397,13 +409,13 @@ struct task_struct *rust_helper_get_current(void)
 }
 EXPORT_SYMBOL_GPL(rust_helper_get_current);
 
-void rust_helper_get_task_struct(struct task_struct * t)
+void rust_helper_get_task_struct(struct task_struct *t)
 {
 	get_task_struct(t);
 }
 EXPORT_SYMBOL_GPL(rust_helper_get_task_struct);
 
-void rust_helper_put_task_struct(struct task_struct * t)
+void rust_helper_put_task_struct(struct task_struct *t)
 {
 	put_task_struct(t);
 }
@@ -549,7 +561,8 @@ const struct cred *rust_helper_get_cred(const struct cred *cred)
 }
 EXPORT_SYMBOL_GPL(rust_helper_get_cred);
 
-void rust_helper_put_cred(const struct cred *cred) {
+void rust_helper_put_cred(const struct cred *cred)
+{
 	put_cred(cred);
 }
 EXPORT_SYMBOL_GPL(rust_helper_put_cred);
@@ -608,6 +621,40 @@ unsigned int rust_helper_NF_QUEUE_NR(unsigned int n)
 	return NF_QUEUE_NR(n);
 }
 EXPORT_SYMBOL_GPL(rust_helper_NF_QUEUE_NR);
+
+void rust_helper___INIT_WORK_WITH_KEY(struct work_struct *work,
+		work_func_t func, bool on_stack, struct lock_class_key *key)
+{
+	__INIT_WORK_WITH_KEY(work, func, on_stack, key);
+}
+EXPORT_SYMBOL_GPL(rust_helper___INIT_WORK_WITH_KEY);
+
+struct dentry *rust_helper_dget(struct dentry *dentry)
+{
+	return dget(dentry);
+}
+EXPORT_SYMBOL_GPL(rust_helper_dget);
+
+void rust_helper_lockdep_register_key(struct lock_class_key *key)
+{
+	lockdep_register_key(key);
+}
+EXPORT_SYMBOL_GPL(rust_helper_lockdep_register_key);
+
+void rust_helper_lockdep_unregister_key(struct lock_class_key *key)
+{
+	lockdep_unregister_key(key);
+}
+EXPORT_SYMBOL_GPL(rust_helper_lockdep_unregister_key);
+
+int rust_helper_fs_parse(struct fs_context *fc,
+		const struct fs_parameter_spec *desc,
+		struct fs_parameter *param,
+		struct fs_parse_result *result)
+{
+	return fs_parse(fc, desc, param, result);
+}
+EXPORT_SYMBOL_GPL(rust_helper_fs_parse);
 
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type

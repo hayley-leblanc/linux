@@ -14,6 +14,7 @@ use kernel::{
     sync::{Guard, Mutex, Ref, RefBorrow, UniqueRef},
     task::Task,
     user_ptr::{UserSlicePtr, UserSlicePtrReader},
+    Either,
 };
 
 use crate::{
@@ -23,7 +24,7 @@ use crate::{
     node::{Node, NodeDeath, NodeRef},
     range_alloc::RangeAllocator,
     thread::{BinderError, BinderResult, Thread},
-    DeliverToRead, DeliverToReadListAdapter, Either,
+    DeliverToRead, DeliverToReadListAdapter,
 };
 
 // TODO: Review this:
@@ -244,7 +245,7 @@ pub(crate) struct Process {
     ctx: Ref<Context>,
 
     // The task leader (process).
-    pub(crate) task: Task,
+    pub(crate) task: ARef<Task>,
 
     // Credential associated with file when `Process` is created.
     pub(crate) cred: ARef<Credential>,
@@ -269,7 +270,7 @@ impl Process {
         let mut process = Pin::from(UniqueRef::try_new(Self {
             ctx,
             cred,
-            task: Task::current().group_leader().clone(),
+            task: Task::current().group_leader().into(),
             // SAFETY: `inner` is initialised in the call to `mutex_init` below.
             inner: unsafe { Mutex::new(ProcessInner::new()) },
             // SAFETY: `node_refs` is initialised in the call to `mutex_init` below.
@@ -287,12 +288,12 @@ impl Process {
         Ok(process.into())
     }
 
-    /// Attemps to fetch a work item from the process queue.
+    /// Attempts to fetch a work item from the process queue.
     pub(crate) fn get_work(&self) -> Option<Ref<dyn DeliverToRead>> {
         self.inner.lock().work.pop_front()
     }
 
-    /// Attemps to fetch a work item from the process queue. If none is available, it registers the
+    /// Attempts to fetch a work item from the process queue. If none is available, it registers the
     /// given thread as ready to receive work directly.
     ///
     /// This must only be called when the thread is not participating in a transaction chain; when
@@ -793,8 +794,9 @@ impl IoctlHandler for Process {
         data: UserSlicePtr,
     ) -> Result<i32> {
         let thread = this.get_thread(Task::current().pid())?;
+        let blocking = (file.flags() & file::flags::O_NONBLOCK) == 0;
         match cmd {
-            bindings::BINDER_WRITE_READ => thread.write_read(data, file.is_blocking())?,
+            bindings::BINDER_WRITE_READ => thread.write_read(data, blocking)?,
             bindings::BINDER_GET_NODE_DEBUG_INFO => this.get_node_debug_info(data)?,
             bindings::BINDER_GET_NODE_INFO_FOR_REF => this.get_node_info_from_ref(data)?,
             bindings::BINDER_VERSION => this.version(data)?,
@@ -804,11 +806,10 @@ impl IoctlHandler for Process {
     }
 }
 
+#[vtable]
 impl file::Operations for Process {
     type Data = Ref<Self>;
     type OpenData = Ref<Context>;
-
-    kernel::declare_file_operations!(ioctl, compat_ioctl, mmap, poll);
 
     fn open(ctx: &Ref<Context>, file: &File) -> Result<Self::Data> {
         Self::new(ctx.clone(), file.cred().into())
@@ -904,7 +905,7 @@ impl file::Operations for Process {
 
     fn mmap(this: RefBorrow<'_, Process>, _file: &File, vma: &mut mm::virt::Area) -> Result {
         // We don't allow mmap to be used in a different process.
-        if !Task::current().group_leader().eq(&this.task) {
+        if !core::ptr::eq(Task::current().group_leader(), &*this.task) {
             return Err(EINVAL);
         }
 

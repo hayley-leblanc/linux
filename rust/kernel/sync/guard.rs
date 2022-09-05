@@ -6,8 +6,8 @@
 //! the ([`Lock`]) trait. It also contains the definition of the trait, which can be leveraged by
 //! other constructs to work on generic locking primitives.
 
-use super::NeedsLockClass;
-use crate::{bindings, str::CStr, Bool, False, True};
+use super::{LockClassKey, NeedsLockClass};
+use crate::{str::CStr, Bool, False, True};
 use core::pin::Pin;
 
 /// Allows mutual exclusion primitives that implement the [`Lock`] trait to automatically unlock
@@ -21,7 +21,7 @@ pub struct Guard<'a, L: Lock<I> + ?Sized, I: LockInfo = WriteLock> {
 
 // SAFETY: `Guard` is sync when the data protected by the lock is also sync. This is more
 // conservative than the default compiler implementation; more details can be found on
-// https://github.com/rust-lang/rust/issues/41622 -- it refers to `MutexGuard` from the standard
+// <https://github.com/rust-lang/rust/issues/41622> -- it refers to `MutexGuard` from the standard
 // library.
 unsafe impl<L, I> Sync for Guard<'_, L, I>
 where
@@ -94,7 +94,7 @@ impl LockInfo for WriteLock {
 ///   may access the protected data once the lock is held, that is, between calls to `lock_noguard`
 ///   and `unlock`.
 /// - Implementers of all other markers must ensure that a mutable reference to the protected data
-///   is not active in any thread/CPU because at least one shared refence is active between calls
+///   is not active in any thread/CPU because at least one shared reference is active between calls
 ///   to `lock_noguard` and `unlock`.
 pub unsafe trait Lock<I: LockInfo = WriteLock> {
     /// The type of the data protected by the lock.
@@ -144,26 +144,16 @@ pub trait LockFactory {
 /// A lock that can be initialised with a single lock class key.
 pub trait LockIniter {
     /// Initialises the lock instance so that it can be safely used.
-    ///
-    /// # Safety
-    ///
-    /// `key` must point to a valid memory location that will remain valid until the lock is
-    /// dropped.
-    unsafe fn init_lock(
-        self: Pin<&mut Self>,
-        name: &'static CStr,
-        key: *mut bindings::lock_class_key,
-    );
+    fn init_lock(self: Pin<&mut Self>, name: &'static CStr, key: &'static LockClassKey);
 }
 
 impl<L: LockIniter> NeedsLockClass for L {
-    unsafe fn init(
+    fn init(
         self: Pin<&mut Self>,
         name: &'static CStr,
-        key: *mut bindings::lock_class_key,
-        _: *mut bindings::lock_class_key,
+        key: &'static LockClassKey,
+        _: &'static LockClassKey,
     ) {
-        // SAFETY: The safety requirements of this function satisfy those of `init_lock`.
-        unsafe { self.init_lock(name, key) };
+        self.init_lock(name, key);
     }
 }

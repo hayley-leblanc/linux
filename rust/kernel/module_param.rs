@@ -66,9 +66,9 @@ pub trait ModuleParam: core::fmt::Display + core::marker::Sized {
     /// If `val` is non-null then it must point to a valid null-terminated
     /// string. The `arg` field of `param` must be an instance of `Self`.
     unsafe extern "C" fn set_param(
-        val: *const crate::c_types::c_char,
+        val: *const core::ffi::c_char,
         param: *const crate::bindings::kernel_param,
-    ) -> crate::c_types::c_int {
+    ) -> core::ffi::c_int {
         let arg = if val.is_null() {
             None
         } else {
@@ -93,9 +93,9 @@ pub trait ModuleParam: core::fmt::Display + core::marker::Sized {
     /// `buf` must be a buffer of length at least `kernel::PAGE_SIZE` that is
     /// writeable. The `arg` field of `param` must be an instance of `Self`.
     unsafe extern "C" fn get_param(
-        buf: *mut crate::c_types::c_char,
+        buf: *mut core::ffi::c_char,
         param: *const crate::bindings::kernel_param,
-    ) -> crate::c_types::c_int {
+    ) -> core::ffi::c_int {
         from_kernel_result! {
             // SAFETY: The C contracts guarantees that the buffer is at least `PAGE_SIZE` bytes.
             let mut f = unsafe { Formatter::from_buffer(buf.cast(), crate::PAGE_SIZE) };
@@ -111,14 +111,14 @@ pub trait ModuleParam: core::fmt::Display + core::marker::Sized {
     /// # Safety
     ///
     /// The `arg` field of `param` must be an instance of `Self`.
-    unsafe extern "C" fn free(arg: *mut crate::c_types::c_void) {
+    unsafe extern "C" fn free(arg: *mut core::ffi::c_void) {
         unsafe { core::ptr::drop_in_place(arg as *mut Self) };
     }
 }
 
 /// Trait for parsing integers.
 ///
-/// Strings begining with `0x`, `0o`, or `0b` are parsed as hex, octal, or
+/// Strings beginning with `0x`, `0o`, or `0b` are parsed as hex, octal, or
 /// binary respectively. Strings beginning with `0` otherwise are parsed as
 /// octal. Anything else is parsed as decimal. A leading `+` or `-` is also
 /// permitted. Any string parsed by [`kstrtol()`] or [`kstrtoul()`] will be
@@ -210,7 +210,8 @@ macro_rules! impl_module_param {
 #[macro_export]
 /// Generate a static [`kernel_param_ops`](../../../include/linux/moduleparam.h) struct.
 ///
-/// # Example
+/// # Examples
+///
 /// ```ignore
 /// make_param_ops!(
 ///     /// Documentation for new param ops.

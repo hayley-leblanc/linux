@@ -7,17 +7,16 @@
 use alloc::{boxed::Box, slice::from_raw_parts_mut};
 
 use crate::{
-    bindings, c_types, error::code::*, error::from_kernel_result, str::CString, to_result,
+    bindings, error::code::*, error::from_kernel_result, str::CString, to_result,
     types::PointerWrapper, Result, ScopeGuard,
 };
+use macros::vtable;
 
 use core::{cell::UnsafeCell, fmt, marker::PhantomData, pin::Pin};
 
 /// This trait is implemented in order to provide callbacks to `struct hwrng`.
+#[vtable]
 pub trait Operations {
-    /// The methods to use to populate [`struct hwrng`].
-    const TO_USE: ToUse;
-
     /// The pointer type that will be used to hold user-defined data type.
     type Data: PointerWrapper + Send + Sync = ();
 
@@ -97,7 +96,8 @@ impl<T: Operations> Registration<T> {
 
         let name = CString::try_from_fmt(name)?;
 
-        // SAFETY: Registration is pinned and contains allocated and set to zero `bindings::hwrng` structure.
+        // SAFETY: Registration is pinned and contains allocated and set to zero
+        // `bindings::hwrng` structure.
         Self::init_hwrng(
             unsafe { &mut *this.hwrng.get() },
             &name,
@@ -106,7 +106,7 @@ impl<T: Operations> Registration<T> {
         );
 
         // SAFETY: `bindings::hwrng` is initialized above which guarantees safety.
-        to_result(|| unsafe { bindings::hwrng_register(this.hwrng.get()) })?;
+        to_result(unsafe { bindings::hwrng_register(this.hwrng.get()) })?;
 
         this.registered = true;
         this.name = Some(name);
@@ -118,16 +118,16 @@ impl<T: Operations> Registration<T> {
         hwrng: &mut bindings::hwrng,
         name: &CString,
         quality: u16,
-        data: *const c_types::c_void,
+        data: *const core::ffi::c_void,
     ) {
         hwrng.name = name.as_char_ptr();
 
-        hwrng.init = if T::TO_USE.init {
+        hwrng.init = if T::HAS_INIT {
             Some(Self::init_callback)
         } else {
             None
         };
-        hwrng.cleanup = if T::TO_USE.cleanup {
+        hwrng.cleanup = if T::HAS_CLEANUP {
             Some(Self::cleanup_callback)
         } else {
             None
@@ -144,7 +144,7 @@ impl<T: Operations> Registration<T> {
         // zeroed by `bindings::hwrng::default()` call.
     }
 
-    unsafe extern "C" fn init_callback(rng: *mut bindings::hwrng) -> c_types::c_int {
+    unsafe extern "C" fn init_callback(rng: *mut bindings::hwrng) -> core::ffi::c_int {
         from_kernel_result! {
             // SAFETY: `priv` private data field was initialized during creation of
             // the `bindings::hwrng` in `Self::init_hwrng` method. This callback is only
@@ -165,10 +165,10 @@ impl<T: Operations> Registration<T> {
 
     unsafe extern "C" fn read_callback(
         rng: *mut bindings::hwrng,
-        data: *mut c_types::c_void,
+        data: *mut core::ffi::c_void,
         max: usize,
         wait: bindings::bool_,
-    ) -> c_types::c_int {
+    ) -> core::ffi::c_int {
         from_kernel_result! {
             // SAFETY: `priv` private data field was initialized during creation of
             // the `bindings::hwrng` in `Self::init_hwrng` method. This callback is only
@@ -188,38 +188,6 @@ impl<T: Operations> Default for Registration<T> {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Represents which callbacks of [`struct hwrng`] should be populated with pointers.
-pub struct ToUse {
-    /// The `init` field of [`struct hwrng`].
-    pub init: bool,
-
-    /// The `cleanup` field of [`struct hwrng`].
-    pub cleanup: bool,
-}
-
-/// A constant version where all values are to set to `false`, that is, all supported fields will
-/// be set to null pointers.
-pub const USE_NONE: ToUse = ToUse {
-    init: false,
-    cleanup: false,
-};
-
-/// Defines the [`Operations::TO_USE`] field based on a list of fields to be populated.
-#[macro_export]
-macro_rules! declare_hwrng_operations {
-    () => {
-        const TO_USE: $crate::hwrng::ToUse = $crate::hwrng::USE_NONE;
-    };
-    ($($i:ident),+) => {
-        #[allow(clippy::needless_update)]
-        const TO_USE: kernel::hwrng::ToUse =
-            $crate::hwrng::ToUse {
-                $($i: true),+ ,
-                ..$crate::hwrng::USE_NONE
-            };
-    };
 }
 
 // SAFETY: `Registration` does not expose any of its state across threads.

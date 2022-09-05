@@ -14,9 +14,10 @@ CFLAGS_REMOVE_helpers.o = -Wmissing-prototypes -Wmissing-declarations
 always-$(CONFIG_RUST) += libmacros.so
 no-clean-files += libmacros.so
 
-always-$(CONFIG_RUST) += bindings_generated.rs bindings_helpers_generated.rs
-obj-$(CONFIG_RUST) += alloc.o kernel.o
-always-$(CONFIG_RUST) += exports_alloc_generated.h exports_kernel_generated.h
+always-$(CONFIG_RUST) += bindings/bindings_generated.rs bindings/bindings_helpers_generated.rs
+obj-$(CONFIG_RUST) += alloc.o bindings.o kernel.o
+always-$(CONFIG_RUST) += exports_alloc_generated.h exports_bindings_generated.h \
+    exports_kernel_generated.h
 
 ifdef CONFIG_RUST_BUILD_ASSERT_DENY
 always-$(CONFIG_RUST) += build_error.o
@@ -25,6 +26,9 @@ obj-$(CONFIG_RUST) += build_error.o
 endif
 
 obj-$(CONFIG_RUST) += exports.o
+
+obj-$(CONFIG_RUST_KERNEL_KUNIT_TEST) += doctests_kernel_generated.o
+obj-$(CONFIG_RUST_KERNEL_KUNIT_TEST) += doctests_kernel_generated_kunit.o
 
 # Avoids running `$(RUSTC)` for the sysroot when it may not be available.
 ifdef CONFIG_RUST
@@ -38,9 +42,11 @@ ifeq ($(quiet),silent_)
 cargo_quiet=-q
 rust_test_quiet=-q
 rustdoc_test_quiet=--test-args -q
+rustdoc_test_kernel_quiet=>/dev/null
 else ifeq ($(quiet),quiet_)
 rust_test_quiet=-q
 rustdoc_test_quiet=--test-args -q
+rustdoc_test_kernel_quiet=>/dev/null
 else
 cargo_quiet=--verbose
 endif
@@ -75,11 +81,15 @@ quiet_cmd_rustdoc = RUSTDOC $(if $(rustdoc_host),H, ) $<
 # and then retouch the generated files.
 rustdoc: rustdoc-core rustdoc-macros rustdoc-compiler_builtins \
     rustdoc-alloc rustdoc-kernel
-	$(Q)cp $(srctree)/Documentation/rust/logo.svg $(objtree)/$(obj)/doc
+	$(Q)cp $(srctree)/Documentation/images/logo.svg $(objtree)/$(obj)/doc
+	$(Q)cp $(srctree)/Documentation/images/COPYING-logo $(objtree)/$(obj)/doc
 	$(Q)find $(objtree)/$(obj)/doc -name '*.html' -type f -print0 | xargs -0 sed -Ei \
+		-e 's:rust-logo\.svg:logo.svg:g' \
 		-e 's:rust-logo\.png:logo.svg:g' \
 		-e 's:favicon\.svg:logo.svg:g' \
 		-e 's:<link rel="alternate icon" type="image/png" href="[./]*favicon-(16x16|32x32)\.png">::g'
+	$(Q)echo '.logo-container > img { object-fit: contain; }' \
+		>> $(objtree)/$(obj)/doc/rustdoc.css
 
 rustdoc-macros: private rustdoc_host = yes
 rustdoc-macros: private rustc_target_flags = --crate-type proc-macro \
@@ -104,10 +114,11 @@ rustdoc-alloc: $(src)/alloc/lib.rs rustdoc-core rustdoc-compiler_builtins FORCE
 	$(call if_changed,rustdoc)
 
 rustdoc-kernel: private rustc_target_flags = --extern alloc \
-    --extern build_error --extern macros=$(objtree)/$(obj)/libmacros.so
+    --extern build_error --extern macros=$(objtree)/$(obj)/libmacros.so \
+    --extern bindings
 rustdoc-kernel: $(src)/kernel/lib.rs rustdoc-core rustdoc-macros \
     rustdoc-compiler_builtins rustdoc-alloc $(obj)/libmacros.so \
-    $(obj)/bindings_generated.rs $(obj)/bindings_helpers_generated.rs FORCE
+    $(obj)/bindings.o FORCE
 	$(call if_changed,rustdoc)
 
 quiet_cmd_rustc_test_library = RUSTC TL $<
@@ -129,6 +140,9 @@ rusttestlib-macros: private rustc_test_library_proc = yes
 rusttestlib-macros: $(src)/macros/lib.rs rusttest-prepare FORCE
 	$(call if_changed,rustc_test_library)
 
+rusttestlib-bindings: $(src)/bindings/lib.rs rusttest-prepare FORCE
+	$(call if_changed,rustc_test_library)
+
 quiet_cmd_rustdoc_test = RUSTDOC T $<
       cmd_rustdoc_test = \
 	OBJTREE=$(abspath $(objtree)) \
@@ -138,6 +152,24 @@ quiet_cmd_rustdoc_test = RUSTDOC T $<
 		--sysroot $(objtree)/$(obj)/test/sysroot $(rustdoc_test_quiet) \
 		-L$(objtree)/$(obj)/test --output $(objtree)/$(obj)/doc \
 		--crate-name $(subst rusttest-,,$@) $<
+
+quiet_cmd_rustdoc_test_kernel = RUSTDOC TK $<
+      cmd_rustdoc_test_kernel = \
+	rm -rf $(objtree)/$(obj)/test/doctests/kernel; \
+	mkdir -p $(objtree)/$(obj)/test/doctests/kernel; \
+	OBJTREE=$(abspath $(objtree)) \
+	$(RUSTDOC) --test $(rust_flags) \
+		@$(objtree)/include/generated/rustc_cfg \
+		-L$(objtree)/$(obj) --extern alloc --extern kernel \
+		--extern build_error --extern macros \
+		--extern bindings \
+		--no-run --crate-name kernel -Zunstable-options \
+		--test-builder $(srctree)/scripts/rustdoc_test_builder.py \
+		$< $(rustdoc_test_kernel_quiet); \
+	$(srctree)/scripts/rustdoc_test_gen.py
+
+%/doctests_kernel_generated.rs %/doctests_kernel_generated_kunit.c: $(src)/kernel/lib.rs $(obj)/kernel.o FORCE
+	$(call if_changed,rustdoc_test_kernel)
 
 # We cannot use `-Zpanic-abort-tests` because some tests are dynamic,
 # so for the moment we skip `-Cpanic=abort`.
@@ -211,13 +243,11 @@ rusttest-macros: $(src)/macros/lib.rs rusttest-prepare FORCE
 	$(call if_changed,rustdoc_test)
 
 rusttest-kernel: private rustc_target_flags = --extern alloc \
-    --extern build_error --extern macros
-rusttest-kernel: private rustc_test_run_flags = --skip bindgen_test_layout_
+    --extern build_error --extern macros --extern bindings
 rusttest-kernel: $(src)/kernel/lib.rs rusttest-prepare \
-    rusttestlib-build_error rusttestlib-macros FORCE
+    rusttestlib-build_error rusttestlib-macros rusttestlib-bindings FORCE
 	$(call if_changed,rustc_test)
 	$(call if_changed,rustc_test_library)
-	$(call if_changed,rustdoc_test)
 
 filechk_rust_target = $(objtree)/scripts/generate_rust_target < $<
 
@@ -236,9 +266,10 @@ else
 bindgen_skip_c_flags := -mno-fp-ret-in-387 -mpreferred-stack-boundary=% \
 	-mskip-rax-setup -mgeneral-regs-only -msign-return-address=% \
 	-mindirect-branch=thunk-extern -mindirect-branch-register \
-	-mrecord-mcount -mabi=lp64 -mstack-protector-guard% -mtraceback=no \
-	-mno-pointers-to-nested-functions -mno-string -mno-strict-align \
-	-mstrict-align \
+	-mfunction-return=thunk-extern -mrecord-mcount -mabi=lp64 \
+	-mindirect-branch-cs-prefix -mstack-protector-guard% -mtraceback=no \
+	-mno-pointers-to-nested-functions -mno-string \
+	-mno-strict-align -mstrict-align \
 	-fconserve-stack -falign-jumps=% -falign-loops=% \
 	-femit-struct-debug-baseonly -fno-ipa-cp-clone -fno-ipa-sra \
 	-fno-partial-inlining -fplugin-arg-arm_ssp_per_task_plugin-% \
@@ -270,19 +301,19 @@ else
 bindgen_c_flags_lto = $(bindgen_c_flags)
 endif
 
-bindgen_c_flags_final = $(bindgen_c_flags_lto)
+bindgen_c_flags_final = $(bindgen_c_flags_lto) -D__BINDGEN__
 
 quiet_cmd_bindgen = BINDGEN $@
       cmd_bindgen = \
 	$(BINDGEN) $< $(bindgen_target_flags) \
-		--use-core --with-derive-default --ctypes-prefix c_types \
+		--use-core --with-derive-default --ctypes-prefix core::ffi --no-layout-tests \
 		--no-debug '.*' \
 		--size_t-is-usize -o $@ -- $(bindgen_c_flags_final) -DMODULE \
 		$(bindgen_target_cflags) $(bindgen_target_extra)
 
-$(obj)/bindings_generated.rs: private bindgen_target_flags = \
+$(obj)/bindings/bindings_generated.rs: private bindgen_target_flags = \
     $(shell grep -v '^\#\|^$$' $(srctree)/$(src)/bindgen_parameters)
-$(obj)/bindings_generated.rs: $(src)/kernel/bindings_helper.h \
+$(obj)/bindings/bindings_generated.rs: $(src)/bindings/bindings_helper.h \
     $(src)/bindgen_parameters FORCE
 	$(call if_changed_dep,bindgen)
 
@@ -290,14 +321,14 @@ $(obj)/bindings_generated.rs: $(src)/kernel/bindings_helper.h \
 # with `-Wmissing-declarations` (unlike GCC), so it is not strictly needed here
 # given it is `libclang`; but for consistency, future Clang changes and/or
 # a potential future GCC backend for `bindgen`, we disable it too.
-$(obj)/bindings_helpers_generated.rs: private bindgen_target_flags = \
+$(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_flags = \
     --blacklist-type '.*' --whitelist-var '' \
     --whitelist-function 'rust_helper_.*'
-$(obj)/bindings_helpers_generated.rs: private bindgen_target_cflags = \
+$(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_cflags = \
     -I$(objtree)/$(obj) -Wno-missing-prototypes -Wno-missing-declarations
-$(obj)/bindings_helpers_generated.rs: private bindgen_target_extra = ; \
+$(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_extra = ; \
     sed -Ei 's/pub fn rust_helper_([a-zA-Z0-9_]*)/#[link_name="rust_helper_\1"]\n    pub fn \1/g' $@
-$(obj)/bindings_helpers_generated.rs: $(src)/helpers.c FORCE
+$(obj)/bindings/bindings_helpers_generated.rs: $(src)/helpers.c FORCE
 	$(call if_changed_dep,bindgen)
 
 quiet_cmd_exports = EXPORTS $@
@@ -311,6 +342,9 @@ $(obj)/exports_core_generated.h: $(obj)/core.o FORCE
 	$(call if_changed,exports)
 
 $(obj)/exports_alloc_generated.h: $(obj)/alloc.o FORCE
+	$(call if_changed,exports)
+
+$(obj)/exports_bindings_generated.h: $(obj)/bindings.o FORCE
 	$(call if_changed,exports)
 
 $(obj)/exports_kernel_generated.h: $(obj)/kernel.o FORCE
@@ -366,11 +400,16 @@ $(obj)/alloc.o: $(src)/alloc/lib.rs $(obj)/compiler_builtins.o FORCE
 $(obj)/build_error.o: $(src)/build_error.rs $(obj)/compiler_builtins.o FORCE
 	$(call if_changed_dep,rustc_library)
 
+$(obj)/bindings.o: $(src)/bindings/lib.rs \
+    $(obj)/compiler_builtins.o \
+    $(obj)/bindings/bindings_generated.rs \
+    $(obj)/bindings/bindings_helpers_generated.rs FORCE
+	$(call if_changed_dep,rustc_library)
+
 $(obj)/kernel.o: private rustc_target_flags = --extern alloc \
-    --extern build_error --extern macros
+    --extern build_error --extern macros --extern bindings
 $(obj)/kernel.o: $(src)/kernel/lib.rs $(obj)/alloc.o $(obj)/build_error.o \
-    $(obj)/libmacros.so $(obj)/bindings_generated.rs \
-    $(obj)/bindings_helpers_generated.rs FORCE
+    $(obj)/libmacros.so $(obj)/bindings.o FORCE
 	$(call if_changed_dep,rustc_library)
 
 endif # CONFIG_RUST

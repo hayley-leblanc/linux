@@ -11,11 +11,18 @@ use kernel::{
     prelude::*,
 };
 
+module_misc_device! {
+    type: RandomFile,
+    name: "rust_random",
+    author: "Rust for Linux Contributors",
+    description: "Just use /dev/urandom: Now with early-boot safety",
+    license: "GPL",
+}
+
 struct RandomFile;
 
+#[vtable]
 impl file::Operations for RandomFile {
-    kernel::declare_file_operations!(read, write, read_iter, write_iter);
-
     fn open(_data: &(), _file: &File) -> Result {
         Ok(())
     }
@@ -27,8 +34,9 @@ impl file::Operations for RandomFile {
         while !buf.is_empty() {
             let len = chunkbuf.len().min(buf.len());
             let chunk = &mut chunkbuf[0..len];
+            let blocking = (file.flags() & file::flags::O_NONBLOCK) == 0;
 
-            if file.is_blocking() {
+            if blocking {
                 kernel::random::getrandom(chunk)?;
             } else {
                 kernel::random::getrandom_nonblock(chunk)?;
@@ -49,12 +57,4 @@ impl file::Operations for RandomFile {
         }
         Ok(total_len)
     }
-}
-
-module_misc_device! {
-    type: RandomFile,
-    name: b"rust_random",
-    author: b"Rust for Linux Contributors",
-    description: b"Just use /dev/urandom: Now with early-boot safety",
-    license: b"GPL v2",
 }

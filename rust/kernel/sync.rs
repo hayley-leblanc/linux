@@ -5,44 +5,67 @@
 //! This module contains the kernel APIs related to synchronisation that have been ported or
 //! wrapped for usage by Rust code in the kernel and is shared by all of them.
 //!
-//! # Example
+//! # Examples
 //!
-//! ```no_run
-//! # use kernel::prelude::*;
+//! ```
 //! # use kernel::mutex_init;
 //! # use kernel::sync::Mutex;
 //! # use alloc::boxed::Box;
 //! # use core::pin::Pin;
 //! // SAFETY: `init` is called below.
-//! let mut data = Pin::from(Box::new(unsafe { Mutex::new(0) }));
+//! let mut data = Pin::from(Box::try_new(unsafe { Mutex::new(10) }).unwrap());
 //! mutex_init!(data.as_mut(), "test::data");
-//! *data.lock() = 10;
-//! pr_info!("{}\n", *data.lock());
+//!
+//! assert_eq!(*data.lock(), 10);
+//! *data.lock() = 20;
+//! assert_eq!(*data.lock(), 20);
 //! ```
 
 use crate::{bindings, str::CStr};
-use core::pin::Pin;
+use core::{cell::UnsafeCell, mem::MaybeUninit, pin::Pin};
 
 mod arc;
 mod condvar;
 mod guard;
 mod locked_by;
 mod mutex;
-mod revocable_mutex;
+mod nowait;
+pub mod rcu;
+mod revocable;
 mod rwsem;
 mod seqlock;
 pub mod smutex;
 mod spinlock;
 
-pub use arc::{Ref, RefBorrow, UniqueRef};
+pub use arc::{new_refcount, Ref, RefBorrow, StaticRef, UniqueRef};
 pub use condvar::CondVar;
 pub use guard::{Guard, Lock, LockFactory, LockInfo, LockIniter, ReadLock, WriteLock};
 pub use locked_by::LockedBy;
-pub use mutex::Mutex;
-pub use revocable_mutex::{RevocableMutex, RevocableMutexGuard};
-pub use rwsem::RwSemaphore;
+pub use mutex::{Mutex, RevocableMutex, RevocableMutexGuard};
+pub use nowait::{NoWaitLock, NoWaitLockGuard};
+pub use revocable::{Revocable, RevocableGuard};
+pub use rwsem::{RevocableRwSemaphore, RevocableRwSemaphoreGuard, RwSemaphore};
 pub use seqlock::{SeqLock, SeqLockReadGuard};
 pub use spinlock::{RawSpinLock, SpinLock};
+
+/// Represents a lockdep class. It's a wrapper around C's `lock_class_key`.
+#[repr(transparent)]
+pub struct LockClassKey(UnsafeCell<MaybeUninit<bindings::lock_class_key>>);
+
+// SAFETY: This is a wrapper around a lock class key, so it is safe to use references to it from
+// any thread.
+unsafe impl Sync for LockClassKey {}
+
+impl LockClassKey {
+    /// Creates a new lock class key.
+    pub const fn new() -> Self {
+        Self(UnsafeCell::new(MaybeUninit::uninit()))
+    }
+
+    pub(crate) fn get(&self) -> *mut bindings::lock_class_key {
+        self.0.get().cast()
+    }
+}
 
 /// Safely initialises an object that has an `init` function that takes a name and a lock class as
 /// arguments, examples of these are [`Mutex`] and [`SpinLock`]. Each of them also provides a more
@@ -51,18 +74,11 @@ pub use spinlock::{RawSpinLock, SpinLock};
 #[macro_export]
 macro_rules! init_with_lockdep {
     ($obj:expr, $name:expr) => {{
-        static mut CLASS1: core::mem::MaybeUninit<$crate::bindings::lock_class_key> =
-            core::mem::MaybeUninit::uninit();
-        static mut CLASS2: core::mem::MaybeUninit<$crate::bindings::lock_class_key> =
-            core::mem::MaybeUninit::uninit();
+        static CLASS1: $crate::sync::LockClassKey = $crate::sync::LockClassKey::new();
+        static CLASS2: $crate::sync::LockClassKey = $crate::sync::LockClassKey::new();
         let obj = $obj;
         let name = $crate::c_str!($name);
-        // SAFETY: `CLASS1` and `CLASS2` are never used by Rust code directly; the C portion of the
-        // kernel may change it though.
-        #[allow(unused_unsafe)]
-        unsafe {
-            $crate::sync::NeedsLockClass::init(obj, name, CLASS1.as_mut_ptr(), CLASS2.as_mut_ptr())
-        };
+        $crate::sync::NeedsLockClass::init(obj, name, &CLASS1, &CLASS2)
     }};
 }
 
@@ -75,16 +91,11 @@ pub trait NeedsLockClass {
     ///
     /// Callers are encouraged to use the [`init_with_lockdep`] macro as it automatically creates a
     /// new lock class on each usage.
-    ///
-    /// # Safety
-    ///
-    /// `key1` and `key2` must point to valid memory locations and remain valid until `self` is
-    /// dropped.
-    unsafe fn init(
+    fn init(
         self: Pin<&mut Self>,
         name: &'static CStr,
-        key1: *mut bindings::lock_class_key,
-        key2: *mut bindings::lock_class_key,
+        key1: &'static LockClassKey,
+        key2: &'static LockClassKey,
     );
 }
 

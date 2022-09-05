@@ -14,18 +14,19 @@
 #![no_std]
 #![feature(allocator_api)]
 #![feature(associated_type_defaults)]
-#![feature(concat_idents)]
-#![feature(const_fn_trait_bound)]
+#![feature(coerce_unsized)]
 #![feature(const_mut_refs)]
 #![feature(const_ptr_offset_from)]
 #![feature(const_refs_to_cell)]
 #![feature(const_trait_impl)]
+#![feature(core_ffi_c)]
+#![feature(c_size_t)]
+#![feature(dispatch_from_dyn)]
 #![feature(doc_cfg)]
+#![feature(duration_constants)]
 #![feature(generic_associated_types)]
 #![feature(ptr_metadata)]
 #![feature(receiver_trait)]
-#![feature(coerce_unsized)]
-#![feature(dispatch_from_dyn)]
 #![feature(unsize)]
 
 // Ensure conditional compilation based on the kernel configuration works;
@@ -38,24 +39,27 @@ compile_error!("Missing kernel configuration for conditional compilation");
 mod allocator;
 
 #[doc(hidden)]
-pub mod bindings;
+pub use bindings;
+
+pub use macros;
 
 #[cfg(CONFIG_ARM_AMBA)]
 pub mod amba;
-pub mod c_types;
 pub mod chrdev;
 #[cfg(CONFIG_COMMON_CLK)]
 pub mod clk;
 pub mod cred;
+pub mod delay;
 pub mod device;
 pub mod driver;
 pub mod error;
 pub mod file;
-// pub mod file_operations;
 pub mod file_system;
+pub mod fs;
 pub mod gpio;
 pub mod hwrng;
 pub mod irq;
+pub mod kasync;
 pub mod miscdev;
 pub mod mm;
 #[cfg(CONFIG_NET)]
@@ -66,10 +70,12 @@ pub mod revocable;
 pub mod security;
 pub mod str;
 pub mod task;
+pub mod workqueue;
 
 pub mod linked_list;
 mod raw_list;
 pub mod rbtree;
+pub mod unsafe_list;
 
 #[doc(hidden)]
 pub mod module_param;
@@ -88,6 +94,7 @@ pub mod sync;
 pub mod sysctl;
 
 pub mod io_buffer;
+#[cfg(CONFIG_HAS_IOMEM)]
 pub mod io_mem;
 pub mod iov_iter;
 pub mod of;
@@ -95,12 +102,16 @@ pub mod platform;
 mod types;
 pub mod user_ptr;
 
+#[cfg(CONFIG_KUNIT)]
+pub mod kunit;
+
 #[doc(hidden)]
 pub use build_error::build_error;
 
 pub use crate::error::{to_result, Error, Result};
 pub use crate::types::{
-    bit, bits_iter, ARef, AlwaysRefCounted, Bool, False, Mode, Opaque, ScopeGuard, True,
+    bit, bits_iter, ARef, AlwaysRefCounted, Bool, Either, Either::Left, Either::Right, False, Mode,
+    Opaque, PointerWrapper, ScopeGuard, True,
 };
 
 use core::marker::PhantomData;
@@ -176,7 +187,7 @@ pub struct KParamGuard<'a> {
 impl<'a> Drop for KParamGuard<'a> {
     fn drop(&mut self) {
         // SAFETY: `kernel_param_lock` will check if the pointer is null and
-        // use the built-in mutex in that case. The existance of `self`
+        // use the built-in mutex in that case. The existence of `self`
         // guarantees that the lock is held.
         unsafe { bindings::kernel_param_unlock(self.this_module.0) }
     }
@@ -184,7 +195,7 @@ impl<'a> Drop for KParamGuard<'a> {
 
 /// Calculates the offset of a field from the beginning of the struct it belongs to.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
 /// # use kernel::prelude::*;
@@ -194,10 +205,7 @@ impl<'a> Drop for KParamGuard<'a> {
 ///     b: u32,
 /// }
 ///
-/// fn test() {
-///     // This prints `8`.
-///     pr_info!("{}\n", offset_of!(Test, b));
-/// }
+/// assert_eq!(offset_of!(Test, b), 8);
 /// ```
 #[macro_export]
 macro_rules! offset_of {
@@ -225,23 +233,19 @@ macro_rules! offset_of {
 /// as opposed to a pointer to another object of the same type. If this condition is not met,
 /// any dereference of the resulting pointer is UB.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
-/// # use kernel::prelude::*;
 /// # use kernel::container_of;
 /// struct Test {
 ///     a: u64,
 ///     b: u32,
 /// }
 ///
-/// fn test() {
-///     let test = Test { a: 10, b: 20 };
-///     let b_ptr = &test.b;
-///     let test_alias = container_of!(b_ptr, Test, b);
-///     // This prints `true`.
-///     pr_info!("{}\n", core::ptr::eq(&test, test_alias));
-/// }
+/// let test = Test { a: 10, b: 20 };
+/// let b_ptr = &test.b;
+/// let test_alias = container_of!(b_ptr, Test, b);
+/// assert!(core::ptr::eq(&test, test_alias));
 /// ```
 #[macro_export]
 macro_rules! container_of {
@@ -259,8 +263,7 @@ fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
     // SAFETY: FFI call.
     unsafe { bindings::BUG() };
     // Bindgen currently does not recognize `__noreturn` so `BUG` returns `()`
-    // instead of `!`.
-    // https://github.com/rust-lang/rust-bindgen/issues/2094
+    // instead of `!`. See <https://github.com/rust-lang/rust-bindgen/issues/2094>.
     loop {}
 }
 
