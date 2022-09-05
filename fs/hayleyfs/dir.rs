@@ -5,14 +5,13 @@
 
 use crate::def::*;
 use crate::file::hayleyfs_file::*;
-use crate::h_inode::hayleyfs_inode::*;
 use crate::h_inode::*;
 use crate::pm::*;
 use crate::super_def::*;
+use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use kernel::bindings::{dir_context, file, file_operations, inode};
-use kernel::c_types::{c_int, c_void};
 use kernel::prelude::*;
 use kernel::{c_default_struct, PAGE_SIZE};
 

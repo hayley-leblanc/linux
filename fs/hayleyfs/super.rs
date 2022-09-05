@@ -8,423 +8,466 @@
 #![deny(clippy::let_underscore_must_use)]
 #![deny(clippy::used_underscore_binding)]
 
-mod def;
-mod dir;
-mod file;
-mod finalize;
-mod h_inode;
-mod namei;
-mod pm;
-// mod recovery;
-mod super_def;
+// mod def;
+// mod dir;
+// mod file;
+// mod finalize;
+// mod h_inode;
+// mod namei;
+// mod pm;
+// mod super_def;
 
-use crate::def::*;
-use crate::dir::*;
-use crate::file::*;
-use crate::finalize::*;
-use crate::h_inode::hayleyfs_inode::*;
-use crate::h_inode::*;
-use crate::namei::*;
-use crate::pm::*;
-// use crate::recovery::*;
-use crate::super_def::hayleyfs_bitmap::*;
-use crate::super_def::hayleyfs_sb::*;
-use crate::super_def::*;
-use core::ptr;
+// use crate::def::*;
+// use crate::dir::*;
+// use crate::h_inode::hayleyfs_inode::*;
+// use crate::h_inode::*;
+// use crate::namei::*;
+// use crate::pm::*;
+// use crate::super_def::hayleyfs_bitmap::*;
+// use crate::super_def::hayleyfs_sb::*;
+// use crate::super_def::*;
+// use core::ffi::{c_int, c_void};
+// use core::ptr;
 
-use kernel::bindings::{
-    d_make_root, dax_direct_access, file_system_type, fs_context, fs_context_operations,
-    fs_dax_get_by_bdev, fs_parameter, fs_parse_result, fs_parse_result__bindgen_ty_1,
-    get_tree_bdev, inode, kill_block_super, pfn_t, register_filesystem, super_block,
-    super_operations, unregister_filesystem, vfs_parse_fs_param_source, ENOMEM, ENOPARAM,
-    PAGE_SHIFT, S_IFDIR,
-};
-use kernel::c_types::{c_int, c_void};
+// use kernel::bindings::{
+//     d_make_root, dax_access_mode_DAX_ACCESS, dax_direct_access, file_system_type, fs_context,
+//     fs_context_operations, fs_dax_get_by_bdev, get_tree_bdev, inode, kill_block_super, pfn_t,
+//     register_filesystem, super_block, super_operations, unregister_filesystem, ENOMEM, PAGE_SHIFT,
+//     S_IFDIR,
+// };
+
 use kernel::prelude::*;
-use kernel::{c_default_struct, c_str, PAGE_SIZE};
+// use kernel::{c_default_struct, c_str, fs, PAGE_SIZE};
+use kernel::{c_str, fs};
 
-module! {
+module_fs! {
     type: HayleyFS,
-    name: b"hayleyfs",
-    author: b"Hayley LeBlanc",
-    description: b"Rust test fs module",
-    license: b"GPL v2",
+    name: "hayleyfs",
+    author: "Hayley LeBlanc",
+    description: "Rust test fs module",
+    license: "GPL v2",
 }
 
 struct HayleyFS {}
 
-#[no_mangle]
-static mut HayleyfsFsType: file_system_type = file_system_type {
-    name: c_str!("hayleyfs").as_char_ptr(),
-    init_fs_context: Some(hayleyfs_init_fs_context),
-    parameters: hayleyfs_fs_parameters.as_ptr(),
-    kill_sb: Some(kill_block_super),
-    ..c_default_struct!(file_system_type)
-};
+#[vtable]
+impl fs::Context<Self> for HayleyFS {
+    type Data = ();
 
-#[no_mangle]
-static HayleyfsSuperOps: super_operations = super_operations {
-    put_super: Some(hayleyfs_put_super),
-    ..c_default_struct!(super_operations)
-};
+    kernel::define_fs_params! {(),
+        {flag, "flag", |_, v| { pr_info!("flag passed-in: {v}\n"); Ok(()) } },
+        {flag_no, "flagno", |_, v| { pr_info!("flagno passed-in: {v}\n"); Ok(()) } },
+        {bool, "bool", |_, v| { pr_info!("bool passed-in: {v}\n"); Ok(()) } },
+        {u32, "u32", |_, v| { pr_info!("u32 passed-in: {v}\n"); Ok(()) } },
+        {u32oct, "u32oct", |_, v| { pr_info!("u32oct passed-in: {v}\n"); Ok(()) } },
+        {u32hex, "u32hex", |_, v| { pr_info!("u32hex passed-in: {v}\n"); Ok(()) } },
+        {s32, "s32", |_, v| { pr_info!("s32 passed-in: {v}\n"); Ok(()) } },
+        {u64, "u64", |_, v| { pr_info!("u64 passed-in: {v}\n"); Ok(()) } },
+        {string, "string", |_, v| { pr_info!("string passed-in: {v}\n"); Ok(()) } },
+        {enum, "enum", [("first", 10), ("second", 20)], |_, v| {
+            pr_info!("enum passed-in: {v}\n"); Ok(()) }
+        },
+    }
 
-#[no_mangle]
-static HayleyfsContextOps: fs_context_operations = fs_context_operations {
-    get_tree: Some(hayleyfs_get_tree),
-    parse_param: Some(hayleyfs_parse_params),
-    ..c_default_struct!(fs_context_operations)
-};
-
-fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> Result<()> {
-    // TODO: what happens if this isn't a dax dev?
-
-    sbi.s_daxdev = unsafe { fs_dax_get_by_bdev((*sb).s_bdev, &mut sbi.s_dev_offset as *mut u64) };
-
-    // check for errors on getting the daxdev
-    // TODO: what else do you have to check?
-    if ptr::eq(sbi.s_daxdev, ptr::null_mut()) {
-        pr_alert!("Bad DAX device\n");
-        Err(EINVAL)
-    } else {
-        let mut virt_addr: *mut c_void = ptr::null_mut();
-        let pfn: *mut pfn_t = ptr::null_mut();
-        // TODO: LONG_MAX and PAGE_SIZE are usizes (and we can't change PAGE_SIZE's type)
-        // but we need them to be i64s, so we have to convert. this PROBABLY won't fail,
-        // but it COULD. figure out a way to better way to deal with this
-        let mut size = unsafe {
-            dax_direct_access(
-                sbi.s_daxdev,
-                0,
-                (LONG_MAX / PAGE_SIZE).try_into().unwrap(),
-                &mut virt_addr,
-                pfn,
-            )
-        };
-        if size <= 0 {
-            pr_alert!("direct access failed\n");
-            Err(EINVAL)
-        } else {
-            size *= PAGE_SIZE as i64;
-            sbi.pm_size = u64::try_from(size).unwrap(); // should never fail - size is always positive
-            sbi.virt_addr = virt_addr;
-
-            // this calculation taken from NOVA
-            // pfn is an absolute PFN translation of our address
-            // pfn_t_to_pfn translates from a pfn_t type (which is really a struct)
-            // to an unsigned long.
-            // not quite sure what the shift is doing here.
-            // TODO: figure out if this is correct
-            sbi.phys_addr = unsafe { hayleyfs_pfn_t_to_pfn(*pfn) << PAGE_SHIFT };
-
-            Ok(())
-        }
+    fn try_new() -> Result {
+        pr_info!("context created!\n");
+        Ok(())
     }
 }
 
-fn hayleyfs_alloc_sbi(fc: *mut fs_context, sb: *mut super_block) -> *mut c_void {
-    // according to ramfs port, this is allocated the same as if we
-    // used kzalloc with GFP_KERNEL
-    let sbi = Box::<SbInfo>::try_new_zeroed();
+impl fs::Type for HayleyFS {
+    type Context = Self;
+    const SUPER_TYPE: fs::Super = fs::Super::Single; // TODO: or SingleReconf or BlockDev?
+    const NAME: &'static CStr = c_str!("rustfs");
+    const FLAGS: i32 = fs::flags::USERNS_MOUNT | fs::flags::REQUIRES_DEV; // TODO: other options?
 
-    match sbi {
-        Ok(sbi) => {
-            let mut sbi = unsafe { sbi.assume_init() };
-            sbi.s_dev_offset = 0; // TODO: what should this be?
-            sbi.mount_opts = HayleyfsMountOpts::default();
-
-            let sbi_ptr = Box::into_raw(sbi) as *mut c_void;
-            unsafe { (*fc).s_fs_info = sbi_ptr };
-            unsafe { (*sb).s_fs_info = sbi_ptr };
-            sbi_ptr
-        }
-        Err(_) => unsafe { hayleyfs_err_ptr(ENOMEM.into()) },
+    fn fill_super(_data: (), sb: fs::NewSuperBlock<'_, Self>) -> Result<&fs::SuperBlock<Self>> {
+        let sb = sb.init(
+            (),
+            &fs::SuperParams {
+                magic: 0x72757374,
+                ..fs::SuperParams::DEFAULT
+            },
+        )?;
+        let sb = sb.init_root()?;
+        Ok(sb)
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn hayleyfs_fill_super(
-    sb_raw: *mut super_block,
-    fc_raw: *mut fs_context,
-) -> i32 {
-    let sb = unsafe { &mut *(sb_raw as *mut super_block) };
-    let fc = unsafe { &mut *(fc_raw as *mut fs_context) };
+// #[no_mangle]
+// static mut HayleyfsFsType: file_system_type = file_system_type {
+//     name: c_str!("hayleyfs").as_char_ptr(),
+//     init_fs_context: Some(hayleyfs_init_fs_context),
+//     // parameters: hayleyfs_fs_parameters.as_ptr(),
+//     kill_sb: Some(kill_block_super),
+//     ..c_default_struct!(file_system_type)
+// };
 
-    let result = _hayleyfs_fill_super(sb, fc);
-    match result {
-        Ok(_) => 0,
-        Err(e) => e.to_kernel_errno(),
-    }
-}
+// #[no_mangle]
+// static HayleyfsSuperOps: super_operations = super_operations {
+//     put_super: Some(hayleyfs_put_super),
+//     ..c_default_struct!(super_operations)
+// };
 
-/*
- * Initialization dependencies
- * Horizontal line through arrows means that the prior operation(s) must
- * be flushed and fenced before the subsequent ones are allowed to occur
- * THIS IS NOT UP TO DATE
- * TODO: update with more detailed directory page initialization
- *                             ┌──────────────┐
- *                             │              │
- *                             │ zero bitmaps │
- *                             │              │
- *                             └──────┬───────┘
- *                                    │
- *                                ────┼────
- *                                    │
- *                        ┌───────────▼─────────────┐
- *                        │                         │
- *           ┌────────────┤ allocate reserved pages ├───────────┐
- *           │            │                         │           │
- *           │            └───────────┬─────────────┘           │
- *           │                        │                         │
- *           │                      ──┼─────────────────────────┼──
- *           │                        │                         │
- * ┌─────────▼──────────┐   ┌─────────▼───────────┐   ┌─────────▼──────────┐
- * │                    │   │                     │   │                    │
- * │ set up super block │   │ allocate root inode │   │ allocate dir page  │
- * │                    │   │                     │   │                    │
- * └────────────────────┘   └─────────┬────────┬──┘   └─────────┬──────────┘
- *                                    │        │                │
- *                            ────────┼────────┼────────────────┼─────────
- *                                    │        │                │
- *                                    │        └────────┐       │
- *                                    │                 │       │
- *                          ┌─────────▼────────┐     ┌──▼───────▼──────────┐
- *                          │                  │     │                     │
- *                          │ initialize inode │     │ initialize root dir │
- *                          │                  │     │                     │
- *                          └───────────────┬──┘     └──┬──────────────────┘
- *                                          │           │
- *                                    ──────┼───────────┼─────
- *                                          │           │
- *                                      ┌───▼───────────▼───┐
- *                                      │                   │
- *                                      │ add page to inode │
- *                                      │                   │
- *                                      └───────────────────┘
- */
-#[no_mangle]
-fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()> {
-    let result = hayleyfs_alloc_sbi(fc, sb);
-    // unsafe because we don't check whether the result is a valid error
-    unsafe {
-        if hayleyfs_is_err(result) {
-            // let err = hayleyfs_ptr_err(result);
-            // TODO: we should really use a more generic fxn to convert
-            // from u64 to kernel error, but those fxns aren't accessible from here
-            // right now. It should also be enomem, not einval, but for some reason
-            // the compiler won't let us use enomem here
-            return Err(EINVAL);
-        }
-    }
+// #[no_mangle]
+// static HayleyfsContextOps: fs_context_operations = fs_context_operations {
+//     get_tree: Some(hayleyfs_get_tree),
+//     // parse_param: Some(hayleyfs_parse_params),
+//     ..c_default_struct!(fs_context_operations)
+// };
 
-    let mut sbi = hayleyfs_get_sbi(sb);
-    sbi.mount_opts = unsafe { *((*fc).fs_private as *mut HayleyfsMountOpts) }; // TODO: abstraction
-    hayleyfs_get_pm_info(sb, sbi)?;
+// fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> Result<()> {
+//     // TODO: what happens if this isn't a dax dev?
 
-    sbi.mode = 0o755;
-    sbi.uid = unsafe { hayleyfs_current_fsuid() };
-    sbi.gid = unsafe { hayleyfs_current_fsgid() };
+//     sbi.s_daxdev = unsafe { fs_dax_get_by_bdev((*sb).s_bdev, &mut sbi.s_dev_offset as *mut u64) };
 
-    let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO)?;
-    let mut root_i = unsafe { &mut *(root_i as *mut inode) };
+//     // check for errors on getting the daxdev
+//     // TODO: what else do you have to check?
+//     if ptr::eq(sbi.s_daxdev, ptr::null_mut()) {
+//         pr_alert!("Bad DAX device\n");
+//         Err(EINVAL)
+//     } else {
+//         let mut virt_addr: *mut c_void = ptr::null_mut();
+//         let pfn: *mut pfn_t = ptr::null_mut();
+//         // TODO: LONG_MAX and PAGE_SIZE are usizes (and we can't change PAGE_SIZE's type)
+//         // but we need them to be i64s, so we have to convert. this PROBABLY won't fail,
+//         // but it COULD. figure out a way to better way to deal with this
+//         let mut size = unsafe {
+//             dax_direct_access(
+//                 sbi.s_daxdev,
+//                 0,
+//                 (LONG_MAX / PAGE_SIZE).try_into().unwrap(),
+//                 dax_access_mode_DAX_ACCESS,
+//                 &mut virt_addr,
+//                 pfn,
+//             )
+//         };
+//         if size <= 0 {
+//             pr_alert!("direct access failed\n");
+//             Err(EINVAL)
+//         } else {
+//             size *= PAGE_SIZE as i64;
+//             sbi.pm_size = u64::try_from(size).unwrap(); // should never fail - size is always positive
+//             sbi.virt_addr = virt_addr;
 
-    root_i.i_mode = sbi.mode | S_IFDIR as u16;
-    pr_info!("setting root inode dir iops\n");
-    root_i.i_op = &HayleyfsDirInodeOps;
-    set_nlink_safe(root_i, 2);
+//             // this calculation taken from NOVA
+//             // pfn is an absolute PFN translation of our address
+//             // pfn_t_to_pfn translates from a pfn_t type (which is really a struct)
+//             // to an unsigned long.
+//             // not quite sure what the shift is doing here.
+//             // TODO: figure out if this is correct
+//             sbi.phys_addr = unsafe { hayleyfs_pfn_t_to_pfn(*pfn) << PAGE_SHIFT };
 
-    // pr_info!("{:?}\n", root_i);
+//             Ok(())
+//         }
+//     }
+// }
 
-    if sbi.mount_opts.init {
-        // TODO: we probably shouldn't actually do this. very slow. but it will let
-        // me procrastinate on how to actually make sure data from old mounts doesn't
-        // stick around. unless this ends up being incredibly slow
-        // if you wanted to be fancy about it you could use nontemporal stores
-        // but then you'd have to implement that and that would defeat the point of this
-        // janky quick workaround
-        unsafe {
-            // TODO: make sure you're writing the right amount of zeros
-            ptr::write_bytes(sbi.virt_addr, 0, (sbi.pm_size / 8).try_into()?);
-            clwb(sbi.virt_addr, sbi.pm_size.try_into().unwrap(), true);
-        }
-        // TODO: for some reason there are extra fences here
+// fn hayleyfs_alloc_sbi(fc: *mut fs_context, sb: *mut super_block) -> *mut c_void {
+//     // according to ramfs port, this is allocated the same as if we
+//     // used kzalloc with GFP_KERNEL
+//     let sbi = Box::<SbInfo>::try_new_zeroed();
 
-        // zero bitmaps
-        let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi).zero_bitmap()?;
-        let mut data_bitmap = BitmapWrapper::read_data_bitmap(sbi).zero_bitmap()?;
+//     match sbi {
+//         Ok(sbi) => {
+//             let mut sbi = unsafe { sbi.assume_init() };
+//             sbi.s_dev_offset = 0; // TODO: what should this be?
+//             sbi.mount_opts = HayleyfsMountOpts::default();
 
-        // allocate reserved pages
-        let data_bitmap = set_bits!(
-            data_bitmap,
-            SUPER_BLOCK_PAGE,
-            INODE_BITMAP_PAGE,
-            INODE_PAGE,
-            DATA_BITMAP_PAGE
-        )?
-        .persist();
+//             let sbi_ptr = Box::into_raw(sbi) as *mut c_void;
+//             unsafe { (*fc).s_fs_info = sbi_ptr };
+//             unsafe { (*sb).s_fs_info = sbi_ptr };
+//             sbi_ptr
+//         }
+//         Err(_) => unsafe { hayleyfs_err_ptr(ENOMEM.into()) },
+//     }
+// }
 
-        // initialize super block
-        let _sb = SuperBlockWrapper::init(sbi, &data_bitmap);
+// #[no_mangle]
+// pub unsafe extern "C" fn hayleyfs_fill_super(
+//     sb_raw: *mut super_block,
+//     fc_raw: *mut fs_context,
+// ) -> i32 {
+//     let sb = unsafe { &mut *(sb_raw as *mut super_block) };
+//     let fc = unsafe { &mut *(fc_raw as *mut fs_context) };
 
-        // let (page_no, data_bitmap) = data_bitmap.alloc_root_ino_page(&inode_bitmap)?;
-        let (root_ino, inode_bitmap) = inode_bitmap.alloc_root_ino(&data_bitmap)?;
+//     // let result = _hayleyfs_fill_super(sb, fc);
+//     // match result {
+//     //     Ok(_) => 0,
+//     //     Err(e) => e.to_kernel_errno(),
+//     // }
+//     0
+// }
 
-        // TODO: do we need to use data bitmap again?
-        // let (_data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
-        let inode_bitmap = inode_bitmap.fence();
+// // /*
+// //  * Initialization dependencies
+// //  * Horizontal line through arrows means that the prior operation(s) must
+// //  * be flushed and fenced before the subsequent ones are allowed to occur
+// //  * THIS IS NOT UP TO DATE
+// //  * TODO: update with more detailed directory page initialization
+// //  *                             ┌──────────────┐
+// //  *                             │              │
+// //  *                             │ zero bitmaps │
+// //  *                             │              │
+// //  *                             └──────┬───────┘
+// //  *                                    │
+// //  *                                ────┼────
+// //  *                                    │
+// //  *                        ┌───────────▼─────────────┐
+// //  *                        │                         │
+// //  *           ┌────────────┤ allocate reserved pages ├───────────┐
+// //  *           │            │                         │           │
+// //  *           │            └───────────┬─────────────┘           │
+// //  *           │                        │                         │
+// //  *           │                      ──┼─────────────────────────┼──
+// //  *           │                        │                         │
+// //  * ┌─────────▼──────────┐   ┌─────────▼───────────┐   ┌─────────▼──────────┐
+// //  * │                    │   │                     │   │                    │
+// //  * │ set up super block │   │ allocate root inode │   │ allocate dir page  │
+// //  * │                    │   │                     │   │                    │
+// //  * └────────────────────┘   └─────────┬────────┬──┘   └─────────┬──────────┘
+// //  *                                    │        │                │
+// //  *                            ────────┼────────┼────────────────┼─────────
+// //  *                                    │        │                │
+// //  *                                    │        └────────┐       │
+// //  *                                    │                 │       │
+// //  *                          ┌─────────▼────────┐     ┌──▼───────▼──────────┐
+// //  *                          │                  │     │                     │
+// //  *                          │ initialize inode │     │ initialize root dir │
+// //  *                          │                  │     │                     │
+// //  *                          └───────────────┬──┘     └──┬──────────────────┘
+// //  *                                          │           │
+// //  *                                    ──────┼───────────┼─────
+// //  *                                          │           │
+// //  *                                      ┌───▼───────────▼───┐
+// //  *                                      │                   │
+// //  *                                      │ add page to inode │
+// //  *                                      │                   │
+// //  *                                      └───────────────────┘
+// //  */
+// // #[no_mangle]
+// // fn _hayleyfs_fill_super(sb: &mut super_block, fc: &mut fs_context) -> Result<()> {
+// //     let result = hayleyfs_alloc_sbi(fc, sb);
+// //     // unsafe because we don't check whether the result is a valid error
+// //     unsafe {
+// //         if hayleyfs_is_err(result) {
+// //             // let err = hayleyfs_ptr_err(result);
+// //             // TODO: we should really use a more generic fxn to convert
+// //             // from u64 to kernel error, but those fxns aren't accessible from here
+// //             // right now. It should also be enomem, not einval, but for some reason
+// //             // the compiler won't let us use enomem here
+// //             return Err(EINVAL);
+// //         }
+// //     }
 
-        let pi = InodeWrapper::read_dir_inode(sbi, &root_ino).initialize_root_inode(
-            sb,
-            sbi,
-            root_i,
-            &inode_bitmap,
-        );
+// //     let mut sbi = hayleyfs_get_sbi(sb);
+// //     sbi.mount_opts = unsafe { *((*fc).fs_private as *mut HayleyfsMountOpts) }; // TODO: abstraction
+// //     hayleyfs_get_pm_info(sb, sbi)?;
 
-        // initialize root dir page
-        // let self_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(root_ino, ".")?;
-        // let parent_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(root_ino, "..")?;
-        let (self_dentry, pi) = pi.get_new_dentry(sbi, root_i)?;
-        let self_dentry = self_dentry.initialize_dentry(root_ino, ".");
-        let (parent_dentry, pi) = pi.get_new_dentry(sbi, root_i)?;
-        let parent_dentry = parent_dentry.initialize_dentry(root_ino, "..");
+// //     sbi.mode = 0o755;
+// //     sbi.uid = unsafe { hayleyfs_current_fsuid() };
+// //     sbi.gid = unsafe { hayleyfs_current_fsgid() };
 
-        // TODO: finalize dentries
-        let (_pi, _self_dentry, _parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
+// //     let root_i = hayleyfs_iget(sb, HAYLEYFS_ROOT_INO)?;
+// //     let mut root_i = unsafe { &mut *(root_i as *mut inode) };
 
-        // add page to inode
-        // TODO: how do we enforce the use of the fence?
-        // TODO: finalize inode wrapper more explicitly
-        // let _pi = pi.add_dir_page_fence(sbi, root_i, page_no, self_dentry, parent_dentry)?;
-        // let _pi = pi.add_dir_page(page_no, root_i, data_bitmap)?;
-    } // else {
-      // hayleyfs_recovery(sbi)?;
-      //}
+// //     root_i.i_mode = sbi.mode | S_IFDIR as u16;
+// //     pr_info!("setting root inode dir iops\n");
+// //     root_i.i_op = &HayleyfsDirInodeOps;
+// //     set_nlink_safe(root_i, 2);
 
-    // TODO: hide in a function
-    unsafe {
-        root_i.__bindgen_anon_3.i_fop = &HayleyfsDirOps;
-        sb.s_op = &HayleyfsSuperOps;
-        sb.s_root = d_make_root(root_i);
-    }
+// //     // pr_info!("{:?}\n", root_i);
 
-    Ok(())
-}
+// //     if sbi.mount_opts.init {
+// //         // TODO: we probably shouldn't actually do this. very slow. but it will let
+// //         // me procrastinate on how to actually make sure data from old mounts doesn't
+// //         // stick around. unless this ends up being incredibly slow
+// //         // if you wanted to be fancy about it you could use nontemporal stores
+// //         // but then you'd have to implement that and that would defeat the point of this
+// //         // janky quick workaround
+// //         unsafe {
+// //             // TODO: make sure you're writing the right amount of zeros
+// //             ptr::write_bytes(sbi.virt_addr, 0, (sbi.pm_size / 8).try_into()?);
+// //             clwb(sbi.virt_addr, sbi.pm_size.try_into().unwrap(), true);
+// //         }
+// //         // TODO: for some reason there are extra fences here
 
-// TODO: lots of unsafe code here; make it nicer
-#[no_mangle]
-pub unsafe extern "C" fn hayleyfs_parse_params(
-    fc: *mut fs_context,
-    param: *mut fs_parameter,
-) -> i32 {
-    // TODO: put this in a function
-    // this is using the bindgen version of fs_parse_result which is why
-    // it looks weird
-    let mut result = fs_parse_result {
-        negated: false,
-        __bindgen_anon_1: fs_parse_result__bindgen_ty_1 { uint_64: 0 },
-    };
+// //         // zero bitmaps
+// //         let inode_bitmap = BitmapWrapper::read_inode_bitmap(sbi).zero_bitmap()?;
+// //         let mut data_bitmap = BitmapWrapper::read_data_bitmap(sbi).zero_bitmap()?;
 
-    let opt = unsafe { hayleyfs_fs_parse(fc, hayleyfs_fs_parameters.as_ptr(), param, &mut result) };
+// //         // allocate reserved pages
+// //         let data_bitmap = set_bits!(
+// //             data_bitmap,
+// //             SUPER_BLOCK_PAGE,
+// //             INODE_BITMAP_PAGE,
+// //             INODE_PAGE,
+// //             DATA_BITMAP_PAGE
+// //         )?
+// //         .persist();
 
-    // TODO: there's probably a macro or function that will do this for you
-    let opt_init = hayleyfs_param::Opt_init as c_int;
-    let opt_source = hayleyfs_param::Opt_source as c_int;
-    let opt_crash = hayleyfs_param::Opt_crash as c_int;
-    let enoparam = -(ENOPARAM as c_int);
+// //         // initialize super block
+// //         let _sb = SuperBlockWrapper::init(sbi, &data_bitmap);
 
-    match opt {
-        opt if opt == opt_init => {
-            // TODO: safe abstraction around this
-            let mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
-            mount_opts.init = true;
-            pr_info!("opt init done\n");
-        }
-        opt if opt == opt_source => {
-            pr_info!("opt source\n");
-            let result = unsafe { vfs_parse_fs_param_source(fc, param) };
-            if result < 0 {
-                return result;
-            }
-            pr_info!("opt source done\n");
-        }
-        opt if opt == opt_crash => {
-            pr_info!("opt crash\n");
-            // TODO: safe abstraction around this
-            let mut mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
-            mount_opts.crash_point = unsafe { result.__bindgen_anon_1.uint_32 };
-            pr_info!("crash point: {:?}\n", mount_opts.crash_point);
-        }
-        opt if opt == enoparam => pr_info!("enoparam\n"),
-        _ => pr_info!("Unrecognized opt\n"),
-    }
+// //         // let (page_no, data_bitmap) = data_bitmap.alloc_root_ino_page(&inode_bitmap)?;
+// //         let (root_ino, inode_bitmap) = inode_bitmap.alloc_root_ino(&data_bitmap)?;
 
-    0
-}
+// //         // TODO: do we need to use data bitmap again?
+// //         // let (_data_bitmap, inode_bitmap) = fence_all!(data_bitmap, inode_bitmap);
+// //         let inode_bitmap = inode_bitmap.fence();
 
-#[no_mangle]
-pub unsafe extern "C" fn hayleyfs_put_super(sb: *mut super_block) {
-    pr_info!("Unmounting the file system! Goodbye!\n");
-    unsafe {
-        // TODO: is this correct? it's from stack overflow
-        // need to cast a c_void into SbInfo
-        // let sbi: &mut SbInfo = &mut *((*sb).s_fs_info as *mut SbInfo);
-        let sbi = hayleyfs_get_sbi(sb);
-        hayleyfs_fs_put_dax(sbi.s_daxdev);
-    }
-}
+// //         let pi = InodeWrapper::read_dir_inode(sbi, &root_ino).initialize_root_inode(
+// //             sb,
+// //             sbi,
+// //             root_i,
+// //             &inode_bitmap,
+// //         );
 
-#[no_mangle]
-pub unsafe extern "C" fn hayleyfs_get_tree(fc: *mut fs_context) -> i32 {
-    unsafe { get_tree_bdev(fc, Some(hayleyfs_fill_super)) }
-}
+// //         // initialize root dir page
+// //         // let self_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(root_ino, ".")?;
+// //         // let parent_dentry = pi.get_new_dentry(sbi)?.initialize_dentry(root_ino, "..")?;
+// //         let (self_dentry, pi) = pi.get_new_dentry(sbi, root_i)?;
+// //         let self_dentry = self_dentry.initialize_dentry(root_ino, ".");
+// //         let (parent_dentry, pi) = pi.get_new_dentry(sbi, root_i)?;
+// //         let parent_dentry = parent_dentry.initialize_dentry(root_ino, "..");
 
-#[no_mangle]
-pub unsafe extern "C" fn hayleyfs_init_fs_context(fc: *mut fs_context) -> c_int {
-    // pr_info!("init fs context, alloc sbi\n");
-    // pr_info!("{:p}\n", fc);
-    // hayleyfs_alloc_sbi(fc); // TODO: handle errors
-    let mount_opts = Box::<HayleyfsMountOpts>::try_new_zeroed();
-    match mount_opts {
-        Ok(mount_opts) => {
-            let mount_opts = unsafe { mount_opts.assume_init() };
-            let opts_ptr = Box::into_raw(mount_opts) as *mut c_void;
-            unsafe {
-                (*fc).ops = &HayleyfsContextOps;
-                (*fc).fs_private = opts_ptr;
-            }
-            0
-        }
-        Err(_) => -(ENOMEM as c_int),
-    }
-}
+// //         // TODO: finalize dentries
+// //         let (_pi, _self_dentry, _parent_dentry) = fence_all!(pi, self_dentry, parent_dentry);
 
-// extra attributes here replicate the __init macro
-// taken from RamFS port
-#[no_mangle]
-#[link_section = ".init.text"]
-#[cold]
-pub extern "C" fn init_hayleyfs() -> c_int {
-    unsafe { register_filesystem(&mut HayleyfsFsType) }
-}
+// //         // add page to inode
+// //         // TODO: how do we enforce the use of the fence?
+// //         // TODO: finalize inode wrapper more explicitly
+// //         // let _pi = pi.add_dir_page_fence(sbi, root_i, page_no, self_dentry, parent_dentry)?;
+// //         // let _pi = pi.add_dir_page(page_no, root_i, data_bitmap)?;
+// //     } // else {
+// //       // hayleyfs_recovery(sbi)?;
+// //       //}
 
-impl kernel::Module for HayleyFS {
-    fn init(_name: &'static CStr, _module: &'static ThisModule) -> Result<Self> {
-        pr_info!("Hello! This is Hayley's Rust module!\n");
+// //     // TODO: hide in a function
+// //     unsafe {
+// //         root_i.__bindgen_anon_3.i_fop = &HayleyfsDirOps;
+// //         sb.s_op = &HayleyfsSuperOps;
+// //         sb.s_root = d_make_root(root_i);
+// //     }
 
-        let ret = init_hayleyfs();
-        if ret < 0 {
-            // TODO: convert and return the actual error
-            return Err(EINVAL);
-        }
+// //     Ok(())
+// // }
 
-        Ok(HayleyFS {})
-    }
-}
+// // // TODO: lots of unsafe code here; make it nicer
+// // #[no_mangle]
+// // pub unsafe extern "C" fn hayleyfs_parse_params(
+// //     fc: *mut fs_context,
+// //     param: *mut fs_parameter,
+// // ) -> i32 {
+// //     // TODO: put this in a function
+// //     // this is using the bindgen version of fs_parse_result which is why
+// //     // it looks weird
+// //     let mut result = fs_parse_result {
+// //         negated: false,
+// //         __bindgen_anon_1: fs_parse_result__bindgen_ty_1 { uint_64: 0 },
+// //     };
 
-impl Drop for HayleyFS {
-    fn drop(&mut self) {
-        // pr_info!("My message is {}\n", self.message);
-        unsafe { unregister_filesystem(&mut HayleyfsFsType) };
-        pr_info!("Module is unloading. Goodbye!\n");
-    }
-}
+// //     let opt = unsafe { hayleyfs_fs_parse(fc, hayleyfs_fs_parameters.as_ptr(), param, &mut result) };
+
+// //     // TODO: there's probably a macro or function that will do this for you
+// //     let opt_init = hayleyfs_param::Opt_init as c_int;
+// //     let opt_source = hayleyfs_param::Opt_source as c_int;
+// //     let opt_crash = hayleyfs_param::Opt_crash as c_int;
+// //     let enoparam = -(ENOPARAM as c_int);
+
+// //     match opt {
+// //         opt if opt == opt_init => {
+// //             // TODO: safe abstraction around this
+// //             let mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
+// //             mount_opts.init = true;
+// //             pr_info!("opt init done\n");
+// //         }
+// //         opt if opt == opt_source => {
+// //             pr_info!("opt source\n");
+// //             let result = unsafe { vfs_parse_fs_param_source(fc, param) };
+// //             if result < 0 {
+// //                 return result;
+// //             }
+// //             pr_info!("opt source done\n");
+// //         }
+// //         opt if opt == opt_crash => {
+// //             pr_info!("opt crash\n");
+// //             // TODO: safe abstraction around this
+// //             let mut mount_opts = unsafe { &mut *((*fc).fs_private as *mut HayleyfsMountOpts) };
+// //             mount_opts.crash_point = unsafe { result.__bindgen_anon_1.uint_32 };
+// //             pr_info!("crash point: {:?}\n", mount_opts.crash_point);
+// //         }
+// //         opt if opt == enoparam => pr_info!("enoparam\n"),
+// //         _ => pr_info!("Unrecognized opt\n"),
+// //     }
+
+// //     0
+// // }
+
+// #[no_mangle]
+// pub unsafe extern "C" fn hayleyfs_put_super(sb: *mut super_block) {
+//     pr_info!("Unmounting the file system! Goodbye!\n");
+//     unsafe {
+//         // TODO: is this correct? it's from stack overflow
+//         // need to cast a c_void into SbInfo
+//         // let sbi: &mut SbInfo = &mut *((*sb).s_fs_info as *mut SbInfo);
+//         let sbi = hayleyfs_get_sbi(sb);
+//         hayleyfs_fs_put_dax(sbi.s_daxdev);
+//     }
+// }
+
+// #[no_mangle]
+// pub unsafe extern "C" fn hayleyfs_get_tree(fc: *mut fs_context) -> i32 {
+//     unsafe { get_tree_bdev(fc, Some(hayleyfs_fill_super)) }
+// }
+
+// #[no_mangle]
+// pub unsafe extern "C" fn hayleyfs_init_fs_context(fc: *mut fs_context) -> c_int {
+//     // pr_info!("init fs context, alloc sbi\n");
+//     // pr_info!("{:p}\n", fc);
+//     // hayleyfs_alloc_sbi(fc); // TODO: handle errors
+//     let mount_opts = Box::<HayleyfsMountOpts>::try_new_zeroed();
+//     match mount_opts {
+//         Ok(mount_opts) => {
+//             let mount_opts = unsafe { mount_opts.assume_init() };
+//             let opts_ptr = Box::into_raw(mount_opts) as *mut c_void;
+//             unsafe {
+//                 (*fc).ops = &HayleyfsContextOps;
+//                 (*fc).fs_private = opts_ptr;
+//             }
+//             0
+//         }
+//         Err(_) => -(ENOMEM as c_int),
+//     }
+// }
+
+// // extra attributes here replicate the __init macro
+// // taken from RamFS port
+// #[no_mangle]
+// #[link_section = ".init.text"]
+// #[cold]
+// pub extern "C" fn init_hayleyfs() -> c_int {
+//     unsafe { register_filesystem(&mut HayleyfsFsType) }
+// }
+
+// impl kernel::Module for HayleyFS {
+//     fn init(_name: &'static CStr, _module: &'static ThisModule) -> Result<Self> {
+//         pr_info!("Hello! This is Hayley's Rust module!\n");
+
+//         let ret = init_hayleyfs();
+//         if ret < 0 {
+//             // TODO: convert and return the actual error
+//             return Err(EINVAL);
+//         }
+
+//         Ok(HayleyFS {})
+//     }
+// }
+
+// impl Drop for HayleyFS {
+//     fn drop(&mut self) {
+//         // pr_info!("My message is {}\n", self.message);
+//         unsafe { unregister_filesystem(&mut HayleyfsFsType) };
+//         pr_info!("Module is unloading. Goodbye!\n");
+//     }
+// }

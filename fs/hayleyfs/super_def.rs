@@ -8,38 +8,36 @@ use crate::file::hayleyfs_file::*;
 use crate::h_inode::hayleyfs_inode::*;
 use crate::h_inode::*;
 use crate::pm::*;
+use core::ffi::c_void;
 use core::marker::PhantomData;
-use core::mem::size_of;
-use kernel::bindings::{
-    dax_device, fs_parameter_spec, inode, kgid_t, kuid_t, set_nlink, super_block, umode_t,
-};
-use kernel::c_types::c_void;
+// use core::mem::size_of;
+use kernel::bindings::{dax_device, inode, kgid_t, kuid_t, set_nlink, super_block, umode_t};
 use kernel::prelude::*;
 use kernel::rbtree::RBTree;
-use kernel::{c_default_struct, fsparam_flag, fsparam_string, fsparam_u32, PAGE_SIZE};
+use kernel::PAGE_SIZE;
 
-#[repr(C)]
-#[allow(clippy::enum_variant_names)]
-pub(crate) enum hayleyfs_param {
-    Opt_init,   // flag to indicate whether to initialize the FS or remount existing system
-    Opt_source, // flag indicating source device to mount on
-    Opt_crash, // flag for testing remount/recovery; tells us a point to inject a crash (by returning an error early)
-}
+// #[repr(C)]
+// #[allow(clippy::enum_variant_names)]
+// pub(crate) enum hayleyfs_param {
+//     Opt_init,   // flag to indicate whether to initialize the FS or remount existing system
+//     Opt_source, // flag indicating source device to mount on
+//     Opt_crash, // flag for testing remount/recovery; tells us a point to inject a crash (by returning an error early)
+// }
 
-#[no_mangle]
-pub(crate) static hayleyfs_fs_parameters: [fs_parameter_spec; 4] = [
-    fsparam_string!("source", hayleyfs_param::Opt_source),
-    fsparam_flag!("init", hayleyfs_param::Opt_init),
-    fsparam_u32!("crash", hayleyfs_param::Opt_crash),
-    c_default_struct!(fs_parameter_spec),
-];
+// #[no_mangle]
+// pub(crate) static hayleyfs_fs_parameters: [fs_parameter_spec; 4] = [
+//     fsparam_string!("source", hayleyfs_param::Opt_source),
+//     fsparam_flag!("init", hayleyfs_param::Opt_init),
+//     fsparam_u32!("crash", hayleyfs_param::Opt_crash),
+//     c_default_struct!(fs_parameter_spec),
+// ];
 
-// TODO: order structs low to high
-#[repr(C)]
-pub(crate) struct HayleyfsSuperBlock {
-    pub(crate) magic: u32,
-    pub(crate) blocksize: u64,
-}
+// // TODO: order structs low to high
+// #[repr(C)]
+// pub(crate) struct HayleyfsSuperBlock {
+//     pub(crate) magic: u32,
+//     pub(crate) blocksize: u64,
+// }
 
 #[repr(C)]
 #[derive(Copy, Clone, Default, Debug)]
@@ -104,12 +102,12 @@ pub(crate) mod hayleyfs_bitmap {
             }
         }
 
-        // clippy tells me not to use the return, but the regular compiler doesn't understand if I don't
-        #[allow(clippy::needless_return)]
-        pub(crate) fn check_bit(&self, bit: usize) -> bool {
-            return unsafe { hayleyfs_test_bit(bit, self.bitmap as *const _ as *const c_void) }
-                == 1;
-        }
+        // // clippy tells me not to use the return, but the regular compiler doesn't understand if I don't
+        // #[allow(clippy::needless_return)]
+        // pub(crate) fn check_bit(&self, bit: usize) -> bool {
+        //     return unsafe { hayleyfs_test_bit(bit, self.bitmap as *const _ as *const c_void) }
+        //         == 1;
+        // }
 
         /// Safety: only safe to use if you will subsequently call set_bit on another bit,
         /// as in the set_bits! macro
@@ -240,20 +238,20 @@ pub(crate) mod hayleyfs_bitmap {
             Ok(BitmapWrapper::new(bitmap.bitmap, bitmap.dirty_cache_lines))
         }
 
-        pub(crate) fn clear_bit<Type>(
-            mut self,
-            pi: &InodeWrapper<'a, Clean, Zero, Type>,
-        ) -> Result<BitmapWrapper<'a, Dirty, Zero, Data>> {
-            let bit = pi.get_ino();
-            if bit > PAGE_SIZE * 8 {
-                return Err(EINVAL);
-            }
-            self.dirty_cache_lines
-                .try_insert(get_cacheline_num(bit), ())?;
-            unsafe { hayleyfs_clear_bit(bit, self.bitmap as *mut _ as *mut c_void) };
+        // pub(crate) fn clear_bit<Type>(
+        //     mut self,
+        //     pi: &InodeWrapper<'a, Clean, Zero, Type>,
+        // ) -> Result<BitmapWrapper<'a, Dirty, Zero, Data>> {
+        //     let bit = pi.get_ino();
+        //     if bit > PAGE_SIZE * 8 {
+        //         return Err(EINVAL);
+        //     }
+        //     self.dirty_cache_lines
+        //         .try_insert(get_cacheline_num(bit), ())?;
+        //     unsafe { hayleyfs_clear_bit(bit, self.bitmap as *mut _ as *mut c_void) };
 
-            Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
-        }
+        //     Ok(BitmapWrapper::new(self.bitmap, self.dirty_cache_lines))
+        // }
 
         // /// this returns a dirty bitmap even if there isn't actually
         // /// a bit to clear. this is a bit inefficient, since we still have
@@ -323,17 +321,17 @@ pub(crate) mod hayleyfs_bitmap {
         };
     }
 
-    impl<'a> BitmapWrapper<'a, Clean, Alloc, Data> {
-        // TODO: this should also be allowed to take in a clean zeroed wrapper
-        pub(crate) fn alloc_root_ino_page(
-            self,
-            _: &BitmapWrapper<'a, Clean, Zero, Inode>,
-        ) -> Result<(PmPage, BitmapWrapper<'a, Flushed, Alloc, Data>)> {
-            let (page_no, bitmap) = self.find_and_set_next_zero_bit()?;
-            let bitmap = bitmap.flush();
-            Ok((page_no, bitmap))
-        }
-    }
+    // impl<'a> BitmapWrapper<'a, Clean, Alloc, Data> {
+    //     // TODO: this should also be allowed to take in a clean zeroed wrapper
+    //     pub(crate) fn alloc_root_ino_page(
+    //         self,
+    //         _: &BitmapWrapper<'a, Clean, Zero, Inode>,
+    //     ) -> Result<(PmPage, BitmapWrapper<'a, Flushed, Alloc, Data>)> {
+    //         let (page_no, bitmap) = self.find_and_set_next_zero_bit()?;
+    //         let bitmap = bitmap.flush();
+    //         Ok((page_no, bitmap))
+    //     }
+    // }
 
     impl<'a, Op, Type> BitmapWrapper<'a, Flushed, Op, Type> {
         pub(crate) unsafe fn fence_unsafe(self) -> BitmapWrapper<'a, Clean, Op, Type> {
@@ -448,50 +446,50 @@ pub(crate) mod hayleyfs_bitmap {
 }
 
 pub(crate) mod hayleyfs_sb {
-    use super::*;
+    // use super::*;
 
-    #[repr(C)]
-    struct HayleyfsSuperBlock {
-        blocksize: u32,
-        magic: u32,
-        size: u64,
-    }
+    // #[repr(C)]
+    // struct HayleyfsSuperBlock {
+    //     blocksize: u32,
+    //     magic: u32,
+    //     size: u64,
+    // }
 
-    pub(crate) struct SuperBlockWrapper<'a, State, Op> {
-        state: PhantomData<State>,
-        op: PhantomData<Op>,
-        sb: &'a mut HayleyfsSuperBlock,
-    }
+    // pub(crate) struct SuperBlockWrapper<'a, State, Op> {
+    //     state: PhantomData<State>,
+    //     op: PhantomData<Op>,
+    //     _sb: &'a mut HayleyfsSuperBlock,
+    // }
 
-    impl<'a, State, Op> PmObjWrapper for SuperBlockWrapper<'a, State, Op> {}
+    // impl<'a, State, Op> PmObjWrapper for SuperBlockWrapper<'a, State, Op> {}
 
-    impl<'a, State, Op> SuperBlockWrapper<'a, State, Op> {
-        fn new(sb: &'a mut HayleyfsSuperBlock) -> Self {
-            Self {
-                state: PhantomData,
-                op: PhantomData,
-                sb,
-            }
-        }
+    // impl<'a, State, Op> SuperBlockWrapper<'a, State, Op> {
+    //     fn new(_sb: &'a mut HayleyfsSuperBlock) -> Self {
+    //         Self {
+    //             state: PhantomData,
+    //             op: PhantomData,
+    //             _sb,
+    //         }
+    //     }
 
-        fn new_flush(sb: &'a mut HayleyfsSuperBlock) -> SuperBlockWrapper<'a, Clean, Op> {
-            clwb(sb, size_of::<HayleyfsSuperBlock>(), false);
-            SuperBlockWrapper::new(sb)
-        }
-    }
+    //     fn new_flush(sb: &'a mut HayleyfsSuperBlock) -> SuperBlockWrapper<'a, Clean, Op> {
+    //         clwb(sb, size_of::<HayleyfsSuperBlock>(), false);
+    //         SuperBlockWrapper::new(sb)
+    //     }
+    // }
 
-    impl<'a> SuperBlockWrapper<'a, Clean, Read> {
-        pub(crate) fn init(
-            sbi: &SbInfo,
-            _: &hayleyfs_bitmap::BitmapWrapper<'a, Clean, Alloc, Data>,
-        ) -> SuperBlockWrapper<'a, Clean, Alloc> {
-            let sb = unsafe { &mut *(sbi.virt_addr as *mut HayleyfsSuperBlock) };
-            sb.size = sbi.pm_size;
-            sb.blocksize = u32::try_from(PAGE_SIZE).unwrap(); // can be reasonably confident this won't panic
-            sb.magic = HAYLEYFS_MAGIC;
-            SuperBlockWrapper::<'a, Clean, _>::new_flush(sb)
-        }
-    }
+    // impl<'a> SuperBlockWrapper<'a, Clean, Read> {
+    //     pub(crate) fn init(
+    //         sbi: &SbInfo,
+    //         _: &hayleyfs_bitmap::BitmapWrapper<'a, Clean, Alloc, Data>,
+    //     ) -> SuperBlockWrapper<'a, Clean, Alloc> {
+    //         let sb = unsafe { &mut *(sbi.virt_addr as *mut HayleyfsSuperBlock) };
+    //         sb.size = sbi.pm_size;
+    //         sb.blocksize = u32::try_from(PAGE_SIZE).unwrap(); // can be reasonably confident this won't panic
+    //         sb.magic = HAYLEYFS_MAGIC;
+    //         SuperBlockWrapper::<'a, Clean, _>::new_flush(sb)
+    //     }
+    // }
 }
 
 pub(crate) fn hayleyfs_get_sbi(sb: *mut super_block) -> &'static mut SbInfo {

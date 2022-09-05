@@ -54,7 +54,7 @@ pub mod device;
 pub mod driver;
 pub mod error;
 pub mod file;
-pub mod file_system;
+// pub mod file_system;
 pub mod fs;
 pub mod gpio;
 pub mod hwrng;

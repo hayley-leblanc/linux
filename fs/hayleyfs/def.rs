@@ -4,13 +4,12 @@
 #![deny(clippy::used_underscore_binding)]
 
 use crate::super_def::SbInfo;
+use core::ffi::{c_char, c_int, c_long, c_ulong, c_void};
 use kernel::bindings::{
-    dax_device, dir_context, file, fs_context, fs_parameter, fs_parameter_spec, fs_parse_result,
-    inode, kgid_t, kuid_t, pfn_t, FS_COMPRBLK_FL, FS_COMPR_FL, FS_DIRSYNC_FL, FS_JOURNAL_DATA_FL,
-    FS_NOATIME_FL, FS_NOCOMP_FL, FS_NODUMP_FL, FS_NOTAIL_FL, FS_SECRM_FL, FS_SYNC_FL, FS_TOPDIR_FL,
-    FS_UNRM_FL,
+    dax_device, dir_context, file, inode, kgid_t, kuid_t, pfn_t, FS_COMPRBLK_FL, FS_COMPR_FL,
+    FS_DIRSYNC_FL, FS_JOURNAL_DATA_FL, FS_NOATIME_FL, FS_NOCOMP_FL, FS_NODUMP_FL, FS_NOTAIL_FL,
+    FS_SECRM_FL, FS_SYNC_FL, FS_TOPDIR_FL, FS_UNRM_FL,
 };
-use kernel::c_types::{c_char, c_int, c_long, c_ulong, c_void};
 use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
@@ -183,12 +182,12 @@ extern "C" {
     pub(crate) fn hayleyfs_file_inode(f: *const file) -> *mut inode;
     pub(crate) fn hayleyfs_current_fsuid() -> kuid_t;
     pub(crate) fn hayleyfs_current_fsgid() -> kgid_t;
-    pub(crate) fn hayleyfs_fs_parse(
-        fc: *mut fs_context,
-        desc: *const fs_parameter_spec,
-        param: *mut fs_parameter,
-        result: *mut fs_parse_result,
-    ) -> c_int;
+    // pub(crate) fn hayleyfs_fs_parse(
+    //     fc: *mut fs_context,
+    //     desc: *const fs_parameter_spec,
+    //     param: *mut fs_parameter,
+    //     result: *mut fs_parse_result,
+    // ) -> c_int;
     pub(crate) fn hayleyfs_uid_read(inode: *const inode) -> c_int;
     pub(crate) fn hayleyfs_gid_read(inode: *const inode) -> c_int;
     pub(crate) fn hayleyfs_isdir(flags: u16) -> bool;
@@ -197,7 +196,7 @@ extern "C" {
     pub(crate) fn hayleyfs_write_gid(inode: &mut inode, gid: u32);
     pub(crate) fn hayleyfs_err_ptr(err: c_long) -> *mut c_void;
     pub(crate) fn hayleyfs_is_err(ptr: *const c_void) -> bool;
-    pub(crate) fn hayleyfs_ptr_err(ptr: *const c_void) -> c_ulong;
+    // pub(crate) fn hayleyfs_ptr_err(ptr: *const c_void) -> c_ulong;
     pub(crate) fn hayleyfs_access_ok(buf: *const i8, len: usize) -> c_int;
     pub(crate) fn hayleyfs_copy_from_user_nt(
         dst: *const c_void,

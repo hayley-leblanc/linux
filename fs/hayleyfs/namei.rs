@@ -4,7 +4,6 @@
 #![deny(clippy::used_underscore_binding)]
 use crate::def::*;
 use crate::dir::*;
-use crate::file::hayleyfs_file::*;
 use crate::file::*;
 use crate::finalize::*;
 use crate::h_inode::hayleyfs_inode::*;
@@ -13,6 +12,7 @@ use crate::pm::*;
 use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::*;
 use crate::{fence_all, fence_obj};
+use core::ffi::c_char;
 use core::ptr::{eq, null_mut};
 use kernel::bindings::{
     clear_nlink, current_time, d_instantiate, d_splice_alias, dentry, drop_nlink, iget_failed,
@@ -21,7 +21,6 @@ use kernel::bindings::{
     FS_DIRSYNC_FL, FS_IMMUTABLE_FL, FS_NOATIME_FL, FS_SYNC_FL, I_NEW, S_APPEND, S_DAX, S_DIRSYNC,
     S_IFDIR, S_IMMUTABLE, S_NOATIME, S_SYNC,
 };
-use kernel::c_types::c_char;
 use kernel::prelude::*;
 use kernel::{c_default_struct, PAGE_SIZE};
 

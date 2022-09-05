@@ -8,7 +8,6 @@
 
 use crate::def::*;
 use core::arch::asm;
-use kernel::prelude::*;
 
 /// Taken from Corundum
 /// Flushes cache line back to memory

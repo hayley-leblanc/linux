@@ -11,10 +11,10 @@ use crate::h_inode::*;
 use crate::pm::*;
 use crate::super_def::hayleyfs_bitmap::*;
 use crate::super_def::*;
+use core::ffi::{c_int, c_void};
 use core::marker::PhantomData;
 use core::ptr;
 use kernel::bindings::{address_space, file, file_operations, generic_file_open, inode, O_APPEND};
-use kernel::c_types::{c_int, c_void};
 use kernel::prelude::*;
 use kernel::{c_default_struct, PAGE_SIZE};
 
@@ -149,16 +149,16 @@ pub(crate) mod hayleyfs_file {
 
     impl<'a> DataPageWrapper<'a, Clean, Zero> {}
 
-    impl<'a, Op> DataPageWrapper<'a, Flushed, Op> {
-        pub(crate) unsafe fn fence_unsafe(self) -> DataPageWrapper<'a, Clean, Op> {
-            DataPageWrapper::new(self.page_no, self.data_page)
-        }
+    // impl<'a, Op> DataPageWrapper<'a, Flushed, Op> {
+    //     pub(crate) unsafe fn fence_unsafe(self) -> DataPageWrapper<'a, Clean, Op> {
+    //         DataPageWrapper::new(self.page_no, self.data_page)
+    //     }
 
-        pub(crate) fn fence(self) -> DataPageWrapper<'a, Clean, Op> {
-            sfence();
-            DataPageWrapper::new(self.page_no, self.data_page)
-        }
-    }
+    //     pub(crate) fn fence(self) -> DataPageWrapper<'a, Clean, Op> {
+    //         sfence();
+    //         DataPageWrapper::new(self.page_no, self.data_page)
+    //     }
+    // }
 
     impl<'a, Op> DataPageWrapper<'a, Clean, Op> {
         // TODO: should this be unsafe? it feels very sketchy since we don't have dir

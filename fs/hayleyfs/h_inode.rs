@@ -14,9 +14,7 @@ use crate::super_def::*;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use core::ptr::write_bytes;
-use kernel::bindings::{
-    current_time, from_kgid, from_kuid, init_user_ns, inode, super_block, user_namespace, S_IFDIR,
-};
+use kernel::bindings::{current_time, inode, super_block};
 use kernel::prelude::*;
 use kernel::PAGE_SIZE;
 
@@ -124,9 +122,9 @@ pub(crate) mod hayleyfs_inode {
             self.ino
         }
 
-        pub(crate) fn is_dir(&self) -> bool {
-            (self.inode.mode as u32 & S_IFDIR) != 0
-        }
+        // pub(crate) fn is_dir(&self) -> bool {
+        //     (self.inode.mode as u32 & S_IFDIR) != 0
+        // }
 
         pub(crate) fn get_flags(&self) -> u32 {
             self.inode.flags
@@ -218,13 +216,13 @@ pub(crate) mod hayleyfs_inode {
             Ok((dentry, pi))
         }
 
-        pub(crate) fn coerce_to_addpage(self) -> InodeWrapper<'a, Clean, AddPage, Dir> {
-            // runtime check to make sure the coercion is valid
-            // TODO: this isn't GREAT, but should be ok since can't
-            // check at compile time?
-            assert!(self.has_data_page());
-            InodeWrapper::new(self.inode)
-        }
+        // pub(crate) fn coerce_to_addpage(self) -> InodeWrapper<'a, Clean, AddPage, Dir> {
+        //     // runtime check to make sure the coercion is valid
+        //     // TODO: this isn't GREAT, but should be ok since can't
+        //     // check at compile time?
+        //     assert!(self.has_data_page());
+        //     InodeWrapper::new(self.inode)
+        // }
     }
 
     // TODO: be careful with this - could accidentally use it to mark an inode flushed
@@ -280,38 +278,38 @@ pub(crate) mod hayleyfs_inode {
         //     Ok(InodeWrapper::new(self.inode))
         // }
 
-        pub(crate) fn add_dir_page_fence(
-            self,
-            sbi: &SbInfo,
-            inode: &mut inode,
-            page: PmPage,
-            _: DentryWrapper<'a, Clean, Init>,
-            _: DentryWrapper<'a, Clean, Init>,
-        ) -> Result<InodeWrapper<'a, Clean, AddPage, Dir>> {
-            check_page_no(sbi, page)?;
-            // TODO: should probably have some wrappers that return the dirty inode and force
-            // some clearer flush/fence ordering to make sure you remember to actually do it
-            let current_size = self.inode.size;
-            let page_size_i64: i64 = PAGE_SIZE.try_into()?;
-            let pages_per_inode_i64 = DIRECT_PAGES_PER_INODE.try_into()?;
-            // if we are initializing the inode
-            if current_size == page_size_i64 && self.inode.direct_pages[0] == 0 {
-                self.inode.direct_pages[0] = page;
-            } else {
-                let index = current_size / page_size_i64;
-                if index >= pages_per_inode_i64 {
-                    pr_alert!("All direct pages are full, need to set up indirect\n");
-                    return Err(ENOSPC);
-                }
-                self.inode.size += page_size_i64;
-                unsafe { hayleyfs_i_size_write(inode, self.inode.size) };
-            }
-            self.inode.num_blks += 1;
+        // pub(crate) fn add_dir_page_fence(
+        //     self,
+        //     sbi: &SbInfo,
+        //     inode: &mut inode,
+        //     page: PmPage,
+        //     _: DentryWrapper<'a, Clean, Init>,
+        //     _: DentryWrapper<'a, Clean, Init>,
+        // ) -> Result<InodeWrapper<'a, Clean, AddPage, Dir>> {
+        //     check_page_no(sbi, page)?;
+        //     // TODO: should probably have some wrappers that return the dirty inode and force
+        //     // some clearer flush/fence ordering to make sure you remember to actually do it
+        //     let current_size = self.inode.size;
+        //     let page_size_i64: i64 = PAGE_SIZE.try_into()?;
+        //     let pages_per_inode_i64 = DIRECT_PAGES_PER_INODE.try_into()?;
+        //     // if we are initializing the inode
+        //     if current_size == page_size_i64 && self.inode.direct_pages[0] == 0 {
+        //         self.inode.direct_pages[0] = page;
+        //     } else {
+        //         let index = current_size / page_size_i64;
+        //         if index >= pages_per_inode_i64 {
+        //             pr_alert!("All direct pages are full, need to set up indirect\n");
+        //             return Err(ENOSPC);
+        //         }
+        //         self.inode.size += page_size_i64;
+        //         unsafe { hayleyfs_i_size_write(inode, self.inode.size) };
+        //     }
+        //     self.inode.num_blks += 1;
 
-            // TODO: just flush the page you modified and the size of the inode
-            clwb(&self.inode, CACHELINE_SIZE, true);
-            Ok(InodeWrapper::new(self.inode))
-        }
+        //     // TODO: just flush the page you modified and the size of the inode
+        //     clwb(&self.inode, CACHELINE_SIZE, true);
+        //     Ok(InodeWrapper::new(self.inode))
+        // }
 
         // pub(crate) fn get_new_dentry(
         //     self,
@@ -389,21 +387,21 @@ pub(crate) mod hayleyfs_inode {
             }
         }
 
-        pub(crate) fn add_data_page(
-            self,
-            page_no: PmPage,
-            _: BitmapWrapper<'a, Clean, Alloc, Data>,
-        ) -> Result<InodeWrapper<'a, Clean, AddPage, Data>> {
-            if (self.inode.num_blks + 1) > DIRECT_PAGES_PER_INODE.try_into()? {
-                Err(ENOSPC)
-            } else {
-                let num_pages: usize = self.inode.num_blks.try_into()?;
-                self.inode.direct_pages[num_pages - 1] = page_no;
-                self.inode.num_blks += 1;
-                clwb(&self.inode, size_of::<HayleyfsInode>(), true);
-                Ok(InodeWrapper::new(self.inode))
-            }
-        }
+        // pub(crate) fn add_data_page(
+        //     self,
+        //     page_no: PmPage,
+        //     _: BitmapWrapper<'a, Clean, Alloc, Data>,
+        // ) -> Result<InodeWrapper<'a, Clean, AddPage, Data>> {
+        //     if (self.inode.num_blks + 1) > DIRECT_PAGES_PER_INODE.try_into()? {
+        //         Err(ENOSPC)
+        //     } else {
+        //         let num_pages: usize = self.inode.num_blks.try_into()?;
+        //         self.inode.direct_pages[num_pages - 1] = page_no;
+        //         self.inode.num_blks += 1;
+        //         clwb(&self.inode, size_of::<HayleyfsInode>(), true);
+        //         Ok(InodeWrapper::new(self.inode))
+        //     }
+        // }
 
         pub(crate) fn coerce_to_addpage(self) -> InodeWrapper<'a, Clean, AddPage, Data> {
             // runtime check to make sure the coercion is valid
@@ -446,8 +444,8 @@ pub(crate) mod hayleyfs_inode {
         ) -> Result<i64> {
             let page_size_i64: i64 = PAGE_SIZE.try_into()?;
             let mut bytes_read = 0;
-            let mut current_page_index = offset / page_size_i64; // this is an index into the direct pages array
-                                                                 // TODO: this logic will change for indirect pages
+            let current_page_index = offset / page_size_i64; // this is an index into the direct pages array
+                                                             // TODO: this logic will change for indirect pages
             let mut page_offset = offset - ((current_page_index - 1) * page_size_i64);
             while bytes_read < len {
                 let bytes_to_read = if (page_size_i64 - page_offset) < len {
@@ -512,8 +510,8 @@ pub(crate) mod hayleyfs_inode {
             let mut page_wrapper_vec = Vec::new();
             let page_size_i64: i64 = PAGE_SIZE.try_into()?;
             let mut bytes_written = 0;
-            let mut current_page_index = offset / page_size_i64; // this is an index into the direct pages array
-                                                                 // TODO: this logic will change for indirect pages
+            let current_page_index = offset / page_size_i64; // this is an index into the direct pages array
+                                                             // TODO: this logic will change for indirect pages
             let mut page_offset = offset - ((current_page_index - 1) * page_size_i64);
 
             while bytes_written < len {
@@ -637,16 +635,16 @@ pub(crate) mod hayleyfs_inode {
             }
         }
 
-        // these are unsafe because they should only be called if you are absolutely
-        // sure of the type of an unknown inode. using the wrong one could cause weird
-        // memory issues
-        pub(crate) unsafe fn unknown_to_file(self) -> InodeWrapper<'a, Clean, Read, Data> {
-            InodeWrapper::new(self.inode)
-        }
+        // // these are unsafe because they should only be called if you are absolutely
+        // // sure of the type of an unknown inode. using the wrong one could cause weird
+        // // memory issues
+        // pub(crate) unsafe fn unknown_to_file(self) -> InodeWrapper<'a, Clean, Read, Data> {
+        //     InodeWrapper::new(self.inode)
+        // }
 
-        pub(crate) unsafe fn unknown_to_dir(self) -> InodeWrapper<'a, Clean, Read, Dir> {
-            InodeWrapper::new(self.inode)
-        }
+        // pub(crate) unsafe fn unknown_to_dir(self) -> InodeWrapper<'a, Clean, Read, Dir> {
+        //     InodeWrapper::new(self.inode)
+        // }
     }
 
     impl<'a, Type> InodeWrapper<'a, Clean, Read, Type> {
@@ -738,7 +736,7 @@ pub(crate) mod hayleyfs_inode {
         pub(crate) fn initialize_root_inode(
             self,
             sb: &super_block,
-            sbi: &SbInfo,
+            _sbi: &SbInfo,
             root_inode: &mut inode,
             _: &BitmapWrapper<'a, Clean, Alloc, Inode>,
         ) -> InodeWrapper<'a, Flushed, Init, Dir> {
@@ -747,10 +745,11 @@ pub(crate) mod hayleyfs_inode {
             self.inode.num_blks = 0;
             self.inode.direct_pages = [0; DIRECT_PAGES_PER_INODE];
             self.inode.indirect_page = 0;
-            unsafe {
-                self.inode.uid = from_kuid(&mut init_user_ns as *mut user_namespace, sbi.uid);
-                self.inode.gid = from_kgid(&mut init_user_ns as *mut user_namespace, sbi.gid);
-            }
+            // TODO: Figure out how to handle uid and gid; can get these if we enable CONFIG_USER_NS but not sure if we should?
+            // unsafe {
+            //     self.inode.uid = from_kuid(&mut init_user_ns as *mut user_namespace, sbi.uid);
+            //     self.inode.gid = from_kgid(&mut init_user_ns as *mut user_namespace, sbi.gid);
+            // }
             self.inode.link_count = unsafe { root_inode.__bindgen_anon_1.i_nlink };
             self.inode.size = sb.s_blocksize as i64;
             self.inode.flags = 0;
