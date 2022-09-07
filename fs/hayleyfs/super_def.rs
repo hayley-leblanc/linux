@@ -11,7 +11,9 @@
 // use core::ffi::c_void;
 // use core::marker::PhantomData;
 // // use core::mem::size_of;
-use kernel::bindings;
+use core::ptr;
+use kernel::fs;
+use kernel::prelude::*;
 // use kernel::sync::{Arc, Mutex};
 // use kernel::bindings::{dax_device, inode, kgid_t, kuid_t, set_nlink, super_block, umode_t};
 // use kernel::prelude::*;
@@ -54,21 +56,17 @@ pub(crate) struct HayleyfsMountOpts {
 
 pub(crate) struct HayleyFS {}
 
-#[repr(C)]
 // #[derive(Copy, Clone)]
 // #[derive(Default)]
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
 pub(crate) struct SbInfo {
     pub(crate) mount_opts: HayleyfsMountOpts,
-    // pub(crate) sb: Option<SuperBlock<HayleyFS>>,
-    pub(crate) s_daxdev: *mut bindings::dax_device, // raw pointer to the dax device we are mounted on
-    pub(crate) s_dev_offset: u64, // byte offset into the dax device that the device actually starts at
-                                  // pub(crate) virt_addr: *mut c_void,    // raw pointer virtual address of beginning of FS instance
-                                  // pub(crate) phys_addr: u64,            // physical address of beginning of FS instance
-                                  // pub(crate) pm_size: u64,              // size of the PM device (TODO: make unsigned)
-                                  // pub(crate) uid: kuid_t,
-                                  // pub(crate) gid: kgid_t,
-                                  // pub(crate) mode: umode_t,
-                                  // pub(crate) mount_opts: HayleyfsMountOpts,
+    virt_addr: *mut core::ffi::c_void, // raw pointer virtual address of beginning of FS instance
+    pub(crate) pm_size: i64,
+    // pub(crate) uid: bindings::kuid_t,
+    // pub(crate) gid: bindings::kgid_t,
+    // pub(crate) mode: bindings::umode_t,
 }
 
 // raw pointers are marked unsafe mainly as a lint; they are unsafe to access
@@ -77,6 +75,32 @@ pub(crate) struct SbInfo {
 // it's okay to mark it Send + Sync here
 unsafe impl Send for SbInfo {}
 unsafe impl Sync for SbInfo {}
+
+impl SbInfo {
+    pub(crate) fn new() -> Self {
+        Self {
+            mount_opts: HayleyfsMountOpts::default(),
+            virt_addr: ptr::null_mut(),
+            pm_size: 0,
+        }
+    }
+
+    pub(crate) fn set_pm_info(
+        &mut self,
+        sb: &mut fs::NewSuperBlock<'_, HayleyFS, fs::NeedsInit>,
+    ) -> Result<()> {
+        let (pm_virt_addr, size) = sb.get_dax()?;
+        self.virt_addr = pm_virt_addr;
+        self.pm_size = size;
+        Ok(())
+    }
+
+    // /// Safety: this should not be used in most cases. We should almost never
+    /// use a raw pointer to modify PM directly.
+    pub(crate) unsafe fn danger_get_pm_addr(&self) -> *mut core::ffi::c_void {
+        self.virt_addr
+    }
+}
 
 // pub(crate) mod hayleyfs_bitmap {
 //     use super::*;

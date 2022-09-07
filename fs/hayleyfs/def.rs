@@ -11,6 +11,7 @@
 // };
 // use kernel::prelude::*;
 // use kernel::PAGE_SIZE;
+// use kernel::bindings;
 
 // pub(crate) const __LOG_PREFIX: &[u8] = b"hayleyfs\0";
 
@@ -25,7 +26,7 @@
 // pub(crate) const MAX_FILENAME_LEN: usize = 32;
 // pub(crate) const DENTRIES_PER_PAGE: usize = 32;
 // pub(crate) const CACHELINE_SIZE: usize = 64; // TODO: this should probably come from the kernel
-// pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
+pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 // pub(crate) const CACHELINE_BIT_SHIFT: usize = 9;
 // pub(crate) const NUM_BITMAP_CACHELINES: usize = PAGE_SIZE / CACHELINE_SIZE;
 // pub(crate) const DIRECT_PAGES_PER_INODE: usize = 12;
@@ -179,8 +180,8 @@ extern "C" {
     //     t: u32,
     // ) -> bool;
     // pub(crate) fn hayleyfs_file_inode(f: *const file) -> *mut inode;
-    // pub(crate) fn hayleyfs_current_fsuid() -> kuid_t;
-    // pub(crate) fn hayleyfs_current_fsgid() -> kgid_t;
+    // pub(crate) fn hayleyfs_current_fsuid() -> bindings::kuid_t;
+    // pub(crate) fn hayleyfs_current_fsgid() -> bindings::kgid_t;
     // // pub(crate) fn hayleyfs_fs_parse(
     //     fc: *mut fs_context,
     //     desc: *const fs_parameter_spec,

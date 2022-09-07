@@ -9,6 +9,7 @@ use crate::{
     bindings,
     cred::Credential,
     error::{code::*, from_kernel_result, Error, Result},
+    fs,
     io_buffer::{IoBufferReader, IoBufferWriter},
     iov_iter::IovIter,
     mm,
@@ -47,7 +48,7 @@ pub mod flags {
     /// Ensure that this file is created with the `open(2)` call.
     pub const O_EXCL: u32 = bindings::O_EXCL;
 
-    /// Large file size enabled (`off64_t` over `off_t`).
+    /// Large file size enabled (`off64_t` over `off_t`)
     pub const O_LARGEFILE: u32 = bindings::O_LARGEFILE;
 
     /// Do not update the file last access time.
@@ -162,6 +163,26 @@ impl File {
     pub fn flags(&self) -> u32 {
         // SAFETY: The file is valid because the shared reference guarantees a nonzero refcount.
         unsafe { core::ptr::addr_of!((*self.0.get()).f_flags).read() }
+    }
+
+    /// Returns the inode associated with the file.
+    ///
+    /// It returns `None` is the type of the inode is not `T`.
+    pub fn inode<T: fs::Type + ?Sized>(&self) -> Option<&fs::INode<T>> {
+        // SAFETY: The file is valid because the shared reference guarantees a nonzero refcount.
+        let inode = unsafe { core::ptr::addr_of!((*self.0.get()).f_inode).read() };
+
+        // SAFETY: The inode and superblock are valid because the file as a reference to them.
+        let sb_ops = unsafe { (*(*inode).i_sb).s_op };
+
+        if sb_ops == &fs::Tables::<T>::SUPER_BLOCK {
+            // SAFETY: We checked that the super-block operations table is the one produced for
+            // `T`, so it's safe to cast the inode. Additionally, the lifetime of the returned
+            // inode is bound to the file object.
+            Some(unsafe { &*inode.cast() })
+        } else {
+            None
+        }
     }
 }
 
@@ -326,8 +347,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         offset: *mut bindings::loff_t,
     ) -> core::ffi::c_ssize_t {
         from_kernel_result! {
-            let mut data =
-                unsafe { UserSlicePtr::new(buf as *mut core::ffi::c_void, len).writer() };
+            let mut data = unsafe { UserSlicePtr::new(buf as *mut core::ffi::c_void, len).writer() };
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
             // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
@@ -335,7 +355,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             // function is running.
             let f = unsafe { T::Data::borrow((*file).private_data) };
             // No `FMODE_UNSIGNED_OFFSET` support, so `offset` must be in [0, 2^63).
-            // See <https://github.com/fishinabarrel/linux-kernel-module-rust/pull/113>.
+            // See discussion in https://github.com/fishinabarrel/linux-kernel-module-rust/pull/113
             let read = T::read(
                 f,
                 unsafe { File::from_ptr(file) },
@@ -361,12 +381,8 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
             let f = unsafe { T::Data::borrow((*file).private_data) };
-            let read = T::read(
-                f,
-                unsafe { File::from_ptr(file) },
-                &mut iter,
-                offset.try_into()?,
-            )?;
+            let read =
+                T::read(f, unsafe { File::from_ptr(file) }, &mut iter, offset.try_into()?)?;
             unsafe { (*iocb).ki_pos += bindings::loff_t::try_from(read).unwrap() };
             Ok(read as _)
         }
@@ -379,8 +395,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         offset: *mut bindings::loff_t,
     ) -> core::ffi::c_ssize_t {
         from_kernel_result! {
-            let mut data =
-                unsafe { UserSlicePtr::new(buf as *mut core::ffi::c_void, len).reader() };
+            let mut data = unsafe { UserSlicePtr::new(buf as *mut core::ffi::c_void, len).reader() };
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
             // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
@@ -388,12 +403,12 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             // function is running.
             let f = unsafe { T::Data::borrow((*file).private_data) };
             // No `FMODE_UNSIGNED_OFFSET` support, so `offset` must be in [0, 2^63).
-            // See <https://github.com/fishinabarrel/linux-kernel-module-rust/pull/113>.
+            // See discussion in https://github.com/fishinabarrel/linux-kernel-module-rust/pull/113
             let written = T::write(
                 f,
                 unsafe { File::from_ptr(file) },
                 &mut data,
-                unsafe { *offset }.try_into()?,
+                unsafe { *offset }.try_into()?
             )?;
             unsafe { (*offset) += bindings::loff_t::try_from(written).unwrap() };
             Ok(written as _)
@@ -414,12 +429,8 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
             let f = unsafe { T::Data::borrow((*file).private_data) };
-            let written = T::write(
-                f,
-                unsafe { File::from_ptr(file) },
-                &mut iter,
-                offset.try_into()?,
-            )?;
+            let written =
+                T::write(f, unsafe { File::from_ptr(file) }, &mut iter, offset.try_into()?)?;
             unsafe { (*iocb).ki_pos += bindings::loff_t::try_from(written).unwrap() };
             Ok(written as _)
         }
@@ -884,4 +895,19 @@ pub trait Operations {
     ) -> Result<u32> {
         Ok(bindings::POLLIN | bindings::POLLOUT | bindings::POLLRDNORM | bindings::POLLWRNORM)
     }
+}
+
+/// Writes the contents of a slice into a buffer writer.
+///
+/// This is used to help implement [`Operations::read`] when the contents are stored in a slice. It
+/// takes into account the offset and lengths, and returns the amount of data written.
+pub fn read_from_slice(s: &[u8], writer: &mut impl IoBufferWriter, offset: u64) -> Result<usize> {
+    let offset = offset.try_into()?;
+    if offset >= s.len() {
+        return Ok(0);
+    }
+
+    let len = core::cmp::min(s.len() - offset, writer.len());
+    writer.write_slice(&s[offset..][..len])?;
+    Ok(len)
 }

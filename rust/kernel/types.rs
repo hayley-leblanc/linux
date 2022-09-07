@@ -246,7 +246,7 @@ impl PointerWrapper for () {
 /// [`ScopeGuard::dismiss`] and [`ScopeGuard::drop`]: in this case, it will be `None` as the value
 /// will have been returned to the caller. Since  [`ScopeGuard::dismiss`] consumes the guard,
 /// callers won't be able to use it anymore.
-pub struct ScopeGuard<T, F: FnOnce(T)>(Option<(T, F)>);
+pub struct ScopeGuard<T, F: FnOnce(T)>(pub Option<(T, F)>);
 
 impl<T, F: FnOnce(T)> ScopeGuard<T, F> {
     /// Creates a new guarded object wrapping the given data and with the given cleanup function.

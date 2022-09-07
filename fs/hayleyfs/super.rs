@@ -14,7 +14,7 @@ mod def;
 // mod finalize;
 // mod h_inode;
 // mod namei;
-// mod pm;
+mod pm;
 mod super_def;
 
 // use core::ffi::c_void;
@@ -25,12 +25,11 @@ mod super_def;
 // use crate::h_inode::hayleyfs_inode::*;
 // use crate::h_inode::*;
 // use crate::namei::*;
-// use crate::pm::*;
+use crate::pm::*;
 // use crate::super_def::hayleyfs_bitmap::*;
 // use crate::super_def::hayleyfs_sb::*;
 use crate::super_def::*;
-// use core::ptr;
-
+use core::ptr;
 // use kernel::bindings::{
 //     d_make_root, dax_access_mode_DAX_ACCESS, dax_direct_access, file_system_type, fs_context,
 //     fs_context_operations, fs_dax_get_by_bdev, get_tree_bdev, inode, kill_block_super, pfn_t,
@@ -38,7 +37,7 @@ use crate::super_def::*;
 //     S_IFDIR,
 // };
 
-use kernel::bindings;
+// use kernel::bindings;
 use kernel::prelude::*;
 // use kernel::{c_default_struct, c_str, fs, PAGE_SIZE};
 use kernel::{c_str, fs};
@@ -56,7 +55,9 @@ impl fs::Context<Self> for HayleyFS {
     type Data = Box<SbInfo>;
 
     kernel::define_fs_params! {Box<SbInfo>,
-        {flag, "init", |s, v| {s.mount_opts.init = Some(true); pr_info!("init {}", v); Ok(())}},
+        {flag, "init", |s, v| {
+            s.mount_opts.init = Some(true);
+            pr_info!("init {}", v); Ok(())}},
         // {flag, "flag", |_, v| { pr_info!("flag passed-in: {v}\n"); Ok(()) } },
         // {flag_no, "flagno", |_, v| { pr_info!("flagno passed-in: {v}\n"); Ok(()) } },
         // {bool, "bool", |_, v| { pr_info!("bool passed-in: {v}\n"); Ok(()) } },
@@ -73,6 +74,10 @@ impl fs::Context<Self> for HayleyFS {
 
     fn try_new() -> Result<Self::Data> {
         pr_info!("creating context\n");
+        // sbi.mode = 0o755;
+        // sbi.uid = unsafe { hayleyfs_current_fsuid() };
+        // sbi.gid = unsafe { hayleyfs_current_fsgid() };
+
         Ok(alloc_sbi()?)
     }
 }
@@ -80,15 +85,20 @@ impl fs::Context<Self> for HayleyFS {
 impl fs::Type for HayleyFS {
     type Data = Box<SbInfo>;
     type Context = Self;
+    type INodeData = ();
     const SUPER_TYPE: fs::Super = fs::Super::BlockDev; // TODO: or SingleReconf or BlockDev?
     const NAME: &'static CStr = c_str!("hayleyfs");
     const FLAGS: i32 = fs::flags::USERNS_MOUNT | fs::flags::REQUIRES_DEV; // TODO: other options?
 
     fn fill_super(
-        data: Self::Data,
-        sb: fs::NewSuperBlock<'_, Self>,
+        mut data: Self::Data,
+        mut sb: fs::NewSuperBlock<'_, Self>,
     ) -> Result<&fs::SuperBlock<Self>> {
-        pr_info!("fill super\n");
+        let init = data.mount_opts.init;
+
+        // obtain information about the DAX device
+        // TODO: safety?
+        data.set_pm_info(&mut sb)?;
 
         let sb = sb.init(
             data,
@@ -98,13 +108,29 @@ impl fs::Type for HayleyFS {
             },
         )?;
 
-        let sb = sb.init_root()?;
+        let root = if init.is_some() {
+            let sbi = sb.get_fs_info();
+            // zero out the PM device to ensure data from previous runs is gone
+            // TODO: we should probably use a smarter remount approach; this will be slow
+            // TODO: use non-temporal stores to zero the device.
+            unsafe {
+                // TODO: make sure you're writing the right amount of zeros
+                let pm_size = sbi.pm_size;
+                let virt_addr = sbi.danger_get_pm_addr();
+                ptr::write_bytes(virt_addr, 0, (pm_size / 8).try_into()?);
+                clwb(virt_addr, pm_size.try_into().unwrap(), true);
+            }
+            let root_inode = sb.try_new_dcache_dir_inode(fs::INodeParams {
+                mode: 0o755,
+                ino: 1,
+                value: (),
+            })?;
+            sb.try_new_root_dentry(root_inode)?
+        } else {
+            unimplemented!();
+        };
 
-        // TODO: need to fill in sbi at some point - might not be here
-        // let result = unsafe {
-        //     bindings::fs_dax_get_by_bdev(&sb.get_bdev(), &mut data.s_dev_offset as *mut u64)
-        // };
-        // data.s_daxdev = result;
+        let sb = sb.init_root(root)?;
 
         Ok(sb)
     }
@@ -112,46 +138,8 @@ impl fs::Type for HayleyFS {
 
 #[no_mangle]
 fn alloc_sbi() -> Result<Box<SbInfo>> {
-    let sbi = Box::<SbInfo>::try_new_zeroed();
-    match sbi {
-        Ok(sbi) => {
-            let sbi = unsafe { sbi.assume_init() }; // TODO: safer way to do this
-            Ok(sbi)
-        }
-        Err(_) => Err(kernel::Error::from_kernel_errno(
-            bindings::ENOMEM.try_into()?,
-        )),
-    }
+    Ok(Box::try_new(SbInfo::new())?)
 }
-
-// #[no_mangle]
-// fn hayleyfs_fill_super(sb: &SuperBlock<HayleyFS>) -> Result<()> {
-//     // let registration = Registration::new();
-//     // Pin::new(&mut registration).register(ThisModule);
-
-//     // we previously handled parameters here but those have been taken care of already
-//     let mut superblock = sb.0.get();
-//     superblock.s_fs_info = result;
-
-//     Ok(())
-// }
-
-// #[no_mangle]
-// fn hayleyfs_alloc_sbi() -> Result<SbInfo> {
-
-//     // let sbi = Box::<SbInfo>::try_new_zeroed();
-//     // pr_info!("allocating sbi\n");
-//     // match sbi {
-//     //     Ok(sbi) => {
-//     //         let mut sbi = unsafe { sbi.assume_init() };
-//     //         sbi.s_dev_offset = 0;
-//     //         let sbi_ptr = Box::into_raw(sbi) as *mut c_void;
-
-//     //         sbi_ptr
-//     //     }
-//     //     Err(_) => unsafe { hayleyfs_err_ptr(ENOMEM.to_kernel_errno()) },
-//     // }
-// }
 
 // #[no_mangle]
 // static mut HayleyfsFsType: file_system_type = file_system_type {
