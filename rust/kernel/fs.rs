@@ -6,8 +6,8 @@
 
 use crate::{
     bindings, container_of, delay::coarse_sleep, error::code::*, error::from_kernel_result, file,
-    pr_warn, str::CStr, to_result, types::PointerWrapper, ARef, AlwaysRefCounted, Error, Result,
-    ScopeGuard, ThisModule,
+    inode, pr_warn, str::CStr, to_result, types::PointerWrapper, ARef, AlwaysRefCounted, Error,
+    Result, ScopeGuard, ThisModule,
 };
 use alloc::boxed::Box;
 use core::{
@@ -605,7 +605,6 @@ impl Registration {
             // SAFETY: The callback contract guarantees that `fc_ptr` is the only pointer to a
             // newly-allocated fs context, so it is safe to mutably reference it.
             let fc = unsafe { &mut *fc_ptr };
-            crate::pr_info!("fs private into pointer");
             fc.fs_private = data.into_pointer() as _;
             fc.ops = &Tables::<T>::CONTEXT;
             Ok(0)
@@ -825,20 +824,8 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsInit> {
         }
         sb.s_blocksize = 1 << sb.s_blocksize_bits;
 
-        crate::pr_info!("before setting, sbi is {:#?}", data);
-
         // Keyed file systems already have `s_fs_info` initialised.
         let info = data.into_pointer() as *mut _;
-
-        // let data = unsafe { &*(info as *mut T::Data) };
-        // crate::pr_info!("the gross way {:#?}", data);
-
-        // let data = unsafe { <Box<T::Data> as PointerWrapper>::borrow(info) };
-
-        // crate::pr_info!("borrowing {:#?}", data);
-
-        // let data = unsafe { info as *mut T::Data };
-        // crate::pr_info!("pm size {:?}", (*data).pm_size);
 
         if let Super::Keyed = T::SUPER_TYPE {
             // SAFETY: We just called `into_pointer` above.
@@ -951,7 +938,7 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
         unsafe { <T::Data as PointerWrapper>::borrow_mut((*self.sb.0.get()).s_fs_info) }
     }
 
-    fn populate_dir(
+    fn populate_dir<I: inode::Operations<T>>(
         &self,
         parent: &DEntry<T>,
         ino: &mut u64,
@@ -992,9 +979,9 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
                         ino: *ino,
                         value: value.clone(),
                     };
-                    let inode = self.sb.try_new_dcache_dir_inode(params)?;
+                    let inode = self.sb.try_new_dcache_dir_inode::<I>(params)?;
                     let new_parent = self.try_new_dentry(inode, parent, name)?;
-                    self.populate_dir(&new_parent, ino, dir_entries, recursion - 1)?;
+                    self.populate_dir::<I>(&new_parent, ino, dir_entries, recursion - 1)?;
                 }
             }
         }
@@ -1003,7 +990,7 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
     }
 
     /// Creates a new root dentry populated with the given entries.
-    pub fn try_new_populated_root_dentry(
+    pub fn try_new_populated_root_dentry<I: inode::Operations<T>>(
         &self,
         root_value: T::INodeData,
         entries: &[Entry<'_, T>],
@@ -1011,14 +998,14 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
     where
         T::INodeData: Clone,
     {
-        let root_inode = self.sb.try_new_dcache_dir_inode(INodeParams {
+        let root_inode = self.sb.try_new_dcache_dir_inode::<I>(INodeParams {
             mode: 0o755,
             ino: 1,
             value: root_value,
         })?;
         let root = self.try_new_root_dentry(root_inode)?;
         let mut ino = 1u64;
-        self.populate_dir(&root, &mut ino, entries, 10)?;
+        self.populate_dir::<I>(&root, &mut ino, entries, 10)?;
         Ok(root)
     }
 
@@ -1083,11 +1070,11 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
     ///
     /// The directory is based on the dcache, implemented by `simple_dir_operations` and
     /// `simple_dir_inode_operations`.
-    pub fn try_new_dcache_dir_inode(
+    pub fn try_new_dcache_dir_inode<I: inode::Operations<T>>(
         &self,
         params: INodeParams<T::INodeData>,
     ) -> Result<ARef<INode<T>>> {
-        self.sb.try_new_dcache_dir_inode(params)
+        self.sb.try_new_dcache_dir_inode::<I>(params)
     }
 
     /// Creates a new "special" inode.
@@ -1216,7 +1203,7 @@ impl<T: Type + ?Sized> SuperBlock<T> {
     ///
     /// The directory is based on the dcache, implemented by `simple_dir_operations` and
     /// `simple_dir_inode_operations`.
-    pub fn try_new_dcache_dir_inode(
+    pub fn try_new_dcache_dir_inode<I: inode::Operations<T>>(
         &self,
         params: INodeParams<T::INodeData>,
     ) -> Result<ARef<INode<T>>> {
@@ -1225,7 +1212,8 @@ impl<T: Type + ?Sized> SuperBlock<T> {
             inode.__bindgen_anon_3.i_fop = unsafe { &bindings::simple_dir_operations };
 
             // SAFETY: `simple_dir_inode_operations` never changes, it's safe to reference it.
-            inode.i_op = unsafe { &bindings::simple_dir_inode_operations };
+            // inode.i_op = unsafe { &bindings::simple_dir_inode_operations };
+            inode.i_op = unsafe { inode::OperationsVtable::<T, I>::build() };
 
             // Directory inodes start off with i_nlink == 2 (for "." entry).
             // SAFETY: `inode` is valid for write.
@@ -1276,6 +1264,10 @@ impl<T: Type + ?Sized> INode<T> {
         // SAFETY: Add safety annotation.
         unsafe { (*ptr::addr_of!((*ptr).data)).assume_init_ref() }
     }
+
+    pub(crate) unsafe fn from_ptr<'a>(ptr: *const bindings::inode) -> &'a INode<T> {
+        unsafe { &*ptr.cast() }
+    }
 }
 
 // SAFETY: The type invariants guarantee that `INode` is always ref-counted.
@@ -1299,6 +1291,17 @@ unsafe impl<T: Type + ?Sized> AlwaysRefCounted for INode<T> {
 /// allocation remains valid at least until the matching call to `dput`.
 #[repr(transparent)]
 pub struct DEntry<T: Type + ?Sized>(pub(crate) UnsafeCell<bindings::dentry>, PhantomData<T>);
+
+// TODO: safety
+impl<T: Type + ?Sized> DEntry<T> {
+    pub(crate) unsafe fn from_ptr<'a>(ptr: *const bindings::dentry) -> &'a DEntry<T> {
+        unsafe { &*ptr.cast() }
+    }
+
+    pub(crate) unsafe fn to_ptr(mut self) -> *mut bindings::dentry {
+        self.0.get_mut()
+    }
+}
 
 // SAFETY: The type invariants guarantee that `DEntry` is always ref-counted.
 unsafe impl<T: Type + ?Sized> AlwaysRefCounted for DEntry<T> {

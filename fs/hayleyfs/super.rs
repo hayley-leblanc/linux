@@ -10,10 +10,10 @@
 
 mod def;
 // mod dir;
-// mod file;
+mod file;
 // mod finalize;
-// mod h_inode;
-// mod namei;
+mod h_inode;
+mod namei;
 mod pm;
 mod super_def;
 
@@ -23,7 +23,7 @@ mod super_def;
 // use crate::def::*;
 // use crate::dir::*;
 // use crate::h_inode::hayleyfs_inode::*;
-// use crate::h_inode::*;
+use crate::h_inode::*;
 // use crate::namei::*;
 use crate::pm::*;
 // use crate::super_def::hayleyfs_bitmap::*;
@@ -56,20 +56,8 @@ impl fs::Context<Self> for HayleyFS {
 
     kernel::define_fs_params! {Box<SbInfo>,
         {flag, "init", |s, v| {
-            s.mount_opts.init = Some(true);
-            pr_info!("init {}", v); Ok(())}},
-        // {flag, "flag", |_, v| { pr_info!("flag passed-in: {v}\n"); Ok(()) } },
-        // {flag_no, "flagno", |_, v| { pr_info!("flagno passed-in: {v}\n"); Ok(()) } },
-        // {bool, "bool", |_, v| { pr_info!("bool passed-in: {v}\n"); Ok(()) } },
-        // {u32, "u32", |_, v| { pr_info!("u32 passed-in: {v}\n"); Ok(()) } },
-        // {u32oct, "u32oct", |_, v| { pr_info!("u32oct passed-in: {v}\n"); Ok(()) } },
-        // {u32hex, "u32hex", |_, v| { pr_info!("u32hex passed-in: {v}\n"); Ok(()) } },
-        // {s32, "s32", |_, v| { pr_info!("s32 passed-in: {v}\n"); Ok(()) } },
-        // {u64, "u64", |_, v| { pr_info!("u64 passed-in: {v}\n"); Ok(()) } },
-        // {string, "string", |_, v| { pr_info!("string passed-in: {v}\n"); Ok(()) } },
-        // {enum, "enum", [("first", 10), ("second", 20)], |_, v| {
-        //     pr_info!("enum passed-in: {v}\n"); Ok(()) }
-        // },
+            s.mount_opts.init = Some(v);
+            Ok(())}},
     }
 
     fn try_new() -> Result<Self::Data> {
@@ -85,7 +73,7 @@ impl fs::Context<Self> for HayleyFS {
 impl fs::Type for HayleyFS {
     type Data = Box<SbInfo>;
     type Context = Self;
-    type INodeData = ();
+    type INodeData = HayleyfsInode;
     const SUPER_TYPE: fs::Super = fs::Super::BlockDev; // TODO: or SingleReconf or BlockDev?
     const NAME: &'static CStr = c_str!("hayleyfs");
     const FLAGS: i32 = fs::flags::USERNS_MOUNT | fs::flags::REQUIRES_DEV; // TODO: other options?
@@ -120,10 +108,10 @@ impl fs::Type for HayleyFS {
                 ptr::write_bytes(virt_addr, 0, (pm_size / 8).try_into()?);
                 clwb(virt_addr, pm_size.try_into().unwrap(), true);
             }
-            let root_inode = sb.try_new_dcache_dir_inode(fs::INodeParams {
+            let root_inode = sb.try_new_dcache_dir_inode::<HayleyfsInode>(fs::INodeParams {
                 mode: 0o755,
                 ino: 1,
-                value: (),
+                value: HayleyfsInode {},
             })?;
             sb.try_new_root_dentry(root_inode)?
         } else {
@@ -162,89 +150,6 @@ fn alloc_sbi() -> Result<Box<SbInfo>> {
 //     // parse_param: Some(hayleyfs_parse_params),
 //     ..c_default_struct!(fs_context_operations)
 // };
-
-// fn hayleyfs_get_pm_info(sb: *mut super_block, sbi: &mut SbInfo) -> Result<()> {
-//     // TODO: what happens if this isn't a dax dev?
-
-//     sbi.s_daxdev = unsafe { fs_dax_get_by_bdev((*sb).s_bdev, &mut sbi.s_dev_offset as *mut u64) };
-
-//     // check for errors on getting the daxdev
-//     // TODO: what else do you have to check?
-//     if ptr::eq(sbi.s_daxdev, ptr::null_mut()) {
-//         pr_alert!("Bad DAX device\n");
-//         Err(EINVAL)
-//     } else {
-//         let mut virt_addr: *mut c_void = ptr::null_mut();
-//         let pfn: *mut pfn_t = ptr::null_mut();
-//         // TODO: LONG_MAX and PAGE_SIZE are usizes (and we can't change PAGE_SIZE's type)
-//         // but we need them to be i64s, so we have to convert. this PROBABLY won't fail,
-//         // but it COULD. figure out a way to better way to deal with this
-//         let mut size = unsafe {
-//             dax_direct_access(
-//                 sbi.s_daxdev,
-//                 0,
-//                 (LONG_MAX / PAGE_SIZE).try_into().unwrap(),
-//                 dax_access_mode_DAX_ACCESS,
-//                 &mut virt_addr,
-//                 pfn,
-//             )
-//         };
-//         if size <= 0 {
-//             pr_alert!("direct access failed\n");
-//             Err(EINVAL)
-//         } else {
-//             size *= PAGE_SIZE as i64;
-//             sbi.pm_size = u64::try_from(size).unwrap(); // should never fail - size is always positive
-//             sbi.virt_addr = virt_addr;
-
-//             // this calculation taken from NOVA
-//             // pfn is an absolute PFN translation of our address
-//             // pfn_t_to_pfn translates from a pfn_t type (which is really a struct)
-//             // to an unsigned long.
-//             // not quite sure what the shift is doing here.
-//             // TODO: figure out if this is correct
-//             sbi.phys_addr = unsafe { hayleyfs_pfn_t_to_pfn(*pfn) << PAGE_SHIFT };
-
-//             Ok(())
-//         }
-//     }
-// }
-
-// fn hayleyfs_alloc_sbi(fc: *mut fs_context, sb: *mut super_block) -> *mut c_void {
-//     // according to ramfs port, this is allocated the same as if we
-//     // used kzalloc with GFP_KERNEL
-//     let sbi = Box::<SbInfo>::try_new_zeroed();
-
-//     match sbi {
-//         Ok(sbi) => {
-//             let mut sbi = unsafe { sbi.assume_init() };
-//             sbi.s_dev_offset = 0; // TODO: what should this be?
-//             sbi.mount_opts = HayleyfsMountOpts::default();
-
-//             let sbi_ptr = Box::into_raw(sbi) as *mut c_void;
-//             unsafe { (*fc).s_fs_info = sbi_ptr };
-//             unsafe { (*sb).s_fs_info = sbi_ptr };
-//             sbi_ptr
-//         }
-//         Err(_) => unsafe { hayleyfs_err_ptr(ENOMEM.into()) },
-//     }
-// }
-
-// #[no_mangle]
-// pub unsafe extern "C" fn hayleyfs_fill_super(
-//     sb_raw: *mut super_block,
-//     fc_raw: *mut fs_context,
-// ) -> i32 {
-//     let sb = unsafe { &mut *(sb_raw as *mut super_block) };
-//     let fc = unsafe { &mut *(fc_raw as *mut fs_context) };
-
-//     // let result = _hayleyfs_fill_super(sb, fc);
-//     // match result {
-//     //     Ok(_) => 0,
-//     //     Err(e) => e.to_kernel_errno(),
-//     // }
-//     0
-// }
 
 // // /*
 // //  * Initialization dependencies
@@ -460,61 +365,5 @@ fn alloc_sbi() -> Result<Box<SbInfo>> {
 //         // let sbi: &mut SbInfo = &mut *((*sb).s_fs_info as *mut SbInfo);
 //         let sbi = hayleyfs_get_sbi(sb);
 //         hayleyfs_fs_put_dax(sbi.s_daxdev);
-//     }
-// }
-
-// #[no_mangle]
-// pub unsafe extern "C" fn hayleyfs_get_tree(fc: *mut fs_context) -> i32 {
-//     unsafe { get_tree_bdev(fc, Some(hayleyfs_fill_super)) }
-// }
-
-// #[no_mangle]
-// pub unsafe extern "C" fn hayleyfs_init_fs_context(fc: *mut fs_context) -> c_int {
-//     // pr_info!("init fs context, alloc sbi\n");
-//     // pr_info!("{:p}\n", fc);
-//     // hayleyfs_alloc_sbi(fc); // TODO: handle errors
-//     let mount_opts = Box::<HayleyfsMountOpts>::try_new_zeroed();
-//     match mount_opts {
-//         Ok(mount_opts) => {
-//             let mount_opts = unsafe { mount_opts.assume_init() };
-//             let opts_ptr = Box::into_raw(mount_opts) as *mut c_void;
-//             unsafe {
-//                 (*fc).ops = &HayleyfsContextOps;
-//                 (*fc).fs_private = opts_ptr;
-//             }
-//             0
-//         }
-//         Err(_) => -(ENOMEM as c_int),
-//     }
-// }
-
-// // extra attributes here replicate the __init macro
-// // taken from RamFS port
-// #[no_mangle]
-// #[link_section = ".init.text"]
-// #[cold]
-// pub extern "C" fn init_hayleyfs() -> c_int {
-//     unsafe { register_filesystem(&mut HayleyfsFsType) }
-// }
-
-// impl kernel::Module for HayleyFS {
-//     fn init(_name: &'static CStr, _module: &'static ThisModule) -> Result<Self> {
-//         pr_info!("Hello! This is Hayley's Rust module!\n");
-
-//         let ret = init_hayleyfs();
-//         if ret < 0 {
-//             // TODO: convert and return the actual error
-//             return Err(EINVAL);
-//         }
-
-//         Ok(HayleyFS {})
-//     }
-// }
-
-// impl Drop for HayleyFS {
-//     fn drop(&mut self) {
-//         // pr_info!("My message is {}\n", self.message);
-//         unsafe { unregister_filesystem(&mut HayleyfsFsType) };
-//         pr_info!("Module is unloading. Goodbye!\n");
 //     }
 // }
