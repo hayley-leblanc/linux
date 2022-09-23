@@ -7,10 +7,11 @@
 
 // TODO: move INode wrapper and related structures to this file
 
-use crate::error::{from_kernel_result, Result};
-use crate::fs::{DEntry, INode, Type};
+use crate::error::{code::*, from_kernel_result, Result};
+use crate::fs::{DEntry, INode, INodeParams, SuperBlock, Type};
+use crate::str::CStr;
 // use crate::types::PointerWrapper;
-use core::{marker, ptr};
+use core::marker;
 use macros::vtable;
 
 pub(crate) struct OperationsVtable<T: Type + ?Sized, O>(
@@ -21,43 +22,67 @@ pub(crate) struct OperationsVtable<T: Type + ?Sized, O>(
 /// Corresponds to the kernel's `struct inode_operations`.
 #[vtable]
 pub trait Operations<T: Type + ?Sized> {
-    /// Creates a new inode
-    fn create() -> Result<()>; // TODO: args and return values
-    /// TODO: doc
-    fn lookup(dir: &INode<T>, dentry: &DEntry<T>, flags: u32) -> Result<DEntry<T>>;
+    /// Creates a new inode. Returns the assigned inode number and INodeData
+    fn create(
+        _sb: &SuperBlock<T>,
+        _dir: &INode<T>,
+        _file_name: &CStr,
+    ) -> Result<(core::ffi::c_ulong, T::INodeData)> {
+        Err(ENOSYS)
+    }
+    /// Looks up a directory entry
+    fn lookup(
+        _sb: &SuperBlock<T>,
+        _dir: &INode<T>,
+        _dentry: &DEntry<T>,
+        _flags: u32,
+    ) -> Result<DEntry<T>> {
+        Err(ENOSYS)
+    }
 }
 
 impl<T: Type + ?Sized, O: Operations<T>> OperationsVtable<T, O> {
-    /// Called by the VFS when an inode should be created.
-    /// right?
+    /// Called by VFS to create an inode
     unsafe extern "C" fn create_callback(
         _user_ns: *mut bindings::user_namespace,
-        _inode: *mut bindings::inode,
-        _dentry: *mut bindings::dentry,
-        _mode: bindings::umode_t,
+        dir: *mut bindings::inode,
+        dentry: *mut bindings::dentry,
+        mode: bindings::umode_t,
         _excl: bool,
     ) -> core::ffi::c_int {
         from_kernel_result! {
-            crate::pr_info!("create inode callback");
-            O::create().unwrap();
-            Ok(0)
+            let sb: &SuperBlock<T> = unsafe { SuperBlock::from_ptr((*dir).i_sb) };
+            let dir: &INode<T> = unsafe { INode::from_ptr(dir) };
+            let file_name = unsafe { CStr::from_char_ptr((*dentry).d_name.name as *const core::ffi::c_char) };
+            let (ino, data) = O::create(sb, dir, file_name)?;
+            let _inode_params = INodeParams {
+                mode,
+                ino,
+                value: data,
+            };
+
+            // TODO: finish VFS inode setup
+
+            Ok(ino.try_into()?)
         }
     }
 
-    /// called by VFS to perform a lookup
+    /// Called by VFS to look up a dentry
     unsafe extern "C" fn lookup_callback(
         dir: *mut bindings::inode,
         dentry: *mut bindings::dentry,
-        flags: u32,
+        flags: core::ffi::c_uint,
     ) -> *mut bindings::dentry {
-        crate::pr_info!("lookup callback");
-        let dir = unsafe { INode::from_ptr(dir) };
-        let dentry = unsafe { DEntry::from_ptr(dentry) };
-        let result = O::lookup(dir, &dentry, flags);
-        if let Ok(dentry) = result {
-            unsafe { dentry.to_ptr() }
-        } else {
-            ptr::null_mut()
+        let sb: &SuperBlock<T> = unsafe { SuperBlock::from_ptr((*dir).i_sb) };
+        let dir: &INode<T> = unsafe { INode::from_ptr(dir) };
+        let dentry: &DEntry<T> = unsafe { DEntry::from_ptr(dentry) };
+        let result = O::lookup(sb, dir, dentry, flags);
+
+        unsafe {
+            match result {
+                Err(e) => bindings::ERR_PTR(from_kernel_result!(Err(e))) as *mut bindings::dentry,
+                Ok(dentry) => dentry.to_ptr(),
+            }
         }
     }
 

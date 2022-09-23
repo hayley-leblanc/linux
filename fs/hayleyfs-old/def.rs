@@ -10,8 +10,6 @@
 //     FS_NODUMP_FL, FS_NOTAIL_FL, FS_SECRM_FL, FS_SYNC_FL, FS_TOPDIR_FL, FS_UNRM_FL,
 // };
 // use kernel::prelude::*;
-// use kernel::PAGE_SIZE;
-// use kernel::bindings;
 
 // pub(crate) const __LOG_PREFIX: &[u8] = b"hayleyfs\0";
 
@@ -21,10 +19,10 @@
 // pub(crate) const INODE_BITMAP_PAGE: usize = 1;
 // pub(crate) const INODE_PAGE: usize = 2;
 // pub(crate) const DATA_BITMAP_PAGE: usize = 3;
-// // pub(crate) const DATA_START: usize = 4;
+// pub(crate) const DATA_START: usize = 4;
 
-// pub(crate) const MAX_FILENAME_LEN: usize = 32;
-// pub(crate) const DENTRIES_PER_PAGE: usize = 32;
+pub(crate) const MAX_FILENAME_LEN: usize = 32;
+// // pub(crate) const DENTRIES_PER_PAGE: usize = 32;
 // pub(crate) const CACHELINE_SIZE: usize = 64; // TODO: this should probably come from the kernel
 pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 // pub(crate) const CACHELINE_BIT_SHIFT: usize = 9;
@@ -33,7 +31,7 @@ pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 // pub(crate) const MAX_FILE_SIZE: usize = PAGE_SIZE * DIRECT_PAGES_PER_INODE;
 
 // pub(crate) const LONG_MAX: usize = 9223372036854775807;
-// pub(crate) const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;
+pub(crate) const HAYLEYFS_MAGIC: u32 = 0xaaaaaaaa;
 // pub(crate) const READDIR_END: i64 = !0;
 
 // // set of flags that should be inherited by new nodes from parent
@@ -52,45 +50,45 @@ pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 // pub(crate) const HAYLEYFS_REG_FLMASK: u32 = !(FS_DIRSYNC_FL | FS_TOPDIR_FL);
 // pub(crate) const HAYLEYFS_OTHER_FLMASK: u32 = FS_NODUMP_FL | FS_NOATIME_FL;
 
-// // semantic types indicating the persistence state of an object
-// #[derive(Debug)]
-// pub(crate) struct Dirty;
-// #[derive(Debug)]
-// pub(crate) struct Flushed;
-// #[derive(Debug)]
-// pub(crate) struct Clean;
+// semantic types indicating the persistence state of an object
+#[derive(Debug)]
+pub(crate) struct Dirty;
+#[derive(Debug)]
+pub(crate) struct Flushed;
+#[derive(Debug)]
+pub(crate) struct Clean;
 
-// // semantic types indicating the most recent type of modification to an object
-// // TODO: think more about what these should be once the fs works better
-// #[derive(Debug)]
-// pub(crate) struct Read; // indicates no change since it was read. TODO: better name
-// #[derive(Debug)]
-// pub(crate) struct Alloc; // TODO: might be more clear to have separate alloc, init, and uninit types
-// #[derive(Debug)]
-// pub(crate) struct Init;
-// #[derive(Debug)]
-// pub(crate) struct AddPage;
-// #[derive(Debug)]
-// pub(crate) struct Zero;
-// #[derive(Debug)]
-// pub(crate) struct Link;
-// #[derive(Debug)]
-// pub(crate) struct Flags;
-// #[derive(Debug)]
-// pub(crate) struct WriteData;
-// #[derive(Debug)]
-// pub(crate) struct Size;
+// semantic types indicating the most recent type of modification to an object
+// TODO: think more about what these should be once the fs works better
+#[derive(Debug)]
+pub(crate) struct Read; // indicates no change since it was read. TODO: better name
+#[derive(Debug)]
+pub(crate) struct Alloc; // TODO: might be more clear to have separate alloc, init, and uninit types
+#[derive(Debug)]
+pub(crate) struct Init;
+#[derive(Debug)]
+pub(crate) struct AddPage;
+#[derive(Debug)]
+pub(crate) struct Zero;
+#[derive(Debug)]
+pub(crate) struct Link;
+#[derive(Debug)]
+pub(crate) struct Flags;
+#[derive(Debug)]
+pub(crate) struct WriteData;
+#[derive(Debug)]
+pub(crate) struct Size;
 
-// // semantic types used to indicate the type of bitmaps and/or inodes
-// // to reduce some code repetition and prevent mistakes
-// #[derive(Debug)]
-// pub(crate) struct Inode;
-// #[derive(Debug)]
-// pub(crate) struct Data;
-// #[derive(Debug)]
-// pub(crate) struct Dir;
-// #[derive(Debug)]
-// pub(crate) struct Unknown;
+// semantic types used to indicate the type of bitmaps and/or inodes
+// to reduce some code repetition and prevent mistakes
+#[derive(Debug)]
+pub(crate) struct Inode;
+#[derive(Debug)]
+pub(crate) struct Data;
+#[derive(Debug)]
+pub(crate) struct Dir;
+#[derive(Debug)]
+pub(crate) struct Unknown;
 
 // pub(crate) struct EmptyPage;
 
@@ -99,7 +97,7 @@ pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 // // impl InodeType for Dir {}
 // // impl InodeType for Unknown {}
 
-// pub(crate) trait PmObjWrapper {}
+pub(crate) trait PmObjWrapper {}
 
 // pub(crate) type PmPage = usize; // TODO: move this somewhere else
 

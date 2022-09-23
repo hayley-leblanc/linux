@@ -339,6 +339,12 @@ long rust_helper_PTR_ERR(__force const void *ptr)
 }
 EXPORT_SYMBOL_GPL(rust_helper_PTR_ERR);
 
+void* rust_helper_ERR_PTR(long error)
+{
+	return ERR_PTR(error);
+}
+EXPORT_SYMBOL_GPL(rust_helper_ERR_PTR);
+
 const char *rust_helper_errname(int err)
 {
 	return errname(err);

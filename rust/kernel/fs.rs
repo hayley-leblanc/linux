@@ -122,7 +122,6 @@ impl<T: Type + ?Sized> Tables<T> {
     };
 
     unsafe extern "C" fn free_callback(fc: *mut bindings::fs_context) {
-        crate::pr_info!("free callback");
         // SAFETY: The callback contract guarantees that `fc` is valid.
         let fc = unsafe { &*fc };
 
@@ -612,7 +611,6 @@ impl Registration {
     }
 
     unsafe extern "C" fn kill_sb_callback<T: Type + ?Sized>(sb_ptr: *mut bindings::super_block) {
-        crate::pr_info!("kill sb callback");
         if let Super::BlockDev = T::SUPER_TYPE {
             // SAFETY: When the superblock type is `BlockDev`, we have a block device so it's safe
             // to call `kill_block_super`. Additionally, the callback contract guarantees that
@@ -1159,6 +1157,12 @@ impl<T: Type + ?Sized> SuperBlock<T> {
         unsafe { <T::Data as PointerWrapper>::borrow_mut((*self.0.get()).s_fs_info) }
     }
 
+    /// Creates a reference to a [`SuperBlock`] from a valid pointer
+    /// TODO: safety
+    pub unsafe fn from_ptr<'a>(ptr: *const bindings::super_block) -> &'a SuperBlock<T> {
+        unsafe { &*ptr.cast() }
+    }
+
     fn try_new_inode(
         &self,
         mode_type: u16,
@@ -1263,6 +1267,11 @@ impl<T: Type + ?Sized> INode<T> {
         let ptr = container_of!(self.0.get(), INodeWithData<T::INodeData>, inode);
         // SAFETY: Add safety annotation.
         unsafe { (*ptr::addr_of!((*ptr).data)).assume_init_ref() }
+    }
+
+    /// Returns the inode number for this inode
+    pub fn get_ino(&self) -> core::ffi::c_ulong {
+        unsafe { (*self.0.get()).i_ino }
     }
 
     pub(crate) unsafe fn from_ptr<'a>(ptr: *const bindings::inode) -> &'a INode<T> {
