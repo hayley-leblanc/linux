@@ -43,7 +43,7 @@ end
 	K -.-> L2["Dentry(Clean,Init)</br>Inode(Clean,Alloc)"]
 subgraph new dentry in parent
 	M([Allocate free dentry in parent]) -.-> N["Dentry(Clean,Free)"]
-	N -.-> O([Set name and len in new dentry])
+	N -.-> O([Set name in new dentry])
 	O --clwb--> O1["Dentry(InFlight,Alloc)"]
 end
 subgraph increment parent links
@@ -120,7 +120,7 @@ class A,A0,A1,A2,G gray
 ```mermaid
 graph TD
   A([Allocate free dentry in parent]) -.-> B["Dentry(Clean,Free)"]
-	B -.-> C([Set name and len in new dentry])
+	B -.-> C([Set name in new dentry])
 	C --clwb--> D["Dentry(InFlight,Alloc)"]
 	E([Obtain inode]) -.-> F["Inode(InFlight,Start)"]
 	F -.-> G([Increment link count])
@@ -295,7 +295,7 @@ C -.-> F["DataPageHeader(Clean,Free)"]
 D -.-> G([Persistently allocate inode as symlink])
 G --clwb--> H["Inode(InFlight,Alloc)"]
 
-E -.-> I([Set name and len in dentry])
+E -.-> I([Set name in dentry])
 I --clwb--> J["Dentry(InFlight,Alloc)"]
 
 F-.-> K([Alloc/init page header])
@@ -325,5 +325,66 @@ class A,B,C gray
 It should be safe to set the size of the inode when allocating/initializing it, since the inode won't be valid until a dentry points to it anyway. Need to clarify when to use `Alloc` vs `Init` typestate for pages.
 
 **rename** (new name)
+```mermaid
+graph TD
+
+A([Alloc free dentry in new parent]) -.-> B["Dentry(Clean,Free)"]
+B -.-> C([Set name and backpointer in dentry]) --flush--> D["Dentry(Clean,SetBackpointer)"]
+D -.-> G([Set ino in new dentry])
+G --flush--> H["Dentry(Clean,InitBackpointer)"]
+I([Obtain old dentry]) -.-> J["Dentry(Clean,Start)"]
+J & H -.-> K([Zero ino in old dentry]) 
+K --flush--> L["Dentry(Clean,ClearIno)"]
+K -.-> M["Dentry(Clean, InitBackpointer)"]
+M -.-> P([Clear backpointer]) --flush--> Q["Dentry(Clean,ClearBackpointer)"]
+L & Q -.-> N([Clear old dentry]) --flush--> R["Dentry(Clean,Dealloc)"]
+N -.-> U["Dentry(Clean,ClearBackpointer)"]
+U & R -.-> Z((Done))
+
+
+classDef empty width:0px,height:0px;
+classDef gray fill:#888,stroke:#333,stroke-width:2px;
+class A,I gray
+```
 
 **rename** (overwriting old name)
+```mermaid
+graph TD
+
+A([Obtain new dentry]) -.-> B["Dentry(Clean,Start)"]
+B -.-> C([Set ino in new dentry]) 
+C --flush--> D["Dentry(Clean,InitBackpointer)"]
+E([Obtain old dentry]) -.-> F["Dentry(Clean,Start)"]
+D & F -.-> G([Zero ino in old dentry])
+G --flush--> H["Dentry(Clean,ClearIno)"]
+G -.-> I["Dentry(Clean,InitBackpointer)"]
+
+I -.-> L([Clear backpointer]) --flush--> M["Dentry(Clean,ClearBackpointer)"]
+M -.-> J([Clear old dentry]) --flush--> K["Dentry(Clean,Dealloc)"]
+H -.-> J
+
+J -.-> U["Dentry(Clean,ClearBackpointer)"]
+
+V([Obtain old inode]) -.-> W["Inode(Clean,Start)"]
+X([Obtain data page]) -.-> Y["DataPageHeader(Clean,Start)"]
+Y -.-> Z([Zero page data]) --flush--> 0["DataPageHeader(Clean,Zero)"]
+H -.-> Z
+0 -.-> 1([Deallocate page]) --flush--> 2["DataPageHeader(Clean,Dealloc)"]
+H -.-> 3
+W -.-> 3([Deallocate inode]) --flush--> 4["Inode(Clean,Dealloc)"]
+U & K & 2 & 4 -.-> 5((Done))
+
+classDef empty width:0px,height:0px;
+classDef gray fill:#888,stroke:#333,stroke-width:2px;
+class A,E,V,X gray
+```
+This flow chart assumes that the overwritten name has no other links and that it only has one associated data page for simplicity, since handling multiple pages makes the chart complicated. We also need a variation for directories. If there are other links, we follow the same procedure as in unlink instead of deleting the file. We can probably reduce the number of flushes here.
+
+Algorithm for determining whether dentries are valid is roughly as follows:
+1. Is any part of the dentry non-zero? If so, it is allocated and may be in use. Otherwise, skip it.
+2. Is the ino field non-zero? If so, it may be valid (depending on whether there are valid backpointers to it). If not, skip it.
+3. Does the dentry have a backpointer? If so, examine the referent. 
+   1. If the dentry and referent have matching inode fields, or if the referent's inode is 0, the rename was completed but the old dentry was not deleted. Ignore the old dentry and use the new one. 
+   2. If the dentry and referent do not have matching inode fields and the referent's inode is non-zero, then the rename did not complete and the dentries point to different files. Either clear the backpointer or just ignore it.
+
+Note: in order for this to work, we'll need to make sure that a cleared dentry cannot be reallocated at least until the backpointer has been cleared. If we don't, we could crash and end up with a backpointer to a completely unrelated but valid dentry that happens to have been put in the old dentry's spot. That's why the backpointer must be cleared before the old dentry can be cleared.
