@@ -18,18 +18,13 @@ pub(crate) trait InodeAllocator {
 pub(crate) struct InodeBitmap(Mutex<[u8; INODE_BITMAP_SIZE]>);
 
 impl InodeBitmap {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new() -> Result<Self> {
         let bitmap: [u8; INODE_BITMAP_SIZE] = [0; INODE_BITMAP_SIZE];
         // set bits for reserved inodes
         // SAFETY: We just initialized the bitmap as an array of zeros so it is
         // safe to index into. ROOT_INO is 1 and the bitmap will always be non-zero-sized.
-        unsafe {
-            set_bit_helper(
-                ROOT_INO.try_into().unwrap(),
-                bitmap.as_ptr() as *const ffi::c_void,
-            )
-        };
-        Self(Mutex::new(bitmap))
+        unsafe { set_bit_helper(ROOT_INO.try_into()?, bitmap.as_ptr() as *const ffi::c_void) };
+        Ok(Self(Mutex::new(bitmap)))
     }
 }
 
@@ -51,7 +46,7 @@ impl InodeAllocator for InodeBitmap {
                 test_and_set_bit_le_helper(ino.try_into()?, bitmap.as_ptr() as *const ffi::c_void)
             };
             if set != 0 {
-                pr_err!("ERROR: ino {} is already set", ino);
+                pr_err!("ERROR: ino {} is already set\n", ino);
                 Err(EINVAL)
             } else {
                 Ok(ino)
@@ -60,12 +55,15 @@ impl InodeAllocator for InodeBitmap {
     }
 
     fn dealloc_ino(&mut self, ino: InodeNum) -> Result<()> {
+        if ino >= INODE_BITMAP_SIZE.try_into()? {
+            return Err(EINVAL);
+        }
         let bitmap = self.0.lock();
         let set = unsafe {
             test_and_clear_bit_le_helper(ino.try_into()?, bitmap.as_ptr() as *const ffi::c_void)
         };
         if set == 0 {
-            pr_err!("ERROR: ino {} is already free", ino);
+            pr_err!("ERROR: ino {} is already free\n", ino);
             Err(EINVAL)
         } else {
             Ok(())

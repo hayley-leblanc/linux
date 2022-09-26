@@ -1,6 +1,6 @@
 #![allow(dead_code)] // TODO: remove
 
-use crate::inode::*;
+use crate::{dir::*, file::*, inode::*};
 use core::{ffi, fmt, ptr};
 use kernel::prelude::*;
 use kernel::{fs, PAGE_SIZE};
@@ -9,20 +9,34 @@ pub(crate) struct HayleyFS {}
 pub(crate) type INodeData = ();
 
 pub(crate) const ROOT_INO: InodeNum = 1;
-pub(crate) const _SUPER_BLOCK_PAGE: usize = 0; // currently unused
+pub(crate) const SUPER_BLOCK_PAGE: usize = 0; // currently unused
 pub(crate) const INODE_TABLE_START: usize = 1;
 pub(crate) const INODE_TABLE_SIZE: usize = 4; // pages of inode table
                                               // the rest of the PM is for data pages
 pub(crate) const INODE_ENTRY_SIZE: usize = 64; // until we land on an inode structure, use this to index into the inode table
 pub(crate) const TOTAL_INODES: usize = (PAGE_SIZE * INODE_TABLE_SIZE) / INODE_ENTRY_SIZE;
 pub(crate) const INODE_BITMAP_SIZE: usize = TOTAL_INODES / 8;
+pub(crate) const PAGE_BITMAP_SIZE: usize = (1024 * 1024 * 1024) / (4 * 1024); // sized for 1GB PM device, 4KB pages
+                                                                              // TODO: don't statically size the page bitmap (or don't use a bitmap)
+
+// we could make SbInfo generic in the allocator and index types, but
+// SbInfo is passed around a lot and converted from a raw pointer to a nice
+// type very frequently, so this will get messy. Use type aliases instead to
+// make it easy to switch out allocator/index types.
+type InodeAlloc = InodeBitmap; // should implement InodeAllocator trait
+type PageAlloc = PageBitmap; // should implement PageAllocator trait
+type DirIndex = RBVecDirTree; // should implement DirectoryIndex trait
+type DataIndex = RBDataTree; // should implement DataIndex trait
 
 /// TODO: make SbInfo generic in the type of allocators/indexes?
 #[repr(C)]
 pub(crate) struct SbInfo {
     pub(crate) virt_addr: *mut ffi::c_void,
     pub(crate) pm_size: i64,
-    pub(crate) inode_allocator: Box<InodeBitmap>,
+    pub(crate) inode_allocator: Box<InodeAlloc>,
+    pub(crate) page_allocator: Box<PageAlloc>,
+    pub(crate) dir_index: Box<DirIndex>,
+    pub(crate) data_index: Box<DataIndex>,
 }
 
 pub(crate) type InodeNum = u64;
@@ -39,7 +53,10 @@ impl SbInfo {
         Ok(Self {
             virt_addr: ptr::null_mut(),
             pm_size: 0,
-            inode_allocator: Box::try_new(InodeBitmap::new())?,
+            inode_allocator: Box::try_new(InodeAlloc::new()?)?,
+            page_allocator: Box::try_new(PageAlloc::new()?)?,
+            dir_index: Box::try_new(DirIndex::new())?,
+            data_index: Box::try_new(DataIndex::new())?,
         })
     }
 

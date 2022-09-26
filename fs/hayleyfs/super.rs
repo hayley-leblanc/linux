@@ -7,6 +7,7 @@ use kernel::{c_str, fs};
 
 mod cdefs;
 mod dir;
+mod file;
 mod inode;
 mod namei;
 mod pm;
