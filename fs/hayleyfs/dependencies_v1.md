@@ -178,6 +178,7 @@ graph TD
 A([Obtain dentry in parent]) -.-> B["Dentry(Clean,Start)"] 
 B -.-> C([Zero ino in parent dentry])
 C --flush--> D["Dentry(Clean,ClearIno)"]
+D -.-> I
 D -.-> E([Zero other dentry metadata]) --clwb--> F["Dentry(InFlight,Dealloc)"]
 G([Obtain inode]) -.-> H["Inode(Clean,Start)"]
 H -.-> I([Decrement link count]) --clwb--> J["Inode(InFlight,DecLink)"]
