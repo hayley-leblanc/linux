@@ -32,11 +32,14 @@ subgraph set up new dir page
 	D([Allocate free page]) -.-> E["DirPageHeader(Clean,Free)"]
 	E -.-> F([Set type/metadata in header])
 	F --flush--> G["DirPageHeader(Clean,Alloc)"]
-	G -.-> H([Set .. dentry])
-	H --clwb--> I["DirPageHeader(InFlight,Alloc)</br>Dentry(InFlight,Init)"]
+	G -.-> H0
+	H0([Allocate dentry in new page]) -.-> H1["Dentry(Clean,Free)"]
+	H1 -.-> H2([Set name to ..]) --flush--> H3["Dentry(Clean,Alloc)"] 
+	H3 -.-> H4([Set parent ino in .. dentry]) --clwb--> H5["Dentry(InFlight,Init)"]
 end
 subgraph point page to inode
-	I & C --- J[ ]:::empty
+	H5 & C --- J[ ]:::empty
+	G -.-> J1
 	J --flush--> J1["Inode(Clean,Alloc)</br>Dentry(Clean,Init)</br>DirPageHeader(Clean,Alloc)"] -.-> K([Set ino in page header])
 	K --clwb-->L1["DirPageHeader(InFlight,Init)"]
 end
@@ -62,8 +65,9 @@ end
 	
 classDef empty width:0px,height:0px;
 classDef gray fill:#888,stroke:#333,stroke-width:2px;
-class A0,D,M,P gray
+class A0,D,M,P,H0 gray
 ```
+Not sure yet whether setting the .. dentry can be initialized concurrently with parent link increment. In general, incrementing the link must occur before the dentry can be initialized, but in this case the dir page that the .. dentry lives on does not become valid until much later. It wouldn't be incorrect to force the link increment to happen first anyway, but it probably isn't necessary. Requiring the link increment to be persisted first would make the API simpler. 
 
 **Allocate a new page for an existing directory**
 ```mermaid
@@ -253,6 +257,7 @@ classDef empty width:0px,height:0px;
 classDef gray fill:#888,stroke:#333,stroke-width:2px;
 class A,E gray
 ```
+NOTE: this diagram currently does not take into account how to handle partial page truncation. We need to add this.
 
 **truncate** (increasing size)
 Should look the same as write, except that the pages will be zeroed instead of having data written to them. We should use the `WriteData` state for this, not `Zero`, since `Zero` corresponds to deallocation and this operation performs allocation.
@@ -337,6 +342,7 @@ I([Obtain old dentry]) -.-> J["Dentry(Clean,Start)"]
 J & H -.-> K([Zero ino in old dentry]) 
 K --flush--> L["Dentry(Clean,ClearIno)"]
 K -.-> M["Dentry(Clean, InitBackpointer)"]
+L -.-> P
 M -.-> P([Clear backpointer]) --flush--> Q["Dentry(Clean,ClearBackpointer)"]
 L & Q -.-> N([Clear old dentry]) --flush--> R["Dentry(Clean,Dealloc)"]
 N -.-> U["Dentry(Clean,ClearBackpointer)"]
@@ -359,7 +365,7 @@ E([Obtain old dentry]) -.-> F["Dentry(Clean,Start)"]
 D & F -.-> G([Zero ino in old dentry])
 G --flush--> H["Dentry(Clean,ClearIno)"]
 G -.-> I["Dentry(Clean,InitBackpointer)"]
-
+H -.-> L
 I -.-> L([Clear backpointer]) --flush--> M["Dentry(Clean,ClearBackpointer)"]
 M -.-> J([Clear old dentry]) --flush--> K["Dentry(Clean,Dealloc)"]
 H -.-> J
