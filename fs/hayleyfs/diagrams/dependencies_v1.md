@@ -330,6 +330,8 @@ class A,B,C gray
 ```
 It should be safe to set the size of the inode when allocating/initializing it, since the inode won't be valid until a dentry points to it anyway. Need to clarify when to use `Alloc` vs `Init` typestate for pages.
 
+**TODO: redo rename with forward pointers instead of backpointers**
+
 **rename** (new name)
 ```mermaid
 graph TD
