@@ -641,6 +641,31 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsInit> {
             _p: PhantomData,
         })
     }
+
+    /// Obtains the DAX device associated with the superblock's block device.
+    pub fn get_dax_dev(&self) -> Result<*mut bindings::dax_device> {
+        if let Super::BlockDev = T::SUPER_TYPE {
+            let mut start_off: u64 = 0;
+
+            // SAFETY: The type invariant guarantees that `self.sb` is the only pointer to a
+            // newly-allocated superblock, so it is safe to mutably reference it.
+            let dax_dev = unsafe {
+                bindings::fs_dax_get_by_bdev(
+                    (*self.sb).s_bdev,
+                    &mut start_off,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+            if dax_dev.is_null() {
+                return Err(EINVAL);
+            }
+
+            Ok(dax_dev)
+        } else {
+            Err(ENOTBLK)
+        }
+    }
 }
 
 impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
