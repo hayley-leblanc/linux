@@ -648,7 +648,9 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsInit> {
             let mut start_off: u64 = 0;
 
             // SAFETY: The type invariant guarantees that `self.sb` is the only pointer to a
-            // newly-allocated superblock, so it is safe to mutably reference it.
+            // newly-allocated superblock, so it is safe to mutably reference it. The caller must
+            // only call `get_dax_dev` once on a given superblock to ensure there is only one active
+            // pointer to the `dax_device` structure associated with that superblock.
             let dax_dev = unsafe {
                 bindings::fs_dax_get_by_bdev(
                     (*self.sb).s_bdev,
