@@ -5,6 +5,9 @@
 use core::{ffi, ptr};
 use kernel::prelude::*;
 use kernel::{bindings, c_str, fs};
+use pm::*;
+
+mod pm;
 
 module_fs! {
     type: HayleyFs,
@@ -65,6 +68,14 @@ impl SbInfo {
 
         Ok(())
     }
+
+    fn get_size(&self) -> i64 {
+        self.size
+    }
+
+    unsafe fn get_virt_addr(&self) -> *mut ffi::c_void {
+        self.virt_addr
+    }
 }
 
 // SbInfo must be Send and Sync for it to be used as the Context's data.
@@ -92,22 +103,30 @@ impl fs::Type for HayleyFs {
     const NAME: &'static CStr = c_str!("hayleyfs");
     const FLAGS: i32 = fs::flags::REQUIRES_DEV | fs::flags::USERNS_MOUNT;
 
+    // TODO: take init argument and only initialize new FS if it is given
     fn fill_super(
         mut data: Box<SbInfo>,
         sb: fs::NewSuperBlock<'_, Self>,
     ) -> Result<&fs::SuperBlock<Self>> {
         pr_info!("fill super");
+
         // obtain virtual address and size of PM device
-        // TODO: does the benefit of typestate on SbInfo outweigh
-        // the cost of allocating new space for the updated obj?
         data.get_pm_info(&sb)?;
+
+        // zero out PM device with non-temporal stores
+        unsafe {
+            memset_nt(data.get_virt_addr(), 0, data.get_size().try_into()?, true);
+        }
+
+        // initialize superblock
         let sb = sb.init(
             data,
             &fs::SuperParams {
-                magic: 0x72757374,
+                magic: 0xabcdef,
                 ..fs::SuperParams::DEFAULT
             },
         )?;
+
         let sb = sb.init_root()?;
         Ok(sb)
     }
