@@ -64,6 +64,12 @@ unsigned long rust_helper_copy_from_user(void *to, const void __user *from, unsi
 }
 EXPORT_SYMBOL_GPL(rust_helper_copy_from_user);
 
+unsigned long rust_helper_copy_from_user_inatomic_nocache(void* to, const void __user *from, unsigned long n)
+{
+	return __copy_from_user_inatomic_nocache(to, from, n);
+}
+EXPORT_SYMBOL_GPL(rust_helper_copy_from_user_inatomic_nocache);
+
 unsigned long rust_helper_copy_to_user(void __user *to, const void *from, unsigned long n)
 {
 	return copy_to_user(to, from, n);
