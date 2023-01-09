@@ -3,23 +3,16 @@
 //! Rust file system sample.
 
 use core::{ffi, ptr};
-<<<<<<< HEAD
 use defs::*;
 use inode::*;
-=======
->>>>>>> b8a66b8e8328ce99388f6616b2103ba20d5cadd2
 use kernel::prelude::*;
 use kernel::{bindings, c_str, fs};
 use pm::*;
 
-<<<<<<< HEAD
 mod defs;
 mod inode;
 mod pm;
 mod typestate;
-=======
-mod pm;
->>>>>>> b8a66b8e8328ce99388f6616b2103ba20d5cadd2
 
 module_fs! {
     type: HayleyFs,
@@ -31,34 +24,12 @@ module_fs! {
 
 struct HayleyFs;
 
-<<<<<<< HEAD
-=======
-/// A volatile structure containing information about the file system superblock.
-///
-/// It uses typestates to ensure callers use the right sequence of calls.
-///
-/// # Invariants
-/// `dax_dev` is the only active pointer to the dax device in use.
-#[repr(C)]
-pub(crate) struct SbInfo {
-    pub(crate) dax_dev: *mut bindings::dax_device,
-    pub(crate) virt_addr: *mut ffi::c_void,
-    pub(crate) size: i64,
-    // TODO: should this have a reference to the real SB?
-    // would that break an invariant somewhere?
-}
-
->>>>>>> b8a66b8e8328ce99388f6616b2103ba20d5cadd2
 impl SbInfo {
     fn new() -> Self {
         SbInfo {
             dax_dev: ptr::null_mut(),
             virt_addr: ptr::null_mut(),
-<<<<<<< HEAD
             size: 0, // total size of the PM device
-=======
-            size: 0,
->>>>>>> b8a66b8e8328ce99388f6616b2103ba20d5cadd2
         }
     }
 
@@ -158,11 +129,8 @@ impl fs::Type for HayleyFs {
             memset_nt(data.get_virt_addr(), 0, data.get_size().try_into()?, true);
         }
 
-<<<<<<< HEAD
         unsafe { init_fs(&data)? };
 
-=======
->>>>>>> b8a66b8e8328ce99388f6616b2103ba20d5cadd2
         // initialize superblock
         let sb = sb.init(
             data,
@@ -176,7 +144,6 @@ impl fs::Type for HayleyFs {
         Ok(sb)
     }
 }
-<<<<<<< HEAD
 
 /// # Safety
 /// This function is intentionally unsafe. It needs to be modified once the safe persistent object
@@ -195,5 +162,3 @@ unsafe fn init_fs(sbi: &SbInfo) -> Result<()> {
 
     Ok(())
 }
-=======
->>>>>>> b8a66b8e8328ce99388f6616b2103ba20d5cadd2
