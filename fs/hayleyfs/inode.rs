@@ -1,5 +1,8 @@
 use crate::defs::*;
-use core::marker::PhantomData;
+use core::{
+    marker::PhantomData,
+    sync::atomic::{AtomicU64, Ordering},
+};
 use kernel::prelude::*;
 
 /// Persistent inode structure
@@ -23,5 +26,43 @@ impl HayleyFsInode {
         let mut root_ino = unsafe { sbi.get_inode_by_ino(ROOT_INO)? };
         root_ino.link_count = 2;
         Ok(root_ino)
+    }
+}
+
+/// Interface for volatile inode allocator structures
+pub(crate) trait InodeAllocator {
+    fn alloc_ino(&mut self) -> Result<InodeNum>;
+    fn dealloc_ino(&mut self, ino: InodeNum) -> Result<()>;
+}
+
+/// Allocates inodes by keeping a counter and returning the next number in the
+/// counter. Does not currently support inode deletion.
+///
+/// # Safety
+/// BasicInodeAllocator is implemented with AtomicU64 so it is safe to share
+/// across threads.
+pub(crate) struct BasicInodeAllocator {
+    next_inode: AtomicU64,
+}
+
+impl BasicInodeAllocator {
+    #[allow(dead_code)]
+    fn new(val: u64) -> Self {
+        BasicInodeAllocator {
+            next_inode: AtomicU64::new(val),
+        }
+    }
+}
+
+impl InodeAllocator for BasicInodeAllocator {
+    fn alloc_ino(&mut self) -> Result<InodeNum> {
+        if self.next_inode.load(Ordering::SeqCst) == NUM_INODES {
+            Err(ENOSPC)
+        } else {
+            Ok(self.next_inode.fetch_add(1, Ordering::SeqCst))
+        }
+    }
+    fn dealloc_ino(&mut self, _: InodeNum) -> Result<()> {
+        unimplemented!();
     }
 }

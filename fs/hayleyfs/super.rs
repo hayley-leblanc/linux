@@ -150,7 +150,7 @@ impl fs::Type for HayleyFs {
 /// APIs are in place
 /// TODO: make safe
 unsafe fn init_fs(sbi: &SbInfo) -> Result<()> {
-    pr_info!("init fs");
+    pr_info!("init fs\n");
 
     unsafe {
         let root_ino = HayleyFsInode::init_root_inode(sbi)?;
