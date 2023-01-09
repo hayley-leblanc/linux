@@ -3,11 +3,16 @@
 //! Rust file system sample.
 
 use core::{ffi, ptr};
+use defs::*;
+use inode::*;
 use kernel::prelude::*;
 use kernel::{bindings, c_str, fs};
 use pm::*;
 
+mod defs;
+mod inode;
 mod pm;
+mod typestate;
 
 module_fs! {
     type: HayleyFs,
@@ -19,27 +24,12 @@ module_fs! {
 
 struct HayleyFs;
 
-/// A volatile structure containing information about the file system superblock.
-///
-/// It uses typestates to ensure callers use the right sequence of calls.
-///
-/// # Invariants
-/// `dax_dev` is the only active pointer to the dax device in use.
-#[repr(C)]
-pub(crate) struct SbInfo {
-    pub(crate) dax_dev: *mut bindings::dax_device,
-    pub(crate) virt_addr: *mut ffi::c_void,
-    pub(crate) size: i64,
-    // TODO: should this have a reference to the real SB?
-    // would that break an invariant somewhere?
-}
-
 impl SbInfo {
     fn new() -> Self {
         SbInfo {
             dax_dev: ptr::null_mut(),
             virt_addr: ptr::null_mut(),
-            size: 0,
+            size: 0, // total size of the PM device
         }
     }
 
@@ -73,8 +63,29 @@ impl SbInfo {
         self.size
     }
 
-    unsafe fn get_virt_addr(&self) -> *mut ffi::c_void {
+    /// obtaining the virtual address is safe - dereferencing it is not
+    fn get_virt_addr(&self) -> *mut ffi::c_void {
         self.virt_addr
+    }
+
+    unsafe fn get_inode_by_ino(&self, ino: InodeNum) -> Result<&mut HayleyFsInode> {
+        // we don't use inode 0
+        if ino >= NUM_INODES || ino == 0 {
+            return Err(EINVAL);
+        }
+
+        // for now, assume that sb and inodes are 64 bytes
+        // TODO: update that with the final size
+        let inode_size = 64;
+        let sb_size = 64;
+        // let sb_size = mem::size_of::<HayleyFsSuperBlock>();
+        // let inode_size = mem::size_of::<HayleyFsInode>();
+
+        let inode_offset: usize = (ino * inode_size).try_into()?;
+        unsafe {
+            let inode_addr = self.virt_addr.offset((sb_size + inode_offset).try_into()?);
+            Ok(&mut *(inode_addr as *mut HayleyFsInode))
+        }
     }
 }
 
@@ -118,6 +129,8 @@ impl fs::Type for HayleyFs {
             memset_nt(data.get_virt_addr(), 0, data.get_size().try_into()?, true);
         }
 
+        unsafe { init_fs(&data)? };
+
         // initialize superblock
         let sb = sb.init(
             data,
@@ -130,4 +143,22 @@ impl fs::Type for HayleyFs {
         let sb = sb.init_root()?;
         Ok(sb)
     }
+}
+
+/// # Safety
+/// This function is intentionally unsafe. It needs to be modified once the safe persistent object
+/// APIs are in place
+/// TODO: make safe
+unsafe fn init_fs(sbi: &SbInfo) -> Result<()> {
+    pr_info!("init fs");
+
+    unsafe {
+        let root_ino = HayleyFsInode::init_root_inode(sbi)?;
+        let super_block = HayleyFsSuperBlock::init_super_block(sbi);
+
+        flush_buffer(root_ino, INODE_SIZE, false);
+        flush_buffer(super_block, SB_SIZE, true);
+    }
+
+    Ok(())
 }
