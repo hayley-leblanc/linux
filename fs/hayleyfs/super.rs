@@ -9,6 +9,7 @@ use kernel::prelude::*;
 use kernel::{bindings, c_str, fs};
 use pm::*;
 
+mod balloc;
 mod defs;
 mod inode;
 mod pm;
