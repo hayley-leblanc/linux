@@ -739,6 +739,17 @@ pub struct SuperBlock<T: Type + ?Sized>(
     PhantomData<T>,
 );
 
+impl<T: Type + ?Sized> SuperBlock<T> {
+    /// Returns a mutable reference to the value stored in superblock's `s_fs_info`
+    ///
+    /// # Safety
+    /// The kernel will let us get as many mutable references to s_fs_info as we want.
+    /// Caller is responsible for making sure the actual resources there are protected.
+    pub unsafe fn s_fs_info(&self) -> *mut core::ffi::c_void {
+        unsafe { (*self.0.get()).s_fs_info }
+    }
+}
+
 /// Wraps the kernel's `struct inode`.
 ///
 /// # Invariants
@@ -763,12 +774,20 @@ unsafe impl AlwaysRefCounted for INode {
 
 #[allow(dead_code)]
 impl INode {
-    /// Return the inode's inode number.
+    /// Returns the inode's inode number.
     ///
     /// # Safety
     /// TODO: safety
     pub fn i_ino(&self) -> core::ffi::c_ulong {
         unsafe { (*self.0.get()).i_ino }
+    }
+
+    /// Returns a reference to the file system's (volatile) super block
+    ///
+    /// # Safety
+    /// TODO: safety
+    pub fn i_sb(&self) -> *mut bindings::super_block {
+        unsafe { (*self.0.get()).i_sb }
     }
 }
 
