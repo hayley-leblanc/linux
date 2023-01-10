@@ -5,7 +5,7 @@
 //! C headers: [`include/linux/fs.h`](../../../../include/linux/fs.h)
 
 use crate::{
-    bindings, error::code::*, error::from_kernel_result, str::CStr, to_result,
+    bindings, error::code::*, error::from_kernel_result, inode, str::CStr, to_result,
     types::PointerWrapper, AlwaysRefCounted, Error, Result, ScopeGuard, ThisModule,
 };
 use alloc::boxed::Box;
@@ -342,6 +342,9 @@ pub trait Type {
     /// Data associated with each file system instance.
     type Data: PointerWrapper + Send + Sync = ();
 
+    /// Used to define `struct inode_operations` for this file system.
+    type InodeOps: inode::Operations;
+
     /// Determines how superblocks for this file system type are keyed.
     const SUPER_TYPE: Super;
 
@@ -673,6 +676,7 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsInit> {
 impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
     /// Initialises the root of the superblock.
     pub fn init_root(self) -> Result<&'a SuperBlock<T>> {
+        // pub fn init_root(self, inode_ops: inode::OperationsVtable<T>) -> Result<&'a SuperBlock<T>> {
         // The following is temporary code to create the root inode and dentry. It will be replaced
         // once we allow inodes and dentries to be created directly from Rust code.
 
@@ -701,7 +705,8 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
             inode.__bindgen_anon_3.i_fop = unsafe { &bindings::simple_dir_operations };
 
             // SAFETY: `simple_dir_inode_operations` never changes, it's safe to reference it.
-            inode.i_op = unsafe { &bindings::simple_dir_inode_operations };
+            // inode.i_op = unsafe { &bindings::simple_dir_inode_operations };
+            inode.i_op = unsafe { inode::OperationsVtable::<T::InodeOps>::build() };
 
             // SAFETY: `inode` is valid for write.
             unsafe { bindings::set_nlink(inode, 2) };
