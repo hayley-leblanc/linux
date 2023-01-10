@@ -350,6 +350,12 @@ const char *rust_helper_errname(int err)
 }
 EXPORT_SYMBOL_GPL(rust_helper_errname);
 
+const void *rust_helper_ERR_PTR(long error) 
+{
+	return ERR_PTR(error);
+}
+EXPORT_SYMBOL_GPL(rust_helper_ERR_PTR);
+
 void rust_helper_mutex_lock(struct mutex *lock)
 {
 	mutex_lock(lock);
