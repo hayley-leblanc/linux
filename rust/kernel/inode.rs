@@ -21,11 +21,24 @@ pub struct OperationsVtable<T: Operations>(marker::PhantomData<T>);
 #[allow(dead_code)]
 impl<T: Operations> OperationsVtable<T> {
     unsafe extern "C" fn lookup_callback(
-        _dir: *mut bindings::inode,
-        _dentry: *mut bindings::dentry,
-        _flags: core::ffi::c_uint,
+        dir: *mut bindings::inode,
+        dentry: *mut bindings::dentry,
+        flags: core::ffi::c_uint,
     ) -> *mut bindings::dentry {
-        panic!("hit lookup callback!");
+        // TODO: safety notes
+        let dir_arg = unsafe { &*dir.cast() };
+        let dentry_arg = unsafe { &*dentry.cast() };
+        let flags_arg = flags as u32;
+        let result = T::lookup(dir_arg, dentry_arg, flags_arg);
+        match result {
+            Err(e) => unsafe {
+                bindings::ERR_PTR(e.to_kernel_errno().into()) as *mut bindings::dentry
+            },
+            Ok(ptr) => {
+                let ptr: *mut bindings::dentry = ptr.0.get();
+                ptr
+            }
+        }
     }
 
     const VTABLE: bindings::inode_operations = bindings::inode_operations {
