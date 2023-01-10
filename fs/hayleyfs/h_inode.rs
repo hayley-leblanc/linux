@@ -33,7 +33,18 @@ impl HayleyFsInode {
 pub(crate) struct InodeOps;
 #[vtable]
 impl inode::Operations for InodeOps {
-    fn lookup(_dir: &fs::INode, _dentry: &fs::DEntry, _flags: u32) -> Result<fs::DEntry> {
+    fn lookup(dir: &fs::INode, dentry: &fs::DEntry, _flags: u32) -> Result<fs::DEntry> {
+        let sb = dir.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        let _sbi = unsafe { &*(fs_info_raw as *mut SbInfo) };
+
+        pr_info!(
+            "looking up name {:?} in inode {:?}\n",
+            dentry.d_name(),
+            dir.i_ino()
+        );
+
         return Err(EINVAL);
     }
 }
