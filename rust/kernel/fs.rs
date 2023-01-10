@@ -761,6 +761,17 @@ unsafe impl AlwaysRefCounted for INode {
     }
 }
 
+#[allow(dead_code)]
+impl INode {
+    /// Return the inode's inode number.
+    ///
+    /// # Safety
+    /// TODO: safety
+    pub fn i_ino(&self) -> core::ffi::c_ulong {
+        unsafe { (*self.0.get()).i_ino }
+    }
+}
+
 /// Wraps the kernel's `struct dentry`.
 ///
 /// # Invariants
@@ -780,6 +791,17 @@ unsafe impl AlwaysRefCounted for DEntry {
     unsafe fn dec_ref(obj: ptr::NonNull<Self>) {
         // SAFETY: The safety requirements guarantee that the refcount is nonzero.
         unsafe { bindings::dput(obj.cast().as_ptr()) }
+    }
+}
+
+#[allow(dead_code)]
+impl DEntry {
+    /// Convert the dentry's d_name field to a &CStr and return it
+    ///
+    /// # Safety
+    /// TODO: safety
+    pub fn d_name(&self) -> &CStr {
+        unsafe { CStr::from_char_ptr((*self.0.get()).d_name.name as *const i8) }
     }
 }
 
