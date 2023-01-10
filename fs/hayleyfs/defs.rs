@@ -6,8 +6,11 @@ pub(crate) const ROOT_INO: InodeNum = 1;
 
 /// Type definitions
 pub(crate) type InodeNum = u64;
+pub(crate) type PageNum = u64;
 
 pub(crate) const NUM_INODES: u64 = 64; // max inodes in the FS
+pub(crate) const MAX_PAGES: u64 = 64; // TODO: remove (or make much bigger)
+
 /// Sizes of persistent objects
 /// Update these if they get bigger or are permanently smaller
 pub(crate) const INODE_SIZE: usize = 64;

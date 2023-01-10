@@ -4,6 +4,7 @@ use core::{
     sync::atomic::{AtomicU64, Ordering},
 };
 use kernel::prelude::*;
+use kernel::{fs, inode};
 
 /// Persistent inode structure
 /// It is always unsafe to access this structure directly
@@ -29,6 +30,14 @@ impl HayleyFsInode {
     }
 }
 
+pub(crate) struct InodeOps;
+#[vtable]
+impl inode::Operations for InodeOps {
+    fn lookup(_dir: &fs::INode, _dentry: &fs::DEntry, _flags: u32) -> Result<fs::DEntry> {
+        return Err(EINVAL);
+    }
+}
+
 /// Interface for volatile inode allocator structures
 pub(crate) trait InodeAllocator {
     fn alloc_ino(&mut self) -> Result<InodeNum>;
@@ -36,7 +45,7 @@ pub(crate) trait InodeAllocator {
 }
 
 /// Allocates inodes by keeping a counter and returning the next number in the
-/// counter. Does not currently support inode deletion.
+/// counter. Does not support inode deallocation.
 ///
 /// # Safety
 /// BasicInodeAllocator is implemented with AtomicU64 so it is safe to share
@@ -62,6 +71,7 @@ impl InodeAllocator for BasicInodeAllocator {
             Ok(self.next_inode.fetch_add(1, Ordering::SeqCst))
         }
     }
+
     fn dealloc_ino(&mut self, _: InodeNum) -> Result<()> {
         unimplemented!();
     }

@@ -4,14 +4,14 @@
 
 use core::{ffi, ptr};
 use defs::*;
-use inode::*;
+use h_inode::*;
 use kernel::prelude::*;
 use kernel::{bindings, c_str, fs};
 use pm::*;
 
 mod balloc;
 mod defs;
-mod inode;
+mod h_inode;
 mod pm;
 mod typestate;
 
@@ -111,6 +111,7 @@ impl fs::Context<Self> for HayleyFs {
 impl fs::Type for HayleyFs {
     type Context = Self;
     type Data = Box<SbInfo>;
+    type InodeOps = InodeOps;
     const SUPER_TYPE: fs::Super = fs::Super::BlockDev; // TODO: or BlockDev?
     const NAME: &'static CStr = c_str!("hayleyfs");
     const FLAGS: i32 = fs::flags::REQUIRES_DEV | fs::flags::USERNS_MOUNT;
@@ -160,6 +161,8 @@ unsafe fn init_fs(sbi: &SbInfo) -> Result<()> {
         flush_buffer(root_ino, INODE_SIZE, false);
         flush_buffer(super_block, SB_SIZE, true);
     }
+
+    // let _iops = unsafe { inode::OperationsVtable::<InodeData>::build() };
 
     Ok(())
 }
