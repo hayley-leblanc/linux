@@ -842,6 +842,10 @@ impl Filename {
     }
 }
 
+/// Wraps the kernel's `struct user_namespace`.
+#[repr(transparent)]
+pub struct UserNamespace(pub(crate) UnsafeCell<bindings::user_namespace>);
+
 /// Kernel module that exposes a single file system implemented by `T`.
 pub struct Module<T: Type> {
     _fs: Pin<Box<Registration>>,
