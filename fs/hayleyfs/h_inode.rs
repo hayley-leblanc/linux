@@ -1,11 +1,12 @@
 use crate::defs::*;
 use crate::volatile::*;
 use core::{
+    ffi,
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
 use kernel::prelude::*;
-use kernel::{fs, inode};
+use kernel::{bindings, fs, inode};
 
 /// Persistent inode structure
 /// It is always unsafe to access this structure directly
@@ -31,10 +32,15 @@ impl HayleyFsInode {
     }
 }
 
+// TODO: move to namei file?
 pub(crate) struct InodeOps;
 #[vtable]
 impl inode::Operations for InodeOps {
-    fn lookup(dir: &fs::INode, dentry: &fs::DEntry, _flags: u32) -> Result<fs::DEntry> {
+    fn lookup(
+        dir: &fs::INode,
+        dentry: &mut fs::DEntry,
+        _flags: u32,
+    ) -> Result<Option<ffi::c_ulong>> {
         // TODO: handle flags
         // TODO: reorganize so that system call logic is separate from
         // conversion from raw pointers
@@ -60,8 +66,19 @@ impl inode::Operations for InodeOps {
             // TODO: implement lookup in this case
             Err(ENOTSUPP)
         } else {
-            Err(ENOENT)
+            Ok(None)
         }
+    }
+
+    fn create(
+        _mnt_userns: &fs::UserNamespace,
+        dir: &fs::INode,
+        dentry: &fs::DEntry,
+        _umode: bindings::umode_t,
+        _excl: bool,
+    ) -> Result<i32> {
+        pr_info!("creating {:?} in {:?}\n", dentry.d_name(), dir.i_ino());
+        Err(EINVAL)
     }
 }
 
