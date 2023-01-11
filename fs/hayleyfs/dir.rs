@@ -4,6 +4,7 @@ use kernel::prelude::*;
 use kernel::rbtree::RBTree;
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) struct DentryInfo {
     parent: InodeNum,
     virt_addr: *mut ffi::c_void,
@@ -28,7 +29,7 @@ impl DentryInfo {
 pub(crate) trait InoDentryMap {
     fn new() -> Self;
     fn insert(&mut self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
-    // fn look_up(ino: InodeNum) -> Result<()>;
+    fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DentryInfo>>;
     fn delete(&mut self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
 }
 
@@ -58,6 +59,10 @@ impl InoDentryMap for BasicInoDentryMap {
             self.map.try_insert(ino, vec)?;
         }
         Ok(())
+    }
+
+    fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DentryInfo>> {
+        self.map.get(&ino)
     }
 
     fn delete(&mut self, _ino: InodeNum, _dentry: DentryInfo) -> Result<()> {
