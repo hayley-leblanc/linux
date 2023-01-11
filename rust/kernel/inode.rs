@@ -11,7 +11,7 @@ use crate::{
     error::Result,
     fs::{DEntry, INode, UserNamespace},
 };
-use core::{ffi, marker};
+use core::{ffi, marker, ptr};
 use macros::vtable;
 
 /// Vtable for inode operations
@@ -27,17 +27,21 @@ impl<T: Operations> OperationsVtable<T> {
         flags: core::ffi::c_uint,
     ) -> *mut bindings::dentry {
         // TODO: safety notes
-        let dir = unsafe { &*dir.cast() };
-        let dentry = unsafe { &*dentry.cast() };
+        let dir_arg = unsafe { &*dir.cast() };
+        let dentry_arg = unsafe { &mut *dentry.cast() };
         let flags = flags as u32;
-        let result = T::lookup(dir, dentry, flags);
+        let result = T::lookup(dir_arg, dentry_arg, flags);
         match result {
             Err(e) => unsafe {
                 bindings::ERR_PTR(e.to_kernel_errno().into()) as *mut bindings::dentry
             },
-            Ok(ptr) => {
-                let ptr: *mut bindings::dentry = ptr.0.get();
-                ptr
+            Ok(inode) => {
+                if let Some(_ino) = inode {
+                    // TODO: iget and d_splice_alias
+                    unimplemented!();
+                } else {
+                    unsafe { bindings::d_splice_alias(ptr::null_mut(), dentry) }
+                }
             }
         }
     }
@@ -49,11 +53,12 @@ impl<T: Operations> OperationsVtable<T> {
         umode: bindings::umode_t,
         excl: bool,
     ) -> ffi::c_int {
+        // FIXME: error output is weird and incorrect in terminal
         from_kernel_result! {
             // TODO: safety notes
             let mnt_userns = unsafe { &*mnt_userns.cast()};
             let dir = unsafe { &*dir.cast() };
-            let dentry = unsafe { &*dentry.cast()};
+            let dentry = unsafe { &mut *dentry.cast()};
             T::create(mnt_userns, dir, dentry, umode, excl)
         }
     }
@@ -102,7 +107,7 @@ impl<T: Operations> OperationsVtable<T> {
 #[vtable]
 pub trait Operations {
     /// Corresponds to the `lookup` function pointer in `struct inode_operations`.
-    fn lookup(dir: &INode, dentry: &DEntry, flags: u32) -> Result<DEntry>;
+    fn lookup(dir: &INode, dentry: &mut DEntry, flags: u32) -> Result<Option<core::ffi::c_ulong>>;
     /// Corresponds to the `create` function pointer in `struct inode_operations`.
     fn create(
         mnt_userns: &UserNamespace,
