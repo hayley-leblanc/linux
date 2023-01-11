@@ -11,6 +11,7 @@ use pm::*;
 
 mod balloc;
 mod defs;
+mod dir;
 mod h_inode;
 mod pm;
 mod typestate;

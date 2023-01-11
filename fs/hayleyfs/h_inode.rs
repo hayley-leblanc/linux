@@ -1,3 +1,4 @@
+use crate::balloc::*;
 use crate::defs::*;
 use crate::volatile::*;
 use core::{
@@ -78,6 +79,25 @@ impl inode::Operations for InodeOps {
         _excl: bool,
     ) -> Result<i32> {
         pr_info!("creating {:?} in {:?}\n", dentry.d_name(), dir.i_ino());
+
+        let sb = dir.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+
+        // get dir pages associated with the parent (if any)
+        let parent_ino = dir.i_ino();
+        let result = sbi.ino_dir_page_map.lookup_ino(&parent_ino);
+        if let Some(_pages) = result {
+            unimplemented!();
+        } else {
+            pr_info!("no pages associated with the parent\n");
+            // allocate a page
+            let _dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
+        }
+
         Err(EINVAL)
     }
 }

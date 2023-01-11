@@ -1,3 +1,4 @@
+use crate::balloc::*;
 use crate::h_inode::*;
 use crate::volatile::*;
 use core::{ffi, ptr};
@@ -11,13 +12,30 @@ pub(crate) const ROOT_INO: InodeNum = 1;
 pub(crate) type InodeNum = u64;
 pub(crate) type PageNum = u64;
 
+pub(crate) const MAX_FILENAME_LEN: usize = 64; // TODO: increase
 pub(crate) const NUM_INODES: u64 = 64; // max inodes in the FS
 pub(crate) const MAX_PAGES: u64 = 64; // TODO: remove (or make much bigger)
+pub(crate) const DENTRIES_PER_PAGE: usize = 16; // TODO: update with true dentry size
+
+/// Reserved pages
+/// TODO: update these
+#[allow(dead_code)]
+pub(crate) const SB_PAGE: PageNum = 0;
+#[allow(dead_code)]
+pub(crate) const INO_PAGE_START: PageNum = 1;
+pub(crate) const DATA_PAGE_START: PageNum = 4;
 
 /// Sizes of persistent objects
 /// Update these if they get bigger or are permanently smaller
 pub(crate) const INODE_SIZE: usize = 64;
 pub(crate) const SB_SIZE: usize = 64;
+
+#[repr(C)]
+#[allow(dead_code)]
+pub(crate) enum PageType {
+    DIR,
+    DATA,
+}
 
 /// Persistent super block
 /// TODO: add stuff
@@ -65,9 +83,15 @@ pub(crate) struct SbInfo {
     // but writing it this way would cause SbInfo to be !Sized which causes
     // all kinds of problems elsewhere. Next best solution is to manually make
     // sure that each field's type implements the associated trait.
-    // TODO: fix thsi
+    // TODO: fix this.
     pub(crate) ino_dentry_map: BasicInoDentryMap, // InoDentryMap
     pub(crate) ino_dir_page_map: BasicInoDirPageMap, // InoDirPageMap
+
+    // volatile allocators
+    // again, these should really be trait objects, but the system won't compile
+    // if they are.
+    // TODO: fix this.
+    pub(crate) page_allocator: BasicPageAllocator,
 }
 
 // SbInfo must be Send and Sync for it to be used as the Context's data.
@@ -89,6 +113,7 @@ impl SbInfo {
             size: 0, // total size of the PM device
             ino_dentry_map: InoDentryMap::new(),
             ino_dir_page_map: InoDirPageMap::new(),
+            page_allocator: PageAllocator::new(DATA_PAGE_START),
         }
     }
 
