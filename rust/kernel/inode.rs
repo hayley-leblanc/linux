@@ -7,10 +7,11 @@
 
 use crate::{
     bindings,
+    error::from_kernel_result,
     error::Result,
-    fs::{DEntry, INode},
+    fs::{DEntry, INode, UserNamespace},
 };
-use core::marker;
+use core::{ffi, marker};
 use macros::vtable;
 
 /// Vtable for inode operations
@@ -26,10 +27,10 @@ impl<T: Operations> OperationsVtable<T> {
         flags: core::ffi::c_uint,
     ) -> *mut bindings::dentry {
         // TODO: safety notes
-        let dir_arg = unsafe { &*dir.cast() };
-        let dentry_arg = unsafe { &*dentry.cast() };
-        let flags_arg = flags as u32;
-        let result = T::lookup(dir_arg, dentry_arg, flags_arg);
+        let dir = unsafe { &*dir.cast() };
+        let dentry = unsafe { &*dentry.cast() };
+        let flags = flags as u32;
+        let result = T::lookup(dir, dentry, flags);
         match result {
             Err(e) => unsafe {
                 bindings::ERR_PTR(e.to_kernel_errno().into()) as *mut bindings::dentry
@@ -41,13 +42,29 @@ impl<T: Operations> OperationsVtable<T> {
         }
     }
 
+    unsafe extern "C" fn create_callback(
+        mnt_userns: *mut bindings::user_namespace,
+        dir: *mut bindings::inode,
+        dentry: *mut bindings::dentry,
+        umode: bindings::umode_t,
+        excl: bool,
+    ) -> ffi::c_int {
+        from_kernel_result! {
+            // TODO: safety notes
+            let mnt_userns = unsafe { &*mnt_userns.cast()};
+            let dir = unsafe { &*dir.cast() };
+            let dentry = unsafe { &*dentry.cast()};
+            T::create(mnt_userns, dir, dentry, umode, excl)
+        }
+    }
+
     const VTABLE: bindings::inode_operations = bindings::inode_operations {
         lookup: Some(Self::lookup_callback),
         get_link: None,
         permission: None,
         get_acl: None,
         readlink: None,
-        create: None,
+        create: Some(Self::create_callback),
         link: None,
         unlink: None,
         symlink: None,
@@ -86,4 +103,12 @@ impl<T: Operations> OperationsVtable<T> {
 pub trait Operations {
     /// Corresponds to the `lookup` function pointer in `struct inode_operations`.
     fn lookup(dir: &INode, dentry: &DEntry, flags: u32) -> Result<DEntry>;
+    /// Corresponds to the `create` function pointer in `struct inode_operations`.
+    fn create(
+        mnt_userns: &UserNamespace,
+        dir: &INode,
+        dentry: &DEntry,
+        umode: bindings::umode_t,
+        excl: bool,
+    ) -> Result<i32>;
 }
