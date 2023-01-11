@@ -70,3 +70,46 @@ impl InoDentryMap for BasicInoDentryMap {
         unimplemented!();
     }
 }
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) struct DirPageInfo {
+    owner: InodeNum,
+    virt_addr: *mut ffi::c_void,
+}
+
+pub(crate) trait InoDirPageMap {
+    fn new() -> Self;
+    fn insert(&mut self, ino: InodeNum, page: DirPageInfo) -> Result<()>;
+    fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DirPageInfo>>;
+    fn delete(&mut self, ino: InodeNum, page: DirPageInfo) -> Result<()>;
+}
+
+pub(crate) struct BasicInoDirPageMap {
+    map: RBTree<InodeNum, Vec<DirPageInfo>>,
+}
+
+impl InoDirPageMap for BasicInoDirPageMap {
+    fn new() -> Self {
+        Self { map: RBTree::new() }
+    }
+
+    fn insert(&mut self, ino: InodeNum, page: DirPageInfo) -> Result<()> {
+        if let Some(node) = self.map.get_mut(&ino) {
+            node.try_push(page)?;
+        } else {
+            let mut vec = Vec::new();
+            vec.try_push(page)?;
+            self.map.try_insert(ino, vec)?;
+        }
+        Ok(())
+    }
+
+    fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DirPageInfo>> {
+        self.map.get(&ino)
+    }
+
+    fn delete(&mut self, _ino: InodeNum, _page: DirPageInfo) -> Result<()> {
+        unimplemented!();
+    }
+}

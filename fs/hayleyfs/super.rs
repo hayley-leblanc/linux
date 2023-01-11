@@ -11,10 +11,10 @@ use pm::*;
 
 mod balloc;
 mod defs;
-mod dir;
 mod h_inode;
 mod pm;
 mod typestate;
+mod volatile;
 
 module_fs! {
     type: HayleyFs,

@@ -1,5 +1,5 @@
 use crate::defs::*;
-use crate::dir::*;
+use crate::volatile::*;
 use core::{
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
@@ -36,6 +36,8 @@ pub(crate) struct InodeOps;
 impl inode::Operations for InodeOps {
     fn lookup(dir: &fs::INode, dentry: &fs::DEntry, _flags: u32) -> Result<fs::DEntry> {
         // TODO: handle flags
+        // TODO: reorganize so that system call logic is separate from
+        // conversion from raw pointers
 
         let sb = dir.i_sb();
         // TODO: safety
@@ -53,7 +55,7 @@ impl inode::Operations for InodeOps {
 
         let dentry_vec = ino_dentry_map.lookup_ino(&dir.i_ino());
 
-        if let Some(dentry_vec) = dentry_vec {
+        if let Some(_dentry_vec) = dentry_vec {
             pr_info!("there is some stuff in the directory\n");
             // TODO: implement lookup in this case
             Err(ENOTSUPP)

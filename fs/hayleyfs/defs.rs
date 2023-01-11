@@ -1,5 +1,5 @@
-use crate::dir::*;
 use crate::h_inode::*;
+use crate::volatile::*;
 use core::{ffi, ptr};
 use kernel::bindings;
 use kernel::prelude::*;
@@ -61,12 +61,13 @@ pub(crate) struct SbInfo {
     pub(crate) size: i64,
 
     // volatile index structures
-    // ino_dentry_map should really be a trait object of InoDentryMap,
+    // these should really be trait objects,
     // but writing it this way would cause SbInfo to be !Sized which causes
     // all kinds of problems elsewhere. Next best solution is to manually make
     // sure that each field's type implements the associated trait.
     // TODO: fix thsi
     pub(crate) ino_dentry_map: BasicInoDentryMap, // InoDentryMap
+    pub(crate) ino_dir_page_map: BasicInoDirPageMap, // InoDirPageMap
 }
 
 // SbInfo must be Send and Sync for it to be used as the Context's data.
@@ -87,6 +88,7 @@ impl SbInfo {
             virt_addr: ptr::null_mut(),
             size: 0, // total size of the PM device
             ino_dentry_map: InoDentryMap::new(),
+            ino_dir_page_map: InoDirPageMap::new(),
         }
     }
 
