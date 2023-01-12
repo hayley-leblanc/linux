@@ -6,7 +6,7 @@ use crate::typestate::*;
 use crate::volatile::*;
 use core::ffi;
 use kernel::prelude::*;
-use kernel::{bindings, fs, inode};
+use kernel::{bindings, error, fs, inode};
 
 pub(crate) struct InodeOps;
 #[vtable]
@@ -61,11 +61,47 @@ impl inode::Operations for InodeOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        let result = hayleyfs_create(sbi, mnt_userns, dir, dentry, umode, excl);
-        match result {
-            Ok(_) => Ok(0),
-            Err(e) => Err(e),
+        let (_new_dentry, new_inode) = hayleyfs_create(sbi, mnt_userns, dir, dentry, umode, excl)?;
+        // TODO: turn this into a new_vfs_inode function
+        // TODO: add some functions/methods to the kernel crate so we don't have
+        // to call them directly here
+
+        // set up VFS structures
+        let vfs_inode = unsafe { &mut *(bindings::new_inode(sb) as *mut bindings::inode) };
+
+        // TODO: could this be moved out to the callback?
+        unsafe {
+            bindings::inode_init_owner(mnt_userns.get_inner(), vfs_inode, dir.get_inner(), umode);
         }
+
+        vfs_inode.i_mode = umode;
+        vfs_inode.i_ino = new_inode.get_ino();
+
+        unsafe {
+            vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
+            vfs_inode.__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+        }
+
+        let current_time = unsafe { bindings::current_time(vfs_inode) };
+        vfs_inode.i_mtime = current_time;
+        vfs_inode.i_ctime = current_time;
+        vfs_inode.i_atime = current_time;
+        vfs_inode.i_size = 0;
+
+        unsafe {
+            let ret = bindings::insert_inode_locked(vfs_inode);
+            if ret < 0 {
+                // TODO: from_kernel_errno should really only be pub(crate)
+                // probably because you aren't supposed to directly call C fxns from modules
+                // but there's no good code to call this stuff from the kernel yet
+                // once there is, return from_kernel_errno to pub(crate)
+                return Err(error::Error::from_kernel_errno(ret));
+            }
+            bindings::d_instantiate(dentry.get_inner(), vfs_inode);
+            bindings::unlock_new_inode(vfs_inode);
+        }
+
+        Ok(0)
     }
 }
 
