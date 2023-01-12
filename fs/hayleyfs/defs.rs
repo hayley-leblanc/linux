@@ -1,5 +1,6 @@
 use crate::balloc::*;
 use crate::h_inode::*;
+use crate::typestate::*;
 use crate::volatile::*;
 use core::{ffi, ptr};
 use kernel::bindings;
@@ -153,6 +154,37 @@ impl SbInfo {
         unsafe {
             let inode_addr = self.virt_addr.offset((sb_size + inode_offset).try_into()?);
             Ok(&mut *(inode_addr as *mut HayleyFsInode))
+        }
+    }
+
+    pub(crate) fn get_init_inode_by_ino<'a>(
+        &self,
+        ino: InodeNum,
+    ) -> Result<InodeWrapper<'a, Clean, Start>> {
+        // FIXME: code is repeated from unsafe get_inode_by_ino because
+        // calling that method here causes lifetime problems.
+
+        // we don't use inode 0
+        if ino >= NUM_INODES || ino == 0 {
+            return Err(EINVAL);
+        }
+
+        // for now, assume that sb and inodes are 64 bytes
+        // TODO: update that with the final size
+        let inode_size = 64;
+        let sb_size = 64;
+
+        let inode_offset: usize = (ino * inode_size).try_into()?;
+
+        let raw_inode = unsafe {
+            let inode_addr = self.virt_addr.offset((sb_size + inode_offset).try_into()?);
+            &mut *(inode_addr as *mut HayleyFsInode)
+        };
+
+        if raw_inode.is_initialized() {
+            Ok(InodeWrapper::new(ino, raw_inode))
+        } else {
+            Err(EPERM)
         }
     }
 }

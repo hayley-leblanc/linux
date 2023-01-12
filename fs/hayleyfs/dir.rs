@@ -76,9 +76,9 @@ impl<'a> DentryWrapper<'a, Clean, Free> {
 impl<'a> DentryWrapper<'a, Clean, Alloc> {
     // TODO: update alloy model to reflect dentry being in complete instead of init
     // after setting its ino
-    pub(crate) fn set_file_ino_in_dentry(
+    pub(crate) fn set_file_ino(
         self,
-        inode: InodeWrapper<'a, Clean, Init>,
+        inode: InodeWrapper<'a, Clean, Alloc>,
     ) -> (
         DentryWrapper<'a, Dirty, Complete>,
         InodeWrapper<'a, Clean, Complete>,
@@ -90,12 +90,7 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
                 op: PhantomData,
                 dentry: self.dentry,
             },
-            InodeWrapper {
-                state: PhantomData,
-                op: PhantomData,
-                ino: inode.get_ino(),
-                inode: inode.get_inode_ref(),
-            },
+            inode.change_state(),
         )
     }
 }

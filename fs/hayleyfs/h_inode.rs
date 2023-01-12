@@ -22,7 +22,7 @@ pub(crate) struct InodeWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
     ino: InodeNum,
-    inode: &'a HayleyFsInode,
+    inode: &'a mut HayleyFsInode,
 }
 
 impl HayleyFsInode {
@@ -54,31 +54,24 @@ impl<'a, State, Op> InodeWrapper<'a, State, Op> {
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.inode.get_ino()
     }
-
-    /// Safety
-    /// The returned inode reference is not mutable, but other operations may be
-    /// modifying the inode.
-    pub(crate) unsafe fn get_inode_ref(&self) -> &HayleyFsInode {
-        self.inode
-    }
 }
 
-impl<'a> InodeWrapper<'a, Clean, Start> {
-    /// This method assumes that the inode is actually clean - it hasn't been
-    /// initialized but not flushed by some other operation. VFS locking should
-    /// guarantee that, but
-    /// TODO: check on this
-    pub(crate) fn get_init_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
-        let raw_inode = unsafe { sbi.get_inode_by_ino(ino)? };
-        if raw_inode.is_initialized() {
-            Ok(InodeWrapper {
-                state: PhantomData,
-                op: PhantomData,
-                ino,
-                inode: raw_inode,
-            })
-        } else {
-            Err(EPERM)
+impl<'a, State, Op> InodeWrapper<'a, State, Op> {
+    pub(crate) fn change_state<NewState, NewOp>(self) -> InodeWrapper<'a, NewState, NewOp> {
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            ino: self.ino,
+            inode: self.inode,
+        }
+    }
+
+    pub(crate) fn new(ino: InodeNum, inode: &'a mut HayleyFsInode) -> InodeWrapper<'a, State, Op> {
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            ino,
+            inode,
         }
     }
 }

@@ -102,7 +102,7 @@ impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
     /// This does NOT allocate the dentry - just obtains a pointer to a free dentry
     /// This requires a mutable reference to self because we need to acquire a
     /// mutable reference to a dentry, but it doesn't actually modify the DirPageWrapper
-    pub(crate) fn get_free_dentry(&'a mut self) -> Result<DentryWrapper<'a, Clean, Free>> {
+    pub(crate) fn get_free_dentry(self) -> Result<DentryWrapper<'a, Clean, Free>> {
         // iterate until we find a free dentry
         // VFS *should* have locked the parent, so there is no possibility of
         // this racing with another operation trying to create in the same directory
