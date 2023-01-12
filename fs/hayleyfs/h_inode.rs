@@ -142,15 +142,16 @@ impl inode::Operations for InodeOps {
                     .fence();
                 // TODO: get_free_dentry() should never return an error since all dentries
                 // in the newly-allocated page should be free - but check on that and confirm
-                dir_page.get_free_dentry().unwrap();
-                // TODO: do something with the dentry
-                // if we want to return it from this if statement, I think we'll
-                // need to return the dir page as well for lifetime purposes?
+                let pd = dir_page.get_free_dentry()?;
+                // NOTE: we can't return the dentry from the if-else because of lifetime stuff.
+                // dir_page will get dropped at the end of the statement. We also can't just
+                // return dir_page too because we move out of it in get_free_dentry()(?).
+                let _pd = pd.set_name(dentry.d_name())?.flush().fence();
             } else {
                 pr_info!("ERROR: parent inode is not initialized");
                 return Err(EPERM);
             }
-        };
+        }
 
         Err(EINVAL)
     }

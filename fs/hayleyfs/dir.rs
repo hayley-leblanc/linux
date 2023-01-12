@@ -1,6 +1,8 @@
 use crate::defs::*;
+use crate::pm::*;
 use crate::typestate::*;
-use core::marker::PhantomData;
+use core::{marker::PhantomData, mem};
+use kernel::prelude::*;
 
 #[repr(C)]
 pub(crate) struct HayleyFsDentry {
@@ -33,17 +35,61 @@ impl HayleyFsDentry {
 pub(crate) struct DentryWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
-    dentry: &'a HayleyFsDentry,
+    dentry: &'a mut HayleyFsDentry,
 }
 
 impl<'a> DentryWrapper<'a, Clean, Free> {
     /// Safety
     /// The provided dentry must be free (completely zeroed out).
-    pub(crate) unsafe fn wrap_free_dentry(dentry: &'a HayleyFsDentry) -> Self {
+    pub(crate) unsafe fn wrap_free_dentry(dentry: &'a mut HayleyFsDentry) -> Self {
         Self {
             state: PhantomData,
             op: PhantomData,
             dentry: dentry,
+        }
+    }
+
+    /// CStr are guaranteed to have a `NUL` byte at the end, so we don't have to check
+    /// for that.
+    pub(crate) fn set_name(self, name: &CStr) -> Result<DentryWrapper<'a, Dirty, Alloc>> {
+        if name.len() > MAX_FILENAME_LEN {
+            return Err(ENAMETOOLONG);
+        }
+        // copy only the number of bytes in the name
+        let num_bytes = if name.len() < MAX_FILENAME_LEN {
+            name.len()
+        } else {
+            MAX_FILENAME_LEN
+        };
+        let name = name.as_bytes_with_nul();
+        self.dentry.name[..num_bytes].clone_from_slice(&name[..num_bytes]);
+
+        Ok(DentryWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            dentry: self.dentry,
+        })
+    }
+}
+
+impl<'a, Op> DentryWrapper<'a, Dirty, Op> {
+    pub(crate) fn flush(self) -> DentryWrapper<'a, InFlight, Op> {
+        flush_buffer(self.dentry, mem::size_of::<HayleyFsDentry>(), false);
+        DentryWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            dentry: self.dentry,
+        }
+    }
+}
+
+impl<'a, Op> DentryWrapper<'a, InFlight, Op> {
+    pub(crate) fn fence(self) -> DentryWrapper<'a, Clean, Op> {
+        sfence();
+        DentryWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            dentry: self.dentry,
         }
     }
 }

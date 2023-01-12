@@ -108,13 +108,11 @@ impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
         // this racing with another operation trying to create in the same directory
         // TODO: confirm that
         // TODO: safety notes based on VFS locking.
-        for dentry in self.page.dentries.iter() {
-            // for i in 0..self.page.dentries.len() {
-            //     let dentry = &mut self.page.dentries[i];
+        for dentry in self.page.dentries.iter_mut() {
             // if any part of a dentry is NOT zeroed out, that dentry is allocated; we need
             // an unallocated dentry
             if dentry.get_ino() == 0 && dentry.is_rename_ptr_null() && !dentry.has_name() {
-                return Ok(unsafe { DentryWrapper::wrap_free_dentry(&dentry) });
+                return Ok(unsafe { DentryWrapper::wrap_free_dentry(dentry) });
             }
         }
         // if we can't find a free dentry in this page, return an error
