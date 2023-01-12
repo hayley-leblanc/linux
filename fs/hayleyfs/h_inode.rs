@@ -1,5 +1,6 @@
 use crate::balloc::*;
 use crate::defs::*;
+use crate::typestate::*;
 use crate::volatile::*;
 use core::{
     ffi,
@@ -14,6 +15,7 @@ use kernel::{bindings, fs, inode};
 /// TODO: add the rest of the fields
 #[repr(C)]
 pub(crate) struct HayleyFsInode {
+    ino: InodeNum,
     link_count: u16,
 }
 
@@ -26,10 +28,46 @@ pub(crate) struct InodeWrapper<'a, State, Op> {
 
 impl HayleyFsInode {
     /// Unsafe inode constructor for temporary use with init_fs only
+    /// Does not flush the root inode
     pub(crate) unsafe fn init_root_inode(sbi: &SbInfo) -> Result<&HayleyFsInode> {
         let mut root_ino = unsafe { sbi.get_inode_by_ino(ROOT_INO)? };
+        root_ino.ino = ROOT_INO;
         root_ino.link_count = 2;
         Ok(root_ino)
+    }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.ino
+    }
+
+    // TODO: update as fields are added
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.ino != 0 && self.link_count != 0
+    }
+}
+
+impl<'a, State, Op> InodeWrapper<'a, State, Op> {
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.inode.get_ino()
+    }
+}
+
+impl<'a> InodeWrapper<'a, Clean, Start> {
+    /// This method assumes that the inode is actually clean - it hasn't been
+    /// initialized but not flushed by some other operation. VFS locking should
+    /// guarantee that, but
+    /// TODO: check on this
+    pub(crate) fn get_init_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
+        let raw_inode = unsafe { sbi.get_inode_by_ino(ino)? };
+        if raw_inode.is_initialized() {
+            Ok(InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode: raw_inode,
+            })
+        } else {
+            Err(EPERM)
+        }
     }
 }
 
@@ -95,8 +133,24 @@ impl inode::Operations for InodeOps {
         } else {
             pr_info!("no pages associated with the parent\n");
             // allocate a page
-            let _dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
-        }
+            let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
+            let parent_inode = InodeWrapper::get_init_inode_by_ino(sbi, parent_ino);
+            if let Ok(parent_inode) = parent_inode {
+                let mut dir_page = dir_page
+                    .set_dir_page_backpointer(parent_inode)
+                    .flush()
+                    .fence();
+                // TODO: get_free_dentry() should never return an error since all dentries
+                // in the newly-allocated page should be free - but check on that and confirm
+                dir_page.get_free_dentry().unwrap();
+                // TODO: do something with the dentry
+                // if we want to return it from this if statement, I think we'll
+                // need to return the dir page as well for lifetime purposes?
+            } else {
+                pr_info!("ERROR: parent inode is not initialized");
+                return Err(EPERM);
+            }
+        };
 
         Err(EINVAL)
     }
