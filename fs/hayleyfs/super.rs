@@ -7,12 +7,14 @@ use defs::*;
 use h_inode::*;
 use kernel::prelude::*;
 use kernel::{bindings, c_str, fs};
+use namei::*;
 use pm::*;
 
 mod balloc;
 mod defs;
 mod dir;
 mod h_inode;
+mod namei;
 mod pm;
 mod typestate;
 mod volatile;
