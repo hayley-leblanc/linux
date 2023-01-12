@@ -54,6 +54,13 @@ impl<'a, State, Op> InodeWrapper<'a, State, Op> {
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.inode.get_ino()
     }
+
+    /// Safety
+    /// The returned inode reference is not mutable, but other operations may be
+    /// modifying the inode.
+    pub(crate) unsafe fn get_inode_ref(&self) -> &HayleyFsInode {
+        self.inode
+    }
 }
 
 impl<'a> InodeWrapper<'a, Clean, Start> {

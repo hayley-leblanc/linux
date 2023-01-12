@@ -1,4 +1,5 @@
 use crate::defs::*;
+use crate::h_inode::*;
 use crate::pm::*;
 use crate::typestate::*;
 use core::{marker::PhantomData, mem};
@@ -69,6 +70,33 @@ impl<'a> DentryWrapper<'a, Clean, Free> {
             op: PhantomData,
             dentry: self.dentry,
         })
+    }
+}
+
+impl<'a> DentryWrapper<'a, Clean, Alloc> {
+    // TODO: update alloy model to reflect dentry being in complete instead of init
+    // after setting its ino
+    pub(crate) fn set_file_ino_in_dentry(
+        self,
+        inode: InodeWrapper<'a, Clean, Init>,
+    ) -> (
+        DentryWrapper<'a, Dirty, Complete>,
+        InodeWrapper<'a, Clean, Complete>,
+    ) {
+        self.dentry.ino = inode.get_ino();
+        (
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: self.dentry,
+            },
+            InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                ino: inode.get_ino(),
+                inode: inode.get_inode_ref(),
+            },
+        )
     }
 }
 
