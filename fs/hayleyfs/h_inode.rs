@@ -1,7 +1,9 @@
 use crate::defs::*;
+use crate::pm::*;
 use crate::typestate::*;
 use core::{
     marker::PhantomData,
+    mem,
     sync::atomic::{AtomicU64, Ordering},
 };
 use kernel::prelude::*;
@@ -19,6 +21,7 @@ pub(crate) struct HayleyFsInode {
 pub(crate) struct InodeWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
+    ino: InodeNum,
     inode: &'a HayleyFsInode,
 }
 
@@ -40,6 +43,11 @@ impl HayleyFsInode {
     pub(crate) fn is_initialized(&self) -> bool {
         self.ino != 0 && self.link_count != 0
     }
+
+    // TODO: update as fields are added
+    pub(crate) fn is_free(&self) -> bool {
+        self.ino == 0 && self.link_count == 0
+    }
 }
 
 impl<'a, State, Op> InodeWrapper<'a, State, Op> {
@@ -59,6 +67,7 @@ impl<'a> InodeWrapper<'a, Clean, Start> {
             Ok(InodeWrapper {
                 state: PhantomData,
                 op: PhantomData,
+                ino,
                 inode: raw_inode,
             })
         } else {
@@ -67,8 +76,60 @@ impl<'a> InodeWrapper<'a, Clean, Start> {
     }
 }
 
+impl<'a> InodeWrapper<'a, Clean, Free> {
+    pub(crate) fn get_free_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
+        let raw_inode = unsafe { sbi.get_inode_by_ino(ino)? };
+        if raw_inode.is_free() {
+            Ok(InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                ino,
+                inode: raw_inode,
+            })
+        } else {
+            Err(EPERM)
+        }
+    }
+
+    pub(crate) fn allocate_file_inode(self) -> InodeWrapper<'a, Dirty, Alloc> {
+        self.inode.link_count = 1;
+        self.inode.ino = self.ino;
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            ino: self.ino,
+            inode: self.inode,
+        }
+    }
+}
+
+impl<'a, Op> InodeWrapper<'a, Dirty, Op> {
+    pub(crate) fn flush(self) -> InodeWrapper<'a, InFlight, Op> {
+        flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), false);
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            ino: self.ino,
+            inode: self.inode,
+        }
+    }
+}
+
+impl<'a, Op> InodeWrapper<'a, InFlight, Op> {
+    pub(crate) fn fence(self) -> InodeWrapper<'a, Clean, Op> {
+        sfence();
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            ino: self.ino,
+            inode: self.inode,
+        }
+    }
+}
+
 /// Interface for volatile inode allocator structures
 pub(crate) trait InodeAllocator {
+    fn new(val: u64) -> Self;
     fn alloc_ino(&mut self) -> Result<InodeNum>;
     fn dealloc_ino(&mut self, ino: InodeNum) -> Result<()>;
 }
@@ -83,16 +144,13 @@ pub(crate) struct BasicInodeAllocator {
     next_inode: AtomicU64,
 }
 
-impl BasicInodeAllocator {
-    #[allow(dead_code)]
+impl InodeAllocator for BasicInodeAllocator {
     fn new(val: u64) -> Self {
         BasicInodeAllocator {
             next_inode: AtomicU64::new(val),
         }
     }
-}
 
-impl InodeAllocator for BasicInodeAllocator {
     fn alloc_ino(&mut self) -> Result<InodeNum> {
         if self.next_inode.load(Ordering::SeqCst) == NUM_INODES {
             Err(ENOSPC)

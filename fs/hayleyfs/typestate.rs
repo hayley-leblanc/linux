@@ -6,9 +6,9 @@ pub(crate) struct Clean {}
 /// Zero-sized types for operation state
 pub(crate) struct Start {}
 pub(crate) struct Free {}
-// pub(crate) struct AllocStarted {}
 pub(crate) struct Alloc {}
 pub(crate) struct Init {}
+pub(crate) struct Complete {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}

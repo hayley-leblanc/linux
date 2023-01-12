@@ -92,6 +92,7 @@ pub(crate) struct SbInfo {
     // if they are.
     // TODO: fix this.
     pub(crate) page_allocator: BasicPageAllocator,
+    pub(crate) inode_allocator: BasicInodeAllocator,
 }
 
 // SbInfo must be Send and Sync for it to be used as the Context's data.
@@ -114,6 +115,7 @@ impl SbInfo {
             ino_dentry_map: InoDentryMap::new(),
             ino_dir_page_map: InoDirPageMap::new(),
             page_allocator: PageAllocator::new(DATA_PAGE_START),
+            inode_allocator: InodeAllocator::new(ROOT_INO + 1),
         }
     }
 

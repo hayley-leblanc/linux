@@ -1,6 +1,8 @@
 use crate::balloc::*;
 use crate::defs::*;
+use crate::dir::*;
 use crate::h_inode::*;
+use crate::typestate::*;
 use crate::volatile::*;
 use core::ffi;
 use kernel::prelude::*;
@@ -77,10 +79,7 @@ impl inode::Operations for InodeOps {
                 // TODO: get_free_dentry() should never return an error since all dentries
                 // in the newly-allocated page should be free - but check on that and confirm
                 let pd = dir_page.get_free_dentry()?;
-                // NOTE: we can't return the dentry from the if-else because of lifetime stuff.
-                // dir_page will get dropped at the end of the statement. We also can't just
-                // return dir_page too because we move out of it in get_free_dentry()(?).
-                let _pd = pd.set_name(dentry.d_name())?.flush().fence();
+                add_new_dentry(sbi, pd, dir.i_ino(), dentry.d_name());
             } else {
                 pr_info!("ERROR: parent inode is not initialized");
                 return Err(EPERM);
@@ -89,4 +88,22 @@ impl inode::Operations for InodeOps {
 
         Err(EINVAL)
     }
+}
+
+fn add_new_dentry<'a>(
+    sbi: &mut SbInfo,
+    dentry: DentryWrapper<'a, Clean, Free>,
+    parent_ino: InodeNum,
+    name: &CStr,
+) -> Result<(
+    DentryWrapper<'a, Clean, Init>,
+    InodeWrapper<'a, Clean, Complete>,
+)> {
+    // allocate the dentry
+    let dentry = dentry.set_name(name)?.flush().fence();
+
+    // set up the new inode
+    let new_ino = sbi.inode_allocator.alloc_ino()?;
+    let inode = InodeWrapper::get_free_inode_by_ino(sbi, new_ino)?;
+    let inode = inode.allocate_file_inode().flush().fence();
 }
