@@ -789,6 +789,11 @@ impl INode {
     pub fn i_sb(&self) -> *mut bindings::super_block {
         unsafe { (*self.0.get()).i_sb }
     }
+
+    /// Returns a raw pointer to the `struct inode`.
+    pub fn get_inner(&self) -> *mut bindings::inode {
+        self.0.get()
+    }
 }
 
 /// Wraps the kernel's `struct dentry`.
@@ -822,6 +827,11 @@ impl DEntry {
     pub fn d_name(&self) -> &CStr {
         unsafe { CStr::from_char_ptr((*self.0.get()).d_name.name as *const i8) }
     }
+
+    /// Returns a raw pointer to the `struct dentry`
+    pub fn get_inner(&self) -> *mut bindings::dentry {
+        self.0.get()
+    }
 }
 
 /// Wraps the kernel's `struct filename`.
@@ -845,6 +855,13 @@ impl Filename {
 /// Wraps the kernel's `struct user_namespace`.
 #[repr(transparent)]
 pub struct UserNamespace(pub(crate) UnsafeCell<bindings::user_namespace>);
+
+impl UserNamespace {
+    /// Returns a raw pointer to the `struct user_namespace`.
+    pub fn get_inner(&self) -> *mut bindings::user_namespace {
+        self.0.get()
+    }
+}
 
 /// Kernel module that exposes a single file system implemented by `T`.
 pub struct Module<T: Type> {
