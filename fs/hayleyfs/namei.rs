@@ -103,6 +103,15 @@ impl inode::Operations for InodeOps {
 
         Ok(0)
     }
+
+    fn mkdir(
+        _mnt_userns: &fs::UserNamespace,
+        _dir: &fs::INode,
+        _dentry: &fs::DEntry,
+        _umode: bindings::umode_t,
+    ) -> Result<i32> {
+        unimplemented!()
+    }
 }
 
 fn hayleyfs_create<'a>(
