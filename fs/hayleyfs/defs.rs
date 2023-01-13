@@ -39,6 +39,12 @@ pub(crate) enum PageType {
     DATA,
 }
 
+#[repr(C)]
+#[allow(dead_code)]
+pub(crate) enum InodeType {
+    DIR,
+    FILE,
+}
 /// Persistent super block
 /// TODO: add stuff
 #[repr(C)]

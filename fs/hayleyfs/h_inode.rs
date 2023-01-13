@@ -13,8 +13,9 @@ use kernel::prelude::*;
 /// TODO: add the rest of the fields
 #[repr(C)]
 pub(crate) struct HayleyFsInode {
-    ino: InodeNum,
     link_count: u16,
+    inode_type: InodeType,
+    ino: InodeNum,
 }
 
 #[allow(dead_code)]
@@ -32,6 +33,7 @@ impl HayleyFsInode {
         let mut root_ino = unsafe { sbi.get_inode_by_ino(ROOT_INO)? };
         root_ino.ino = ROOT_INO;
         root_ino.link_count = 2;
+        root_ino.inode_type = InodeType::DIR;
         Ok(root_ino)
     }
 
@@ -118,6 +120,7 @@ impl<'a> InodeWrapper<'a, Clean, Free> {
     pub(crate) fn allocate_file_inode(self) -> InodeWrapper<'a, Dirty, Alloc> {
         self.inode.link_count = 1;
         self.inode.ino = self.ino;
+        self.inode.inode_type = InodeType::FILE;
         InodeWrapper {
             state: PhantomData,
             op: PhantomData,
