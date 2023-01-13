@@ -72,10 +72,10 @@ impl inode::Operations for InodeOps {
     }
 
     fn mkdir(
-        _mnt_userns: &fs::UserNamespace,
+        mnt_userns: &fs::UserNamespace,
         dir: &fs::INode,
         dentry: &fs::DEntry,
-        _umode: bindings::umode_t,
+        umode: bindings::umode_t,
     ) -> Result<i32> {
         let sb = dir.i_sb();
         // TODO: safety
@@ -84,11 +84,9 @@ impl inode::Operations for InodeOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        // TODO: call hayleyfs_mkdir
+        let (_new_dentry, _parent_inode, new_inode) = hayleyfs_mkdir(sbi, dir, dentry)?;
 
-        let (_new_dentry, _parent_inode, _new_inode) = hayleyfs_mkdir(sbi, dir, dentry)?;
-
-        // TODO: call new_vfs_inode
+        new_vfs_inode(sb, mnt_userns, dir, dentry, new_inode, umode)?;
 
         Ok(0)
     }
@@ -111,15 +109,30 @@ fn new_vfs_inode<'a, Type>(
         bindings::inode_init_owner(mnt_userns.get_inner(), vfs_inode, dir.get_inner(), umode);
     }
 
-    vfs_inode.i_mode = umode;
     vfs_inode.i_ino = new_inode.get_ino();
 
-    unsafe {
-        vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
-        vfs_inode.__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+    // we don't have access to ZST Type, but inode wrapper constructors check types
+    // so we can rely on these being correct
+    // TODO: what should i_fop be set to?
+    let inode_type = new_inode.get_type();
+    match inode_type {
+        InodeType::REG => {
+            vfs_inode.i_mode = umode;
+            unsafe {
+                vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
+                vfs_inode.__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+                bindings::set_nlink(vfs_inode, 1);
+            }
+        }
+        InodeType::DIR => {
+            vfs_inode.i_mode = umode | bindings::S_IFDIR as u16;
+            unsafe {
+                vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
+                vfs_inode.__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+                bindings::set_nlink(vfs_inode, 2);
+            }
+        }
     }
-
-    // TODO: set link count based on type?
 
     let current_time = unsafe { bindings::current_time(vfs_inode) };
     vfs_inode.i_mtime = current_time;
@@ -190,7 +203,7 @@ fn hayleyfs_create<'a>(
 fn hayleyfs_mkdir<'a>(
     sbi: &'a mut SbInfo,
     dir: &fs::INode,
-    _dentry: &fs::DEntry,
+    dentry: &fs::DEntry,
 ) -> Result<(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, DirInode>, // parent
@@ -198,11 +211,12 @@ fn hayleyfs_mkdir<'a>(
 )> {
     let parent_ino = dir.i_ino();
     let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
-    let _parent_inode = parent_inode.inc_link_count()?.flush().fence();
+    let parent_inode = parent_inode.inc_link_count()?.flush().fence();
 
-    let _pd = get_free_dentry(sbi, parent_ino)?;
+    let pd = get_free_dentry(sbi, parent_ino)?;
+    let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
-    Err(EINVAL)
+    init_dentry_with_new_dir_inode(sbi, pd, parent_inode)
 }
 
 fn get_free_dentry<'a>(
@@ -246,8 +260,31 @@ fn init_dentry_with_new_reg_inode<'a>(
     let new_ino = sbi.inode_allocator.alloc_ino()?;
     let inode = InodeWrapper::get_free_reg_inode_by_ino(sbi, new_ino)?;
     let inode = inode.allocate_file_inode().flush().fence();
+
+    // set the ino in the dentry
     let (dentry, inode) = dentry.set_file_ino(inode);
     let dentry = dentry.flush().fence();
 
     Ok((dentry, inode))
+}
+
+fn init_dentry_with_new_dir_inode<'a>(
+    sbi: &'a mut SbInfo,
+    dentry: DentryWrapper<'a, Clean, Alloc>,
+    parent_inode: InodeWrapper<'a, Clean, IncLink, DirInode>,
+) -> Result<(
+    DentryWrapper<'a, Clean, Complete>,
+    InodeWrapper<'a, Clean, Complete, DirInode>,
+    InodeWrapper<'a, Clean, Complete, DirInode>,
+)> {
+    // set up the new inode
+    let new_ino = sbi.inode_allocator.alloc_ino()?;
+    let new_inode = InodeWrapper::get_free_dir_inode_by_ino(sbi, new_ino)?;
+    let new_inode = new_inode.allocate_dir_inode().flush().fence();
+
+    // set the ino in the dentry
+    let (dentry, new_inode, parent_inode) = dentry.set_dir_ino(new_inode, parent_inode);
+    let dentry = dentry.flush().fence();
+
+    Ok((dentry, new_inode, parent_inode))
 }

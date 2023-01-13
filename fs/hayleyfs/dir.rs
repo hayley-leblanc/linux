@@ -93,6 +93,27 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
             InodeWrapper::new(inode),
         )
     }
+
+    pub(crate) fn set_dir_ino(
+        self,
+        new_inode: InodeWrapper<'a, Clean, Alloc, DirInode>,
+        parent_inode: InodeWrapper<'a, Clean, IncLink, DirInode>,
+    ) -> (
+        DentryWrapper<'a, Dirty, Complete>,
+        InodeWrapper<'a, Clean, Complete, DirInode>,
+        InodeWrapper<'a, Clean, Complete, DirInode>,
+    ) {
+        self.dentry.ino = new_inode.get_ino();
+        (
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: self.dentry,
+            },
+            InodeWrapper::new(new_inode),
+            InodeWrapper::new(parent_inode),
+        )
+    }
 }
 
 impl<'a, Op> DentryWrapper<'a, Dirty, Op> {

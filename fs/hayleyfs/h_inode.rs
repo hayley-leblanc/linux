@@ -108,6 +108,10 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
             inode: i.inode,
         }
     }
+
+    pub(crate) fn get_type(&self) -> InodeType {
+        self.inode.get_type()
+    }
 }
 
 impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
@@ -141,6 +145,30 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
         self.inode.link_count = 1;
         self.inode.ino = self.ino;
         self.inode.inode_type = InodeType::REG;
+        Self::new(self)
+    }
+}
+
+impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
+    pub(crate) fn get_free_dir_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
+        let raw_inode = unsafe { sbi.get_inode_by_ino(ino)? };
+        if raw_inode.is_free() {
+            Ok(InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                ino,
+                inode: raw_inode,
+            })
+        } else {
+            Err(EPERM)
+        }
+    }
+
+    pub(crate) fn allocate_dir_inode(self) -> InodeWrapper<'a, Dirty, Alloc, DirInode> {
+        self.inode.link_count = 2;
+        self.inode.ino = self.ino;
+        self.inode.inode_type = InodeType::DIR;
         Self::new(self)
     }
 }
