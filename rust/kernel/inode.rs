@@ -63,6 +63,19 @@ impl<T: Operations> OperationsVtable<T> {
         }
     }
 
+    unsafe extern "C" fn link_callback(
+        old_dentry: *mut bindings::dentry,
+        dir: *mut bindings::inode,
+        dentry: *mut bindings::dentry,
+    ) -> ffi::c_int {
+        from_kernel_result! {
+            let old_dentry = unsafe { &*old_dentry.cast() };
+            let dir = unsafe { &*dir.cast() };
+            let dentry = unsafe { &*dentry.cast() };
+            T::link(old_dentry, dir, dentry)
+        }
+    }
+
     unsafe extern "C" fn mkdir_callback(
         mnt_userns: *mut bindings::user_namespace,
         dir: *mut bindings::inode,
@@ -85,7 +98,7 @@ impl<T: Operations> OperationsVtable<T> {
         get_acl: None,
         readlink: None,
         create: Some(Self::create_callback),
-        link: None,
+        link: Some(Self::link_callback),
         unlink: None,
         symlink: None,
         mkdir: Some(Self::mkdir_callback),
@@ -138,4 +151,6 @@ pub trait Operations {
         dentry: &DEntry,
         umode: bindings::umode_t,
     ) -> Result<i32>;
+    /// Corresponds to the ``link` function pointer in `struct inode_operations`.
+    fn link(old_dentry: &DEntry, dir: &INode, dentry: &DEntry) -> Result<i32>;
 }
