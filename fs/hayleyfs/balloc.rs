@@ -3,6 +3,7 @@ use crate::dir::*;
 use crate::h_inode::*;
 use crate::pm::*;
 use crate::typestate::*;
+use crate::volatile::*;
 use core::{
     marker::PhantomData,
     mem,
@@ -54,28 +55,72 @@ struct DirPageHeader {
     dentries: [HayleyFsDentry; DENTRIES_PER_PAGE],
 }
 
+impl DirPageHeader {
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.page_type != PageType::NONE && self.ino != 0
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) struct DirPageWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
+    page_no: PageNum,
     page: &'a mut DirPageHeader,
+}
+
+impl<'a, State, Op> DirPageWrapper<'a, State, Op> {
+    pub(crate) fn get_page_no(&self) -> PageNum {
+        self.page_no
+    }
+}
+
+impl<'a> DirPageWrapper<'a, Clean, Start> {
+    unsafe fn wrap_dir_page_header(ph: &'a mut DirPageHeader, page_no: PageNum) -> Self {
+        Self {
+            state: PhantomData,
+            op: PhantomData,
+            page_no,
+            page: ph,
+        }
+    }
+
+    pub(crate) fn from_dir_page_info(sbi: &'a mut SbInfo, info: &DirPageInfo) -> Result<Self> {
+        let page_no = info.get_page_no();
+        let ph = page_no_to_header(sbi, page_no)?;
+        if !ph.is_initialized() {
+            Err(EPERM)
+        } else {
+            // Safety: it's safe to wrap the page header since we check that it is
+            // initialized
+            unsafe { Ok(Self::wrap_dir_page_header(ph, page_no)) }
+        }
+    }
+}
+
+// TODO: safety
+fn page_no_to_header(sbi: &mut SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
+    let virt_addr = sbi.get_virt_addr();
+    let page_size_u64: u64 = PAGE_SIZE.try_into()?;
+    let page_addr = unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) };
+    // cast raw page address to dir page header
+    let ph: &mut DirPageHeader = unsafe { &mut *page_addr.cast() };
+    Ok(ph)
 }
 
 impl<'a> DirPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
-    pub(crate) fn alloc_dir_page(sbi: &mut SbInfo) -> Result<Self> {
+    pub(crate) fn alloc_dir_page(sbi: &'a mut SbInfo) -> Result<Self> {
         // TODO: should we zero the page here?
         let page_no = sbi.page_allocator.alloc_page()?;
-        let virt_addr = sbi.get_virt_addr();
-        let page_size_u64: u64 = PAGE_SIZE.try_into()?;
-        let page_addr = unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) };
-        // cast raw page address to dir page header
-        let ph: &mut DirPageHeader = unsafe { &mut *page_addr.cast() };
+        let ph = page_no_to_header(sbi, page_no)?;
+
         ph.page_type = PageType::DIR;
         Ok(DirPageWrapper {
             state: PhantomData,
             op: PhantomData,
+            page_no,
             page: ph,
         })
     }
@@ -92,6 +137,7 @@ impl<'a> DirPageWrapper<'a, Clean, Alloc> {
         DirPageWrapper {
             state: PhantomData,
             op: PhantomData,
+            page_no: self.page_no,
             page: self.page,
         }
     }
@@ -126,6 +172,7 @@ impl<'a, Op> DirPageWrapper<'a, Dirty, Op> {
         DirPageWrapper {
             state: PhantomData,
             op: PhantomData,
+            page_no: self.page_no,
             page: self.page,
         }
     }
@@ -137,6 +184,7 @@ impl<'a, Op> DirPageWrapper<'a, InFlight, Op> {
         DirPageWrapper {
             state: PhantomData,
             op: PhantomData,
+            page_no: self.page_no,
             page: self.page,
         }
     }

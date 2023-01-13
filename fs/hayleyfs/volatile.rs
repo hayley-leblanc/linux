@@ -1,4 +1,6 @@
+use crate::balloc::*;
 use crate::defs::*;
+use crate::typestate::*;
 use core::ffi;
 use kernel::prelude::*;
 use kernel::rbtree::RBTree;
@@ -75,12 +77,19 @@ impl InoDentryMap for BasicInoDentryMap {
 #[derive(Debug)]
 pub(crate) struct DirPageInfo {
     owner: InodeNum,
-    virt_addr: *mut ffi::c_void,
+    page_no: PageNum,
+    // virt_addr: *mut ffi::c_void,
+}
+
+impl DirPageInfo {
+    pub(crate) fn get_page_no(&self) -> PageNum {
+        self.page_no
+    }
 }
 
 pub(crate) trait InoDirPageMap {
     fn new() -> Self;
-    fn insert(&mut self, ino: InodeNum, page: DirPageInfo) -> Result<()>;
+    fn insert<'a>(&mut self, ino: InodeNum, page: &DirPageWrapper<'a, Clean, Init>) -> Result<()>;
     fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DirPageInfo>>;
     fn delete(&mut self, ino: InodeNum, page: DirPageInfo) -> Result<()>;
 }
@@ -94,12 +103,17 @@ impl InoDirPageMap for BasicInoDirPageMap {
         Self { map: RBTree::new() }
     }
 
-    fn insert(&mut self, ino: InodeNum, page: DirPageInfo) -> Result<()> {
+    fn insert<'a>(&mut self, ino: InodeNum, page: &DirPageWrapper<'a, Clean, Init>) -> Result<()> {
+        let page_no = page.get_page_no();
+        let page_info = DirPageInfo {
+            owner: ino,
+            page_no,
+        };
         if let Some(node) = self.map.get_mut(&ino) {
-            node.try_push(page)?;
+            node.try_push(page_info)?;
         } else {
             let mut vec = Vec::new();
-            vec.try_push(page)?;
+            vec.try_push(page_info)?;
             self.map.try_insert(ino, vec)?;
         }
         Ok(())

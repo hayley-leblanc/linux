@@ -71,6 +71,19 @@ impl inode::Operations for InodeOps {
         Ok(0)
     }
 
+    fn link(old_dentry: &fs::DEntry, dir: &fs::INode, dentry: &fs::DEntry) -> Result<i32> {
+        let sb = dir.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+
+        hayleyfs_link(sbi, old_dentry, dir, dentry)?;
+
+        Err(EINVAL)
+    }
+
     fn mkdir(
         mnt_userns: &fs::UserNamespace,
         dir: &fs::INode,
@@ -174,6 +187,40 @@ fn hayleyfs_create<'a>(
     init_dentry_with_new_reg_inode(sbi, pd)
 }
 
+fn hayleyfs_link<'a>(
+    sbi: &'a mut SbInfo,
+    old_dentry: &fs::DEntry,
+    dir: &fs::INode,
+    dentry: &fs::DEntry,
+) -> Result<(
+    DentryWrapper<'a, Clean, Complete>,
+    InodeWrapper<'a, Clean, Complete, RegInode>,
+)> {
+    let pd = get_free_dentry(sbi, dir.i_ino())?;
+    let _pd = pd.set_name(dentry.d_name())?.flush().fence();
+
+    // old dentry is the dentry for the target name,
+    // dir is the PARENT inode,
+    // dentry is the dentry for the new name
+
+    pr_info!(
+        "old dentry: {:?}, inode number {:?}, new dentry: {:?}\n",
+        old_dentry.d_name(),
+        dir.i_ino(),
+        dentry.d_name()
+    );
+
+    // first, obtain the inode that's getting the link from old_dentry
+    let target_ino = old_dentry.d_ino();
+
+    let target_inode = sbi.get_init_reg_inode_by_ino(target_ino)?;
+    let _target_inode = target_inode.inc_link_count()?.flush().fence();
+
+    let _pd = get_free_dentry(sbi, dir.i_ino())?;
+
+    Err(EINVAL)
+}
+
 fn hayleyfs_mkdir<'a>(
     sbi: &'a mut SbInfo,
     dir: &fs::INode,
@@ -194,31 +241,70 @@ fn hayleyfs_mkdir<'a>(
 }
 
 fn get_free_dentry<'a>(
-    sbi: &mut SbInfo,
+    sbi: &'a mut SbInfo,
     parent_ino: InodeNum,
 ) -> Result<DentryWrapper<'a, Clean, Free>> {
     let result = sbi.ino_dir_page_map.lookup_ino(&parent_ino);
-    if let Some(_pages) = result {
-        // TODO: implement
-        unimplemented!();
-    } else {
-        pr_info!("no pages associated with the parent\n");
-        // allocate a page
-        let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
-        let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino);
-        if let Ok(parent_inode) = parent_inode {
-            let dir_page = dir_page
-                .set_dir_page_backpointer(parent_inode)
-                .flush()
-                .fence();
-            // TODO: get_free_dentry() should never return an error since all dentries
-            // in the newly-allocated page should be free - but check on that and confirm
-            let pd = dir_page.get_free_dentry()?;
-            Ok(pd)
-        } else {
-            pr_info!("ERROR: parent inode is not initialized");
-            return Err(EPERM);
+    if let Some(pages) = result {
+        // go through the pages and try to find an empty spot for a dentry
+        // TODO: could speed up with some kind of index indicating where the
+        // free dentries are
+        for page in pages {
+            // resolve the DirPageInfo to an actual page
+            let dir_page = DirPageWrapper::from_dir_page_info(sbi, &page)?;
+            let dentry = dir_page.get_free_dentry();
+            if let Ok(dentry) = dentry {
+                return Ok(dentry);
+            }
         }
+
+        // if we get to this point, none of the pages have any free dentries
+        // and we need to allocate a new page
+        alloc_page_for_dentry(sbi, parent_ino)
+    } else {
+        alloc_page_for_dentry(sbi, parent_ino)
+        // pr_info!("no pages associated with the parent\n");
+        // // allocate a page
+        // let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
+        // let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino);
+        // if let Ok(parent_inode) = parent_inode {
+        //     let dir_page = dir_page
+        //         .set_dir_page_backpointer(parent_inode)
+        //         .flush()
+        //         .fence();
+        //     sbi.ino_dir_page_map.insert(parent_ino, &dir_page)?;
+        //     // TODO: get_free_dentry() should never return an error since all dentries
+        //     // in the newly-allocated page should be free - but check on that and confirm
+        //     let pd = dir_page.get_free_dentry()?;
+        //     Ok(pd)
+        // } else {
+        //     pr_info!("ERROR: parent inode is not initialized");
+        //     return Err(EPERM);
+        // }
+    }
+}
+
+fn alloc_page_for_dentry<'a>(
+    sbi: &'a mut SbInfo,
+    parent_ino: InodeNum,
+) -> Result<DentryWrapper<'a, Clean, Free>> {
+    pr_info!("allocating new dir page for inode {:?}\n", parent_ino);
+    // allocate a page
+    let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
+    let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino);
+    if let Ok(parent_inode) = parent_inode {
+        let dir_page = dir_page
+            .set_dir_page_backpointer(parent_inode)
+            .flush()
+            .fence();
+        sbi.ino_dir_page_map.insert(parent_ino, &dir_page)?;
+        // TODO: get_free_dentry() should never return an error since all dentries
+        // in the newly-allocated page should be free - but check on that and confirm
+        let pd = dir_page.get_free_dentry()?;
+        Ok(pd)
+    } else {
+        pr_info!("ERROR: parent inode is not initialized");
+        return Err(EPERM);
     }
 }
 
@@ -261,3 +347,6 @@ fn init_dentry_with_new_dir_inode<'a>(
 
     Ok((dentry, new_inode, parent_inode))
 }
+
+// TODO
+// fn init_dentry_hard_link<'a>(sbi: &'a mut SbInfo, old_dentry: &fs::DEntry, parent_inode: )
