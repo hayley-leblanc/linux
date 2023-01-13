@@ -78,10 +78,10 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
     // after setting its ino
     pub(crate) fn set_file_ino(
         self,
-        inode: InodeWrapper<'a, Clean, Alloc>,
+        inode: InodeWrapper<'a, Clean, Alloc, RegInode>,
     ) -> (
         DentryWrapper<'a, Dirty, Complete>,
-        InodeWrapper<'a, Clean, Complete>,
+        InodeWrapper<'a, Clean, Complete, RegInode>,
     ) {
         self.dentry.ino = inode.get_ino();
         (
@@ -90,7 +90,7 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
                 op: PhantomData,
                 dentry: self.dentry,
             },
-            inode.change_state(),
+            InodeWrapper::new(inode),
         )
     }
 }

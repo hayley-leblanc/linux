@@ -8,6 +8,17 @@ use core::{
 };
 use kernel::prelude::*;
 
+// ZSTs for representing inode types
+// These are not typestate since they don't change, but they are a generic
+// parameter for inodes so that the compiler can check that we are using
+// the right kind of inode
+pub(crate) struct RegInode {}
+pub(crate) struct DirInode {}
+
+pub(crate) trait AnyInode {}
+impl AnyInode for RegInode {}
+impl AnyInode for DirInode {}
+
 /// Persistent inode structure
 /// It is always unsafe to access this structure directly
 /// TODO: add the rest of the fields
@@ -19,9 +30,10 @@ pub(crate) struct HayleyFsInode {
 }
 
 #[allow(dead_code)]
-pub(crate) struct InodeWrapper<'a, State, Op> {
+pub(crate) struct InodeWrapper<'a, State, Op, Type> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
+    inode_type: PhantomData<Type>,
     ino: InodeNum,
     inode: &'a mut HayleyFsInode,
 }
@@ -45,6 +57,10 @@ impl HayleyFsInode {
         self.link_count
     }
 
+    pub(crate) fn get_type(&self) -> InodeType {
+        self.inode_type
+    }
+
     pub(crate) unsafe fn inc_link_count(&mut self) {
         self.link_count += 1
     }
@@ -60,55 +76,59 @@ impl HayleyFsInode {
     }
 }
 
-impl<'a, State, Op> InodeWrapper<'a, State, Op> {
+impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.inode.get_ino()
     }
 }
 
-impl<'a, State, Op> InodeWrapper<'a, State, Op> {
-    pub(crate) fn change_state<NewState, NewOp>(self) -> InodeWrapper<'a, NewState, NewOp> {
+impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
+    // TODO: this needs to be handled specially for types so that type generic cannot be incorrect
+    pub(crate) fn wrap_inode(
+        ino: InodeNum,
+        inode: &'a mut HayleyFsInode,
+    ) -> InodeWrapper<'a, State, Op, Type> {
         InodeWrapper {
             state: PhantomData,
             op: PhantomData,
-            ino: self.ino,
-            inode: self.inode,
-        }
-    }
-
-    pub(crate) fn new(ino: InodeNum, inode: &'a mut HayleyFsInode) -> InodeWrapper<'a, State, Op> {
-        InodeWrapper {
-            state: PhantomData,
-            op: PhantomData,
+            inode_type: PhantomData,
             ino,
             inode,
         }
     }
-}
 
-impl<'a> InodeWrapper<'a, Clean, Start> {
-    pub(crate) fn inc_link_count(self) -> Result<InodeWrapper<'a, Dirty, IncLink>> {
-        if self.inode.get_link_count() == MAX_LINKS {
-            Err(EMLINK)
-        } else {
-            unsafe { self.inode.inc_link_count() };
-            Ok(InodeWrapper {
-                state: PhantomData,
-                op: PhantomData,
-                ino: self.ino,
-                inode: self.inode,
-            })
+    pub(crate) fn new<NewState, NewOp>(
+        i: InodeWrapper<'a, State, Op, Type>,
+    ) -> InodeWrapper<'a, NewState, NewOp, Type> {
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            ino: i.ino,
+            inode_type: i.inode_type,
+            inode: i.inode,
         }
     }
 }
 
-impl<'a> InodeWrapper<'a, Clean, Free> {
-    pub(crate) fn get_free_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
+impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
+    pub(crate) fn inc_link_count(self) -> Result<InodeWrapper<'a, Dirty, IncLink, Type>> {
+        if self.inode.get_link_count() == MAX_LINKS {
+            Err(EMLINK)
+        } else {
+            unsafe { self.inode.inc_link_count() };
+            Ok(Self::new(self))
+        }
+    }
+}
+
+impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
+    pub(crate) fn get_free_reg_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
         let raw_inode = unsafe { sbi.get_inode_by_ino(ino)? };
         if raw_inode.is_free() {
             Ok(InodeWrapper {
                 state: PhantomData,
                 op: PhantomData,
+                inode_type: PhantomData,
                 ino,
                 inode: raw_inode,
             })
@@ -117,40 +137,25 @@ impl<'a> InodeWrapper<'a, Clean, Free> {
         }
     }
 
-    pub(crate) fn allocate_file_inode(self) -> InodeWrapper<'a, Dirty, Alloc> {
+    pub(crate) fn allocate_file_inode(self) -> InodeWrapper<'a, Dirty, Alloc, RegInode> {
         self.inode.link_count = 1;
         self.inode.ino = self.ino;
-        self.inode.inode_type = InodeType::FILE;
-        InodeWrapper {
-            state: PhantomData,
-            op: PhantomData,
-            ino: self.ino,
-            inode: self.inode,
-        }
+        self.inode.inode_type = InodeType::REG;
+        Self::new(self)
     }
 }
 
-impl<'a, Op> InodeWrapper<'a, Dirty, Op> {
-    pub(crate) fn flush(self) -> InodeWrapper<'a, InFlight, Op> {
+impl<'a, Op, Type> InodeWrapper<'a, Dirty, Op, Type> {
+    pub(crate) fn flush(self) -> InodeWrapper<'a, InFlight, Op, Type> {
         flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), false);
-        InodeWrapper {
-            state: PhantomData,
-            op: PhantomData,
-            ino: self.ino,
-            inode: self.inode,
-        }
+        Self::new(self)
     }
 }
 
-impl<'a, Op> InodeWrapper<'a, InFlight, Op> {
-    pub(crate) fn fence(self) -> InodeWrapper<'a, Clean, Op> {
+impl<'a, Op, Type> InodeWrapper<'a, InFlight, Op, Type> {
+    pub(crate) fn fence(self) -> InodeWrapper<'a, Clean, Op, Type> {
         sfence();
-        InodeWrapper {
-            state: PhantomData,
-            op: PhantomData,
-            ino: self.ino,
-            inode: self.inode,
-        }
+        Self::new(self)
     }
 }
 

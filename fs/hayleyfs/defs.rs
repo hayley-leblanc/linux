@@ -41,9 +41,10 @@ pub(crate) enum PageType {
 
 #[repr(C)]
 #[allow(dead_code)]
+#[derive(PartialEq, Copy, Clone)]
 pub(crate) enum InodeType {
+    REG,
     DIR,
-    FILE,
 }
 /// Persistent super block
 /// TODO: add stuff
@@ -164,10 +165,11 @@ impl SbInfo {
         }
     }
 
-    pub(crate) fn get_init_inode_by_ino<'a>(
+    #[allow(dead_code)]
+    pub(crate) fn get_init_reg_inode_by_ino<'a>(
         &self,
         ino: InodeNum,
-    ) -> Result<InodeWrapper<'a, Clean, Start>> {
+    ) -> Result<InodeWrapper<'a, Clean, Start, RegInode>> {
         // FIXME: code is repeated from unsafe get_inode_by_ino because
         // calling that method here causes lifetime problems.
 
@@ -188,8 +190,48 @@ impl SbInfo {
             &mut *(inode_addr as *mut HayleyFsInode)
         };
 
+        if raw_inode.get_type() != InodeType::REG {
+            pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
+            return Err(EPERM);
+        }
         if raw_inode.is_initialized() {
-            Ok(InodeWrapper::new(ino, raw_inode))
+            Ok(InodeWrapper::wrap_inode(ino, raw_inode))
+        } else {
+            pr_info!("ERROR: inode {:?} is not initialized\n", ino);
+            Err(EPERM)
+        }
+    }
+
+    pub(crate) fn get_init_dir_inode_by_ino<'a>(
+        &self,
+        ino: InodeNum,
+    ) -> Result<InodeWrapper<'a, Clean, Start, DirInode>> {
+        // FIXME: code is repeated from unsafe get_inode_by_ino because
+        // calling that method here causes lifetime problems.
+
+        // we don't use inode 0
+        if ino >= NUM_INODES || ino == 0 {
+            return Err(EINVAL);
+        }
+
+        // for now, assume that sb and inodes are 64 bytes
+        // TODO: update that with the final size
+        let inode_size = 64;
+        let sb_size = 64;
+
+        let inode_offset: usize = (ino * inode_size).try_into()?;
+
+        let raw_inode = unsafe {
+            let inode_addr = self.virt_addr.offset((sb_size + inode_offset).try_into()?);
+            &mut *(inode_addr as *mut HayleyFsInode)
+        };
+
+        if raw_inode.get_type() != InodeType::DIR {
+            pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
+            return Err(EPERM);
+        }
+        if raw_inode.is_initialized() {
+            Ok(InodeWrapper::wrap_inode(ino, raw_inode))
         } else {
             pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)

@@ -86,7 +86,7 @@ impl<'a> DirPageWrapper<'a, Clean, Alloc> {
     /// to an initialized inode
     pub(crate) fn set_dir_page_backpointer<InoState: Initialized>(
         self,
-        inode: InodeWrapper<'a, Clean, InoState>,
+        inode: InodeWrapper<'a, Clean, InoState, DirInode>,
     ) -> DirPageWrapper<'a, Dirty, Init> {
         self.page.ino = inode.get_ino();
         DirPageWrapper {
