@@ -54,7 +54,6 @@ pub(crate) struct HayleyFsSuperBlock {
 }
 
 impl HayleyFsSuperBlock {
-    // pub(crate) unsafe fn init_super_block(sbi: &SbInfo) -> &HayleyFsSuperBlock {
     pub(crate) unsafe fn init_super_block(
         virt_addr: *mut ffi::c_void,
         size: i64,

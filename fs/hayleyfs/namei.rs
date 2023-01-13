@@ -167,32 +167,6 @@ fn hayleyfs_create<'a>(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
-    // // get dir pages associated with the parent (if any)
-    // let parent_ino = dir.i_ino();
-    // let result = sbi.ino_dir_page_map.lookup_ino(&parent_ino);
-    // if let Some(_pages) = result {
-    //     unimplemented!();
-    // } else {
-    //     pr_info!("no pages associated with the parent\n");
-    //     // allocate a page
-    //     let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
-    //     // let parent_inode = InodeWrapper::get_init_inode_by_ino(sbi, parent_ino);
-    //     let parent_inode = sbi.get_init_inode_by_ino(parent_ino);
-    //     if let Ok(parent_inode) = parent_inode {
-    //         let dir_page = dir_page
-    //             .set_dir_page_backpointer(parent_inode)
-    //             .flush()
-    //             .fence();
-    //         // TODO: get_free_dentry() should never return an error since all dentries
-    //         // in the newly-allocated page should be free - but check on that and confirm
-    //         let pd = dir_page.get_free_dentry()?;
-    //         create_new_file(sbi, pd, dentry.d_name())
-    //     } else {
-    //         pr_info!("ERROR: parent inode is not initialized");
-    //         return Err(EPERM);
-    //     }
-    // }
-
     // TODO: should perhaps take inode wrapper to the parent so that we know
     // the parent is initialized
     let pd = get_free_dentry(sbi, dir.i_ino())?;
@@ -231,7 +205,6 @@ fn get_free_dentry<'a>(
         pr_info!("no pages associated with the parent\n");
         // allocate a page
         let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
-        // let parent_inode = InodeWrapper::get_init_inode_by_ino(sbi, parent_ino);
         let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino);
         if let Ok(parent_inode) = parent_inode {
             let dir_page = dir_page
