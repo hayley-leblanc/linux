@@ -63,6 +63,21 @@ impl<T: Operations> OperationsVtable<T> {
         }
     }
 
+    unsafe extern "C" fn mkdir_callback(
+        mnt_userns: *mut bindings::user_namespace,
+        dir: *mut bindings::inode,
+        dentry: *mut bindings::dentry,
+        umode: bindings::umode_t,
+    ) -> ffi::c_int {
+        from_kernel_result! {
+            // TODO: safety notes
+            let mnt_userns = unsafe { &*mnt_userns.cast()};
+            let dir = unsafe { &*dir.cast() };
+            let dentry = unsafe { &mut *dentry.cast()};
+            T::mkdir(mnt_userns, dir, dentry, umode)
+        }
+    }
+
     const VTABLE: bindings::inode_operations = bindings::inode_operations {
         lookup: Some(Self::lookup_callback),
         get_link: None,
@@ -73,7 +88,7 @@ impl<T: Operations> OperationsVtable<T> {
         link: None,
         unlink: None,
         symlink: None,
-        mkdir: None,
+        mkdir: Some(Self::mkdir_callback),
         rmdir: None,
         mknod: None,
         rename: None,
@@ -115,5 +130,12 @@ pub trait Operations {
         dentry: &DEntry,
         umode: bindings::umode_t,
         excl: bool,
+    ) -> Result<i32>;
+    /// Corresponds to the `mkdir` function pointer in `struct inode_operations`.
+    fn mkdir(
+        mnt_userns: &UserNamespace,
+        dir: &INode,
+        dentry: &DEntry,
+        umode: bindings::umode_t,
     ) -> Result<i32>;
 }
