@@ -39,6 +39,14 @@ impl HayleyFsInode {
         self.ino
     }
 
+    pub(crate) fn get_link_count(&self) -> u16 {
+        self.link_count
+    }
+
+    pub(crate) unsafe fn inc_link_count(&mut self) {
+        self.link_count += 1
+    }
+
     // TODO: update as fields are added
     pub(crate) fn is_initialized(&self) -> bool {
         self.ino != 0 && self.link_count != 0
@@ -72,6 +80,22 @@ impl<'a, State, Op> InodeWrapper<'a, State, Op> {
             op: PhantomData,
             ino,
             inode,
+        }
+    }
+}
+
+impl<'a> InodeWrapper<'a, Clean, Start> {
+    pub(crate) fn inc_link_count(self) -> Result<InodeWrapper<'a, Dirty, IncLink>> {
+        if self.inode.get_link_count() == MAX_LINKS {
+            Err(EMLINK)
+        } else {
+            unsafe { self.inode.inc_link_count() };
+            Ok(InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                ino: self.ino,
+                inode: self.inode,
+            })
         }
     }
 }

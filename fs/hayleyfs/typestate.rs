@@ -8,6 +8,7 @@ pub(crate) struct Start {}
 pub(crate) struct Free {}
 pub(crate) struct Alloc {}
 pub(crate) struct Init {}
+pub(crate) struct IncLink {}
 pub(crate) struct Complete {}
 
 /// Traits to allow a transition from multiple legal typestates

@@ -16,6 +16,7 @@ pub(crate) type PageNum = u64;
 pub(crate) const MAX_FILENAME_LEN: usize = 64; // TODO: increase
 pub(crate) const NUM_INODES: u64 = 64; // max inodes in the FS
 pub(crate) const MAX_PAGES: u64 = 64; // TODO: remove (or make much bigger)
+pub(crate) const MAX_LINKS: u16 = u16::MAX;
 pub(crate) const DENTRIES_PER_PAGE: usize = 16; // TODO: update with true dentry size
 
 /// Reserved pages
@@ -184,6 +185,7 @@ impl SbInfo {
         if raw_inode.is_initialized() {
             Ok(InodeWrapper::new(ino, raw_inode))
         } else {
+            pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)
         }
     }

@@ -181,7 +181,8 @@ fn hayleyfs_create<'a>(
     // TODO: should perhaps take inode wrapper to the parent so that we know
     // the parent is initialized
     let pd = get_free_dentry(sbi, dir.i_ino())?;
-    create_new_file(sbi, pd, dentry.d_name())
+    let pd = pd.set_name(dentry.d_name())?.flush().fence();
+    init_dentry_with_new_inode(sbi, pd)
 }
 
 fn hayleyfs_mkdir<'a>(
@@ -193,7 +194,11 @@ fn hayleyfs_mkdir<'a>(
     InodeWrapper<'a, Clean, Complete>, // parent
     InodeWrapper<'a, Clean, Complete>, // new inode
 )> {
-    let _pd = get_free_dentry(sbi, dir.i_ino())?;
+    let parent_ino = dir.i_ino();
+    let parent_inode = sbi.get_init_inode_by_ino(parent_ino)?;
+    let _parent_inode = parent_inode.inc_link_count()?.flush().fence();
+
+    let _pd = get_free_dentry(sbi, parent_ino)?;
 
     Err(EINVAL)
 }
@@ -228,17 +233,13 @@ fn get_free_dentry<'a>(
     }
 }
 
-fn create_new_file<'a>(
+fn init_dentry_with_new_inode<'a>(
     sbi: &'a mut SbInfo,
-    dentry: DentryWrapper<'a, Clean, Free>,
-    name: &CStr,
+    dentry: DentryWrapper<'a, Clean, Alloc>,
 ) -> Result<(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete>,
 )> {
-    // allocate the dentry
-    let dentry = dentry.set_name(name)?.flush().fence();
-
     // set up the new inode
     let new_ino = sbi.inode_allocator.alloc_ino()?;
     let inode = InodeWrapper::get_free_inode_by_ino(sbi, new_ino)?;
