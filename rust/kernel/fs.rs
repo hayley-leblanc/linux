@@ -828,6 +828,11 @@ impl DEntry {
         unsafe { CStr::from_char_ptr((*self.0.get()).d_name.name as *const i8) }
     }
 
+    /// Returns a raw pointer to the `struct inode` associated with the dentry.
+    pub fn d_ino(&self) -> u64 {
+        unsafe { (*(*self.0.get()).d_inode).i_ino }
+    }
+
     /// Returns a raw pointer to the `struct dentry`
     pub fn get_inner(&self) -> *mut bindings::dentry {
         self.0.get()
