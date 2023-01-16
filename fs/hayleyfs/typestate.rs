@@ -15,3 +15,7 @@ pub(crate) struct Complete {}
 pub(crate) trait Initialized {}
 impl Initialized for Init {}
 impl Initialized for Start {}
+
+pub(crate) trait AddLink {}
+impl AddLink for Alloc {}
+impl AddLink for IncLink {}

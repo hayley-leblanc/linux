@@ -71,7 +71,7 @@ impl inode::Operations for InodeOps {
         Ok(0)
     }
 
-    fn link(old_dentry: &fs::DEntry, dir: &fs::INode, dentry: &fs::DEntry) -> Result<i32> {
+    fn link(old_dentry: &fs::DEntry, dir: &mut fs::INode, dentry: &fs::DEntry) -> Result<i32> {
         let sb = dir.i_sb();
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
@@ -81,12 +81,22 @@ impl inode::Operations for InodeOps {
 
         hayleyfs_link(sbi, old_dentry, dir, dentry)?;
 
-        Err(EINVAL)
+        // TODO: need to increment VFS inode's link count, update its ctime
+        // and d_instantiate the inode with the dentry
+
+        dir.update_ctime();
+        dir.inc_nlink();
+        // TODO: safe wrapper for d_instantiate
+        unsafe {
+            bindings::d_instantiate(dentry.get_inner(), old_dentry.d_inode());
+        }
+
+        Ok(0)
     }
 
     fn mkdir(
         mnt_userns: &fs::UserNamespace,
-        dir: &fs::INode,
+        dir: &mut fs::INode,
         dentry: &fs::DEntry,
         umode: bindings::umode_t,
     ) -> Result<i32> {
@@ -98,6 +108,8 @@ impl inode::Operations for InodeOps {
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
         let (_new_dentry, _parent_inode, new_inode) = hayleyfs_mkdir(sbi, dir, dentry)?;
+
+        dir.inc_nlink();
 
         new_vfs_inode(sb, mnt_userns, dir, dentry, new_inode, umode)?;
 
@@ -218,11 +230,16 @@ fn hayleyfs_link<'a>(
     let target_ino = old_dentry.d_ino();
 
     let target_inode = sbi.get_init_reg_inode_by_ino(target_ino)?;
-    let _target_inode = target_inode.inc_link_count()?.flush().fence();
+    let target_inode = target_inode.inc_link_count()?.flush().fence();
+    let pd = get_free_dentry(sbi, dir.i_ino())?;
+    let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
-    let _pd = get_free_dentry(sbi, dir.i_ino())?;
+    let (pd, target_inode) = pd.set_file_ino(target_inode);
+    let pd = pd.flush().fence();
 
-    Err(EINVAL)
+    pd.index(dir.i_ino(), sbi)?;
+
+    Ok((pd, target_inode))
 }
 
 fn hayleyfs_mkdir<'a>(
@@ -326,5 +343,13 @@ fn init_dentry_with_new_dir_inode<'a>(
     Ok((dentry, new_inode, parent_inode))
 }
 
-// TODO
-// fn init_dentry_hard_link<'a>(sbi: &'a mut SbInfo, old_dentry: &fs::DEntry, parent_inode: )
+// fn init_dentry_hard_link<'a>(
+//     sbi: &'a SbInfo,
+//     dentry: DentryWrapper<'a, Clean, Alloc>,
+//     inode: InodeWrapper<'a, Clean, IncLink, RegInode>,
+// ) -> Result<(
+//     DentryWrapper<'a, Clean, Complete>,
+//     InodeWrapper<'a, Clean, Complete, RegInode>,
+// )> {
+//     // set the inode in the dentrty
+// }
