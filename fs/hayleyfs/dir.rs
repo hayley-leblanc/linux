@@ -121,7 +121,6 @@ impl<'a> DentryWrapper<'a, Clean, Complete> {
     // TODO: maybe should take completed inode as well? or ino dentry insert should
     // take the wrappers directly
     pub(crate) fn index(&self, parent: InodeNum, sb: &SbInfo) -> Result<()> {
-        let result = CStr::from_bytes_with_nul(&self.dentry.name);
         let dentry_info = DentryInfo::new(
             self.dentry.ino,
             self.dentry as *const _ as *const ffi::c_void,
