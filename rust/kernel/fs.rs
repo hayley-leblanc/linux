@@ -794,6 +794,19 @@ impl INode {
     pub fn get_inner(&self) -> *mut bindings::inode {
         self.0.get()
     }
+
+    /// Calls the kernel's `inc_nlink` function on the inode
+    pub fn inc_nlink(&mut self) {
+        unsafe { bindings::inc_nlink(self.0.get()) }
+    }
+
+    /// Sets the inode's `i_ctime` field to the current time.
+    pub fn update_ctime(&mut self) {
+        unsafe {
+            let ctime = bindings::current_time(self.0.get());
+            self.0.get_mut().i_ctime = ctime;
+        }
+    }
 }
 
 /// Wraps the kernel's `struct dentry`.
@@ -828,12 +841,26 @@ impl DEntry {
         unsafe { CStr::from_char_ptr((*self.0.get()).d_name.name as *const i8) }
     }
 
-    /// Returns a raw pointer to the `struct inode` associated with the dentry.
+    /// Returns the inode number associated with this dentry
+    ///
+    /// # Safety
+    /// TODO: safety
     pub fn d_ino(&self) -> u64 {
         unsafe { (*(*self.0.get()).d_inode).i_ino }
     }
 
+    /// Returns a raw pointer to the inode associated with this dentry
+    ///
+    /// # Safety
+    /// TODO: safety
+    pub fn d_inode(&self) -> *mut bindings::inode {
+        unsafe { (*self.0.get()).d_inode }
+    }
+
     /// Returns a raw pointer to the `struct dentry`
+    /// ///
+    /// # Safety
+    /// TODO: safety
     pub fn get_inner(&self) -> *mut bindings::dentry {
         self.0.get()
     }
