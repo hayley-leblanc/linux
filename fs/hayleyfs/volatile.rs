@@ -11,23 +11,27 @@ use kernel::{
 #[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct DentryInfo {
-    parent: InodeNum,
-    virt_addr: *mut ffi::c_void,
-    name: *mut ffi::c_char,
+    ino: InodeNum,
+    virt_addr: *const ffi::c_void,
+    name: *const ffi::c_char,
 }
 
 #[allow(dead_code)]
 impl DentryInfo {
     pub(crate) fn new(
-        parent: InodeNum,
-        name: *mut ffi::c_char,
-        virt_addr: *mut ffi::c_void,
+        ino: InodeNum,
+        virt_addr: *const ffi::c_void,
+        name: *const ffi::c_char,
     ) -> Self {
         Self {
-            parent,
+            ino,
             virt_addr,
             name,
         }
+    }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.ino
     }
 }
 
@@ -37,7 +41,6 @@ pub(crate) trait InoDentryMap {
         Self: Sized;
     fn insert(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
     fn lookup_dentry(&self, ino: &InodeNum, name: &CStr) -> Option<DentryInfo>;
-    fn is_empty(&self, ino: &InodeNum) -> bool;
     fn delete(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
 }
 
@@ -79,14 +82,6 @@ impl InoDentryMap for BasicInoDentryMap {
             }
         }
         None
-    }
-
-    fn is_empty(&self, ino: &InodeNum) -> bool {
-        let map = Arc::clone(&self.map);
-        let map = map.lock();
-        let dentry_vec = map.get(&ino);
-        let result = dentry_vec.is_none();
-        result
     }
 
     fn delete(&self, _ino: InodeNum, _dentry: DentryInfo) -> Result<()> {
@@ -177,12 +172,6 @@ impl InoDirPageMap for BasicInoDirPageMap {
         }
         None
     }
-
-    // fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DirPageInfo>> {
-    //     let map = Arc::clone(&self.map);
-    //     let map = map.lock();
-    //     map.get(&ino)
-    // }
 
     fn delete(&self, _ino: InodeNum, _page: DirPageInfo) -> Result<()> {
         unimplemented!();

@@ -2,7 +2,8 @@ use crate::defs::*;
 use crate::h_inode::*;
 use crate::pm::*;
 use crate::typestate::*;
-use core::{marker::PhantomData, mem};
+use crate::volatile::*;
+use core::{ffi, marker::PhantomData, mem};
 use kernel::prelude::*;
 
 #[repr(C)]
@@ -113,6 +114,24 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
             InodeWrapper::new(new_inode),
             InodeWrapper::new(parent_inode),
         )
+    }
+}
+
+impl<'a> DentryWrapper<'a, Clean, Complete> {
+    // TODO: maybe should take completed inode as well? or ino dentry insert should
+    // take the wrappers directly
+    pub(crate) fn index(&self, parent: InodeNum, sb: &SbInfo) -> Result<()> {
+        pr_info!("indexing\n");
+        let result = CStr::from_bytes_with_nul(&self.dentry.name);
+        pr_info!("{:?}\n", result);
+        let dentry_info = DentryInfo::new(
+            self.dentry.ino,
+            self.dentry as *const _ as *const ffi::c_void,
+            &self.dentry.name as *const _ as *const ffi::c_char,
+        );
+        pr_info!("created the dentry info\n");
+        pr_info!("{:?}\n", dentry_info);
+        sb.ino_dentry_map.insert(parent, dentry_info)
     }
 }
 

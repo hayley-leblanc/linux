@@ -26,7 +26,6 @@ impl inode::Operations for InodeOps {
         // TODO: it's probably not safe to just grab s_fs_info and
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
-        let ino_dentry_map = &sbi.ino_dentry_map;
 
         pr_info!(
             "looking up name {:?} in inode {:?}\n",
@@ -34,14 +33,15 @@ impl inode::Operations for InodeOps {
             dir.i_ino()
         );
 
-        let dir_empty = ino_dentry_map.is_empty(&dir.i_ino());
-        if dir_empty {
-            pr_info!("dir is empty\n");
-            Ok(None)
+        let result = sbi
+            .ino_dentry_map
+            .lookup_dentry(&dir.i_ino(), dentry.d_name());
+        if let Some(dentry_info) = result {
+            // the dentry exists in the specified directory
+            Ok(Some(dentry_info.get_ino()))
         } else {
-            pr_info!("there is some stuff in the directory\n");
-            // TODO: implement lookup in this case
-            Err(ENOTSUPP)
+            // the dentry does not exist in this directory
+            Ok(None)
         }
     }
 
@@ -184,7 +184,11 @@ fn hayleyfs_create<'a>(
     // the parent is initialized
     let pd = get_free_dentry(sbi, dir.i_ino())?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
-    init_dentry_with_new_reg_inode(sbi, pd)
+    let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, pd)?;
+
+    dentry.index(dir.i_ino(), sbi)?;
+
+    Ok((dentry, inode))
 }
 
 fn hayleyfs_link<'a>(
@@ -237,7 +241,11 @@ fn hayleyfs_mkdir<'a>(
     let pd = get_free_dentry(sbi, parent_ino)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
-    init_dentry_with_new_dir_inode(sbi, pd, parent_inode)
+    let (dentry, parent, inode) = init_dentry_with_new_dir_inode(sbi, pd, parent_inode)?;
+
+    dentry.index(dir.i_ino(), sbi)?;
+
+    Ok((dentry, parent, inode))
 }
 
 fn get_free_dentry<'a>(
