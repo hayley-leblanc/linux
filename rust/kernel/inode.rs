@@ -70,7 +70,7 @@ impl<T: Operations> OperationsVtable<T> {
     ) -> ffi::c_int {
         from_kernel_result! {
             let old_dentry = unsafe { &*old_dentry.cast() };
-            let dir = unsafe { &*dir.cast() };
+            let dir = unsafe { &mut *dir.cast() };
             let dentry = unsafe { &*dentry.cast() };
             T::link(old_dentry, dir, dentry)
         }
@@ -85,7 +85,7 @@ impl<T: Operations> OperationsVtable<T> {
         from_kernel_result! {
             // TODO: safety notes
             let mnt_userns = unsafe { &*mnt_userns.cast()};
-            let dir = unsafe { &*dir.cast() };
+            let dir = unsafe { &mut *dir.cast() };
             let dentry = unsafe { &mut *dentry.cast()};
             T::mkdir(mnt_userns, dir, dentry, umode)
         }
@@ -147,10 +147,10 @@ pub trait Operations {
     /// Corresponds to the `mkdir` function pointer in `struct inode_operations`.
     fn mkdir(
         mnt_userns: &UserNamespace,
-        dir: &INode,
+        dir: &mut INode,
         dentry: &DEntry,
         umode: bindings::umode_t,
     ) -> Result<i32>;
     /// Corresponds to the ``link` function pointer in `struct inode_operations`.
-    fn link(old_dentry: &DEntry, dir: &INode, dentry: &DEntry) -> Result<i32>;
+    fn link(old_dentry: &DEntry, dir: &mut INode, dentry: &DEntry) -> Result<i32>;
 }
