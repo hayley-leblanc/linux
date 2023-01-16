@@ -14,8 +14,8 @@ use kernel::PAGE_SIZE;
 
 pub(crate) trait PageAllocator {
     fn new(val: u64) -> Self;
-    fn alloc_page(&mut self) -> Result<PageNum>;
-    fn dealloc_page(&mut self, page: PageNum) -> Result<()>;
+    fn alloc_page(&self) -> Result<PageNum>;
+    fn dealloc_page(&self, page: PageNum) -> Result<()>;
 }
 
 /// Allocates by keeping a counter and returning the next number in the counter.
@@ -35,7 +35,7 @@ impl PageAllocator for BasicPageAllocator {
         }
     }
 
-    fn alloc_page(&mut self) -> Result<PageNum> {
+    fn alloc_page(&self) -> Result<PageNum> {
         if self.next_page.load(Ordering::SeqCst) == MAX_PAGES {
             Err(ENOSPC)
         } else {
@@ -43,7 +43,7 @@ impl PageAllocator for BasicPageAllocator {
         }
     }
 
-    fn dealloc_page(&mut self, _: PageNum) -> Result<()> {
+    fn dealloc_page(&self, _: PageNum) -> Result<()> {
         unimplemented!();
     }
 }
@@ -85,7 +85,7 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
         }
     }
 
-    pub(crate) fn from_dir_page_info(sbi: &'a mut SbInfo, info: &DirPageInfo) -> Result<Self> {
+    pub(crate) fn from_dir_page_info(sbi: &'a SbInfo, info: &DirPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
         let ph = page_no_to_header(sbi, page_no)?;
         if !ph.is_initialized() {
@@ -99,7 +99,7 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
 }
 
 // TODO: safety
-fn page_no_to_header(sbi: &mut SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
+fn page_no_to_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
     let virt_addr = sbi.get_virt_addr();
     let page_size_u64: u64 = PAGE_SIZE.try_into()?;
     let page_addr = unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) };
@@ -111,7 +111,7 @@ fn page_no_to_header(sbi: &mut SbInfo, page_no: PageNum) -> Result<&mut DirPageH
 impl<'a> DirPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
-    pub(crate) fn alloc_dir_page(sbi: &'a mut SbInfo) -> Result<Self> {
+    pub(crate) fn alloc_dir_page(sbi: &'a SbInfo) -> Result<Self> {
         // TODO: should we zero the page here?
         let page_no = sbi.page_allocator.alloc_page()?;
         let ph = page_no_to_header(sbi, page_no)?;

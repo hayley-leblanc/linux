@@ -190,8 +190,8 @@ impl<'a, Op, Type> InodeWrapper<'a, InFlight, Op, Type> {
 /// Interface for volatile inode allocator structures
 pub(crate) trait InodeAllocator {
     fn new(val: u64) -> Self;
-    fn alloc_ino(&mut self) -> Result<InodeNum>;
-    fn dealloc_ino(&mut self, ino: InodeNum) -> Result<()>;
+    fn alloc_ino(&self) -> Result<InodeNum>;
+    fn dealloc_ino(&self, ino: InodeNum) -> Result<()>;
 }
 
 /// Allocates inodes by keeping a counter and returning the next number in the
@@ -211,7 +211,7 @@ impl InodeAllocator for BasicInodeAllocator {
         }
     }
 
-    fn alloc_ino(&mut self) -> Result<InodeNum> {
+    fn alloc_ino(&self) -> Result<InodeNum> {
         if self.next_inode.load(Ordering::SeqCst) == NUM_INODES {
             Err(ENOSPC)
         } else {
@@ -219,7 +219,7 @@ impl InodeAllocator for BasicInodeAllocator {
         }
     }
 
-    fn dealloc_ino(&mut self, _: InodeNum) -> Result<()> {
+    fn dealloc_ino(&self, _: InodeNum) -> Result<()> {
         unimplemented!();
     }
 }

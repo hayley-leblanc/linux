@@ -3,10 +3,13 @@ use crate::defs::*;
 use crate::typestate::*;
 use core::ffi;
 use kernel::prelude::*;
-use kernel::rbtree::RBTree;
+use kernel::{
+    rbtree::RBTree,
+    sync::{smutex::Mutex, Arc},
+};
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub(crate) struct DentryInfo {
     parent: InodeNum,
     virt_addr: *mut ffi::c_void,
@@ -29,55 +32,90 @@ impl DentryInfo {
 }
 
 pub(crate) trait InoDentryMap {
-    fn new() -> Self;
-    fn insert(&mut self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
-    fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DentryInfo>>;
-    fn delete(&mut self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
+    fn new() -> Result<Self>
+    where
+        Self: Sized;
+    fn insert(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
+    fn lookup_dentry(&self, ino: &InodeNum, name: &CStr) -> Option<DentryInfo>;
+    fn is_empty(&self, ino: &InodeNum) -> bool;
+    fn delete(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
 }
 
 #[allow(dead_code)]
 pub(crate) struct BasicInoDentryMap {
-    map: RBTree<InodeNum, Vec<DentryInfo>>,
-}
-
-#[allow(dead_code)]
-impl BasicInoDentryMap {
-    pub(crate) fn new() -> Self {
-        Self { map: RBTree::new() }
-    }
+    map: Arc<Mutex<RBTree<InodeNum, Vec<DentryInfo>>>>,
 }
 
 impl InoDentryMap for BasicInoDentryMap {
-    fn new() -> Self {
-        Self { map: RBTree::new() }
+    fn new() -> Result<Self> {
+        Ok(Self {
+            map: Arc::try_new(Mutex::new(RBTree::new()))?,
+        })
     }
 
-    fn insert(&mut self, ino: InodeNum, dentry: DentryInfo) -> Result<()> {
-        if let Some(node) = self.map.get_mut(&ino) {
+    fn insert(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()> {
+        let map = Arc::clone(&self.map);
+        let mut map = map.lock();
+        if let Some(node) = map.get_mut(&ino) {
             node.try_push(dentry)?;
         } else {
             let mut vec = Vec::new();
             vec.try_push(dentry)?;
-            self.map.try_insert(ino, vec)?;
+            map.try_insert(ino, vec)?;
         }
         Ok(())
     }
 
-    fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DentryInfo>> {
-        self.map.get(&ino)
+    fn lookup_dentry(&self, ino: &InodeNum, name: &CStr) -> Option<DentryInfo> {
+        let map = Arc::clone(&self.map);
+        let map = map.lock();
+        let dentry_vec = map.get(&ino);
+        if let Some(dentry_vec) = dentry_vec {
+            for dentry in dentry_vec {
+                let dentry_name = unsafe { CStr::from_char_ptr(dentry.name) };
+                if str_equals(name, dentry_name) {
+                    return Some(dentry.clone());
+                }
+            }
+        }
+        None
     }
 
-    fn delete(&mut self, _ino: InodeNum, _dentry: DentryInfo) -> Result<()> {
+    fn is_empty(&self, ino: &InodeNum) -> bool {
+        let map = Arc::clone(&self.map);
+        let map = map.lock();
+        let dentry_vec = map.get(&ino);
+        let result = dentry_vec.is_none();
+        result
+    }
+
+    fn delete(&self, _ino: InodeNum, _dentry: DentryInfo) -> Result<()> {
         // TODO
         unimplemented!();
     }
 }
 
+fn str_equals(str1: &CStr, str2: &CStr) -> bool {
+    if str1.len_with_nul() != str2.len_with_nul() {
+        return false;
+    }
+    let len = str1.len_with_nul();
+    let str1 = str1.as_bytes_with_nul();
+    let str2 = str2.as_bytes_with_nul();
+    for i in 0..len {
+        if str1[i] != str2[i] {
+            return false;
+        }
+    }
+    return true;
+}
+
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub(crate) struct DirPageInfo {
     owner: InodeNum,
     page_no: PageNum,
+    full: bool,
     // virt_addr: *mut ffi::c_void,
 }
 
@@ -88,42 +126,65 @@ impl DirPageInfo {
 }
 
 pub(crate) trait InoDirPageMap {
-    fn new() -> Self;
-    fn insert<'a>(&mut self, ino: InodeNum, page: &DirPageWrapper<'a, Clean, Init>) -> Result<()>;
-    fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DirPageInfo>>;
-    fn delete(&mut self, ino: InodeNum, page: DirPageInfo) -> Result<()>;
+    fn new() -> Result<Self>
+    where
+        Self: Sized;
+    fn insert<'a>(&self, ino: InodeNum, page: &DirPageWrapper<'a, Clean, Init>) -> Result<()>;
+    fn find_page_with_free_dentry(&self, ino: &InodeNum) -> Option<DirPageInfo>;
+    fn delete(&self, ino: InodeNum, page: DirPageInfo) -> Result<()>;
 }
 
 pub(crate) struct BasicInoDirPageMap {
-    map: RBTree<InodeNum, Vec<DirPageInfo>>,
+    map: Arc<Mutex<RBTree<InodeNum, Vec<DirPageInfo>>>>,
 }
 
 impl InoDirPageMap for BasicInoDirPageMap {
-    fn new() -> Self {
-        Self { map: RBTree::new() }
+    fn new() -> Result<Self> {
+        Ok(Self {
+            map: Arc::try_new(Mutex::new(RBTree::new()))?,
+        })
     }
 
-    fn insert<'a>(&mut self, ino: InodeNum, page: &DirPageWrapper<'a, Clean, Init>) -> Result<()> {
+    fn insert<'a>(&self, ino: InodeNum, page: &DirPageWrapper<'a, Clean, Init>) -> Result<()> {
+        let map = Arc::clone(&self.map);
+        let mut map = map.lock();
         let page_no = page.get_page_no();
         let page_info = DirPageInfo {
             owner: ino,
             page_no,
+            full: false, // typestate requires it was just initialized, so we know it's empty
         };
-        if let Some(node) = self.map.get_mut(&ino) {
+        if let Some(node) = map.get_mut(&ino) {
             node.try_push(page_info)?;
         } else {
             let mut vec = Vec::new();
             vec.try_push(page_info)?;
-            self.map.try_insert(ino, vec)?;
+            map.try_insert(ino, vec)?;
         }
         Ok(())
     }
 
-    fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DirPageInfo>> {
-        self.map.get(&ino)
+    fn find_page_with_free_dentry<'a>(&self, ino: &InodeNum) -> Option<DirPageInfo> {
+        let map = Arc::clone(&self.map);
+        let map = map.lock();
+        let pages = map.get(&ino);
+        if let Some(pages) = pages {
+            for page in pages {
+                if !page.full {
+                    return Some(page.clone());
+                }
+            }
+        }
+        None
     }
 
-    fn delete(&mut self, _ino: InodeNum, _page: DirPageInfo) -> Result<()> {
+    // fn lookup_ino(&self, ino: &InodeNum) -> Option<&Vec<DirPageInfo>> {
+    //     let map = Arc::clone(&self.map);
+    //     let map = map.lock();
+    //     map.get(&ino)
+    // }
+
+    fn delete(&self, _ino: InodeNum, _page: DirPageInfo) -> Result<()> {
         unimplemented!();
     }
 }
