@@ -16,7 +16,7 @@ Easiest way to run this right now is to create a big VM and do everything inside
 
 ## VM setup
 
-1. Create a VM image: `qemu-system-x86_64 -f qcow2 <image name> <size>`
+1. Create a VM image: `qemu-img create -f qcow2 <image name> <size>`
 2. Download Ubuntu 20.04 or Ubuntu 22.04 and boot the VM using `qemu-system-x86_64 -boot d -cdrom <path to ubuntu ISO> -m 8G -hda <image name> -enable-kvm`. 
 3. Follow the instructions to install Ubuntu on the VM.
 4. Quit the VM and boot it again using `qemu-system-x86_64 -boot c -m 8G -hda <image name> -enable-kvm`.
