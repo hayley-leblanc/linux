@@ -177,3 +177,46 @@ impl InoDirPageMap for BasicInoDirPageMap {
         unimplemented!();
     }
 }
+
+#[derive(Debug, Copy, Clone)]
+#[allow(dead_code)]
+pub(crate) struct DataPageInfo {
+    owner: InodeNum,
+    page_no: PageNum,
+    offset: u64,
+}
+
+pub(crate) trait InoDataPageMap {
+    fn new() -> Result<Self>
+    where
+        Self: Sized;
+    fn insert<'a>(&self, ino: InodeNum, page: &DataPageWrapper<'a, Clean, Init>) -> Result<()>;
+    fn find(&self, ino: &InodeNum, offset: u64) -> Option<DataPageInfo>;
+    fn delete(&self, ino: &InodeNum, offset: u64) -> Result<()>;
+}
+
+#[allow(dead_code)]
+pub(crate) struct BasicInoDataPageMap {
+    map: Arc<Mutex<RBTree<InodeNum, Vec<DataPageInfo>>>>,
+}
+
+#[allow(dead_code)]
+impl InoDataPageMap for BasicInoDataPageMap {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            map: Arc::try_new(Mutex::new(RBTree::new()))?,
+        })
+    }
+
+    fn insert<'a>(&self, _ino: InodeNum, _page: &DataPageWrapper<'a, Clean, Init>) -> Result<()> {
+        unimplemented!();
+    }
+
+    fn find(&self, _ino: &InodeNum, _offset: u64) -> Option<DataPageInfo> {
+        unimplemented!();
+    }
+
+    fn delete(&self, _ino: &InodeNum, _offset: u64) -> Result<()> {
+        unimplemented!();
+    }
+}

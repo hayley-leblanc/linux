@@ -220,12 +220,14 @@ pub(crate) struct DataPageWrapper<'a, State, Op> {
 // TODO: we may be able to combine some DataPageWrapper methods with DirPageWrapper methods
 // by making them implement some shared trait - but need to be careful of dynamic dispatch.
 // dynamic dispatch may or may not be safe for us there
+#[allow(dead_code)]
 impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
     pub(crate) fn get_page_no(&self) -> PageNum {
         self.page_no
     }
 }
 
+#[allow(dead_code)]
 impl<'a> DataPageWrapper<'a, Clean, Start> {
     // TODO: safety
     unsafe fn wrap_data_page_header(ph: &'a mut DataPageHeader, page_no: PageNum) -> Self {
@@ -238,6 +240,7 @@ impl<'a> DataPageWrapper<'a, Clean, Start> {
     }
 }
 
+#[allow(dead_code)]
 fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
     let virt_addr = sbi.get_virt_addr();
     let page_size_u64: u64 = PAGE_SIZE.try_into()?;
@@ -252,6 +255,7 @@ fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPag
     }
 }
 
+#[allow(dead_code)]
 impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
