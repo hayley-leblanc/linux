@@ -87,7 +87,7 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
 
     pub(crate) fn from_dir_page_info(sbi: &'a SbInfo, info: &DirPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
-        let ph = page_no_to_header(sbi, page_no)?;
+        let ph = page_no_to_dir_header(sbi, page_no)?;
         if !ph.is_initialized() {
             Err(EPERM)
         } else {
@@ -99,7 +99,7 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
 }
 
 // TODO: safety
-fn page_no_to_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
+fn page_no_to_dir_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
     let virt_addr = sbi.get_virt_addr();
     let page_size_u64: u64 = PAGE_SIZE.try_into()?;
     let page_addr = unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) };
@@ -119,7 +119,7 @@ impl<'a> DirPageWrapper<'a, Dirty, Alloc> {
     pub(crate) fn alloc_dir_page(sbi: &'a SbInfo) -> Result<Self> {
         // TODO: should we zero the page here?
         let page_no = sbi.page_allocator.alloc_page()?;
-        let ph = page_no_to_header(sbi, page_no)?;
+        let ph = page_no_to_dir_header(sbi, page_no)?;
 
         ph.page_type = PageType::DIR;
         Ok(DirPageWrapper {
@@ -192,5 +192,80 @@ impl<'a, Op> DirPageWrapper<'a, InFlight, Op> {
             page_no: self.page_no,
             page: self.page,
         }
+    }
+}
+
+#[allow(dead_code)]
+struct DataPageHeader {
+    page_type: PageType,
+    ino: InodeNum,
+    offset: u64,
+}
+
+#[allow(dead_code)]
+impl DataPageHeader {
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.page_type != PageType::NONE && self.ino != 0
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) struct DataPageWrapper<'a, State, Op> {
+    state: PhantomData<State>,
+    op: PhantomData<Op>,
+    page_no: PageNum,
+    page: &'a mut DataPageHeader,
+}
+
+// TODO: we may be able to combine some DataPageWrapper methods with DirPageWrapper methods
+// by making them implement some shared trait - but need to be careful of dynamic dispatch.
+// dynamic dispatch may or may not be safe for us there
+impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
+    pub(crate) fn get_page_no(&self) -> PageNum {
+        self.page_no
+    }
+}
+
+impl<'a> DataPageWrapper<'a, Clean, Start> {
+    // TODO: safety
+    unsafe fn wrap_data_page_header(ph: &'a mut DataPageHeader, page_no: PageNum) -> Self {
+        Self {
+            state: PhantomData,
+            op: PhantomData,
+            page_no,
+            page: ph,
+        }
+    }
+}
+
+fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
+    let virt_addr = sbi.get_virt_addr();
+    let page_size_u64: u64 = PAGE_SIZE.try_into()?;
+    let page_addr = unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) };
+    // cast raw page address to data page header
+    let ph: &mut DataPageHeader = unsafe { &mut *page_addr.cast() };
+    // check page type
+    if ph.page_type != PageType::DATA {
+        Err(EINVAL)
+    } else {
+        Ok(ph)
+    }
+}
+
+impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
+    /// Allocate a new page and set it to be a directory page.
+    /// Does NOT flush the allocated page.
+    pub(crate) fn alloc_data_page(sbi: &'a SbInfo) -> Result<Self> {
+        // TODO: should we zero the page here?
+        let page_no = sbi.page_allocator.alloc_page()?;
+        let ph = page_no_to_data_header(sbi, page_no)?;
+
+        ph.page_type = PageType::DATA;
+        Ok(DataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            page_no,
+            page: ph,
+        })
     }
 }
