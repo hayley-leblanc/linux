@@ -5,8 +5,8 @@
 //! C headers: [`include/linux/fs.h`](../../../../include/linux/fs.h)
 
 use crate::{
-    bindings, error::code::*, error::from_kernel_result, inode, str::CStr, to_result,
-    types::PointerWrapper, AlwaysRefCounted, Error, Result, ScopeGuard, ThisModule,
+    bindings, error::code::*, error::from_kernel_result, inode, str::CStr, sync::RwSemaphore,
+    to_result, types::PointerWrapper, AlwaysRefCounted, Error, Result, ScopeGuard, ThisModule,
 };
 use alloc::boxed::Box;
 use core::{
@@ -798,6 +798,15 @@ impl INode {
     /// Calls the kernel's `inc_nlink` function on the inode
     pub fn inc_nlink(&mut self) {
         unsafe { bindings::inc_nlink(self.0.get()) }
+    }
+
+    /// Returns the inner inode wrapped in the Rust binding for its RwSemaphore
+    ///
+    /// # Safety
+    /// TODO: safety. caller must ensure that the inode actually has an irwsem?
+    pub unsafe fn i_rwsem(&mut self) -> RwSemaphore<&mut Self> {
+        let i_rwsem = unsafe { (*self.0.get()).i_rwsem };
+        unsafe { RwSemaphore::new_with_sem(self, i_rwsem) }
     }
 
     /// Sets the inode's `i_ctime` field to the current time.
