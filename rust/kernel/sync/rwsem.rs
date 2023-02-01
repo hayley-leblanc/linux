@@ -68,6 +68,19 @@ impl<T> RwSemaphore<T> {
             _pin: PhantomPinned,
         }
     }
+
+    /// Constructs a new rw semaphore given an existing raw semaphore.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the semaphore is initialized before using the rw semaphore.
+    pub unsafe fn new_with_sem(t: T, sem: bindings::rw_semaphore) -> Self {
+        Self {
+            rwsem: Opaque::new(sem),
+            data: UnsafeCell::new(t),
+            _pin: PhantomPinned,
+        }
+    }
 }
 
 impl<T: ?Sized> RwSemaphore<T> {
