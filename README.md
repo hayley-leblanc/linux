@@ -16,20 +16,20 @@ Easiest way to run this right now is to create a big VM and do everything inside
 
 ## VM setup
 
-1. Create a VM image: `qemu-system-x86_64 -f qcow2 <image name> <size>`
+1. Create a VM image: `qemu-img create -f qcow2 <image name> <size>`
 2. Download Ubuntu 20.04 or Ubuntu 22.04 and boot the VM using `qemu-system-x86_64 -boot d -cdrom <path to ubuntu ISO> -m 8G -hda <image name> -enable-kvm`. 
 3. Follow the instructions to install Ubuntu on the VM.
 4. Quit the VM and boot it again using `qemu-system-x86_64 -boot c -m 8G -hda <image name> -enable-kvm`.
-5. Open a terminal in the graphical VM and run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang zstd`
-6. Rust for Linux requires a certain version for some LLVM utilities that is not properly set up by default. To fix this, `cd` to /usr/bin on the VM and create the following symlinks:
+5. Open a terminal in the graphical VM and run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang zstd lld-14`
+<!-- 6. Rust for Linux requires a certain version for some LLVM utilities that is not properly set up by default. To fix this, `cd` to /usr/bin on the VM and create the following symlinks:
 ```
 sudo ln -s llvm-ar llvm-ar-14
 sudo ln -s llvm-nm llvm-nm-14
 sudo ln -s llvm-objcopy llvm-objcopy-14
 sudo ln -s llvm-strip llvm-strip-14
 sudo ln -s llvm-objdump llvm-objdump-14
-```
-7. The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <image name> -enable-kvm -net nic -net user,hostfwd=tcp::2222-:22 -cpu host -nographic -smp <cores>` and accessed via ssh over port 2222.
+``` -->
+6. The VM can now be booted using `qemu-system-x86_64 -boot c -m <memory> -hda <image name> -enable-kvm -net nic -net user,hostfwd=tcp::2222-:22 -cpu host -nographic -smp <cores>` and accessed via ssh over port 2222.
 
 ## Kernel setup
 
@@ -69,7 +69,7 @@ TODO: add instructions for building on host and using direct boot.
 11. Check that everything was set up properly. `uname -r` should return a kernel version number starting with `6.1.0` and followed by a long string of numbers and letters. The output for `lsblk` should include a device called `pmem0` - this is the emulated PM device we created in step 6.
 
 The above steps only need to be followed the first time after cloning the kernel. The steps for subsequent builds of the entire kernel are:
-1. `make LLVM=1 -j <number of cores>`
+1. `make LLVM=-14 -j <number of cores>`
 2. `sudo make modules_install install`
 3. Reboot
 
@@ -79,7 +79,7 @@ You do *not* need to rebuild the entire kernel every time you make a change to t
 
 ## File system setup
 
-Building just the file system: `make LLVM=1 fs/hayleyfs/hayleyfs.ko`
+Building just the file system: `make LLVM=-14 fs/hayleyfs/hayleyfs.ko`
 
 To load the file system module: `sudo insmod fs/hayleyfs/hayleyfs.ko`
 
