@@ -105,7 +105,12 @@ fn page_no_to_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DirPageHeade
     let page_addr = unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) };
     // cast raw page address to dir page header
     let ph: &mut DirPageHeader = unsafe { &mut *page_addr.cast() };
-    Ok(ph)
+    // check page type
+    if !(ph.page_type == PageType::DIR || ph.page_type == PageType::NONE) {
+        Err(EINVAL)
+    } else {
+        Ok(ph)
+    }
 }
 
 impl<'a> DirPageWrapper<'a, Dirty, Alloc> {

@@ -13,6 +13,7 @@ use pm::*;
 mod balloc;
 mod defs;
 mod dir;
+mod h_file;
 mod h_inode;
 mod namei;
 mod pm;

@@ -1,12 +1,13 @@
 use crate::balloc::*;
 use crate::defs::*;
 use crate::dir::*;
+use crate::h_file::*;
 use crate::h_inode::*;
 use crate::typestate::*;
 use crate::volatile::*;
 use core::ffi;
 use kernel::prelude::*;
-use kernel::{bindings, error, fs, inode};
+use kernel::{bindings, error, file, fs, inode};
 
 pub(crate) struct InodeOps;
 #[vtable]
@@ -145,7 +146,9 @@ fn new_vfs_inode<'a, Type>(
             vfs_inode.i_mode = umode;
             unsafe {
                 vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
-                vfs_inode.__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+                // vfs_inode.__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+                vfs_inode.__bindgen_anon_3.i_fop =
+                    file::OperationsVtable::<Adapter, FileOps>::build();
                 bindings::set_nlink(vfs_inode, 1);
             }
         }
@@ -192,6 +195,7 @@ fn hayleyfs_create<'a>(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
+    pr_info!("hayleyfs_create\n");
     // TODO: should perhaps take inode wrapper to the parent so that we know
     // the parent is initialized
     let pd = get_free_dentry(sbi, dir.i_ino())?;

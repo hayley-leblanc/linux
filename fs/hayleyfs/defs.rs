@@ -34,7 +34,7 @@ pub(crate) const SB_SIZE: usize = 64;
 
 #[repr(C)]
 #[allow(dead_code)]
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub(crate) enum PageType {
     NONE = 0,
     DIR,
