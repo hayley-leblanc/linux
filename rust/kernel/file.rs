@@ -163,6 +163,16 @@ impl File {
         // SAFETY: The file is valid because the shared reference guarantees a nonzero refcount.
         unsafe { core::ptr::addr_of!((*self.0.get()).f_flags).read() }
     }
+
+    /// Returns the inode associated with the file
+    pub fn inode(&self) -> *mut bindings::inode {
+        unsafe { core::ptr::addr_of!((*self.0.get()).f_inode).read() }
+    }
+
+    /// Returns a raw pointer to the `struct file`
+    pub fn get_inner(&self) -> *mut bindings::file {
+        self.0.get()
+    }
 }
 
 // SAFETY: The type invariants guarantee that `File` is always ref-counted.
@@ -283,7 +293,8 @@ pub enum SeekFrom {
     Current(i64),
 }
 
-pub(crate) struct OperationsVtable<A, T>(marker::PhantomData<A>, marker::PhantomData<T>);
+/// Vtable for file operations
+pub struct OperationsVtable<A, T>(marker::PhantomData<A>, marker::PhantomData<T>);
 
 impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
     /// Called by the VFS when an inode should be opened.
@@ -639,7 +650,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
     /// # Safety
     ///
     /// The caller must ensure that the adapter is compatible with the way the device is registered.
-    pub(crate) const unsafe fn build() -> &'static bindings::file_operations {
+    pub const unsafe fn build() -> &'static bindings::file_operations {
         &Self::VTABLE
     }
 }
