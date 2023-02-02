@@ -186,6 +186,12 @@ pub(crate) struct DataPageInfo {
     offset: u64,
 }
 
+impl DataPageInfo {
+    pub(crate) fn get_page_no(&self) -> PageNum {
+        self.page_no
+    }
+}
+
 pub(crate) trait InoDataPageMap {
     fn new() -> Result<Self>
     where

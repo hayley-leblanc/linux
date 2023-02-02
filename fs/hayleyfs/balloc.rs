@@ -49,6 +49,7 @@ impl PageAllocator for BasicPageAllocator {
 }
 
 #[allow(dead_code)]
+#[repr(C)]
 struct DirPageHeader {
     page_type: PageType,
     ino: InodeNum,
@@ -85,6 +86,8 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
         }
     }
 
+    /// This method returns a DirPageWrapper ONLY if the page is initialized
+    /// Otherwise it returns an error
     pub(crate) fn from_dir_page_info(sbi: &'a SbInfo, info: &DirPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
         let ph = page_no_to_dir_header(sbi, page_no)?;
@@ -196,10 +199,26 @@ impl<'a, Op> DirPageWrapper<'a, InFlight, Op> {
 }
 
 #[allow(dead_code)]
+#[repr(C)]
 struct DataPageHeader {
     page_type: PageType,
     ino: InodeNum,
     offset: u64,
+}
+
+// TODO: inline? macro?
+pub(crate) fn bytes_per_page() -> usize {
+    PAGE_SIZE - mem::size_of::<DataPageHeader>()
+}
+
+/// Given the offset into a file, returns the offset of the
+/// DataPageHeader that includes that offset
+pub(crate) fn page_offset(offset: u64) -> Result<usize> {
+    let bytes_per_page = bytes_per_page();
+    let offset_usize: usize = offset.try_into()?;
+    // integer division removes the remainder; multiplying by bytes_per_page
+    // gives us the offset of the page to read/write
+    Ok((offset_usize / bytes_per_page) * bytes_per_page)
 }
 
 #[allow(dead_code)]
@@ -232,19 +251,6 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
 }
 
 #[allow(dead_code)]
-impl<'a> DataPageWrapper<'a, Clean, Start> {
-    // TODO: safety
-    unsafe fn wrap_data_page_header(ph: &'a mut DataPageHeader, page_no: PageNum) -> Self {
-        Self {
-            state: PhantomData,
-            op: PhantomData,
-            page_no,
-            page: ph,
-        }
-    }
-}
-
-#[allow(dead_code)]
 fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
     let virt_addr = sbi.get_virt_addr();
     let page_size_u64: u64 = PAGE_SIZE.try_into()?;
@@ -260,20 +266,70 @@ fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPag
 }
 
 #[allow(dead_code)]
-impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
+impl<'a> DataPageWrapper<'a, Dirty, Writeable> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
-    pub(crate) fn alloc_data_page(sbi: &'a SbInfo) -> Result<Self> {
+    pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: u64) -> Result<Self> {
         // TODO: should we zero the page here?
         let page_no = sbi.page_allocator.alloc_page()?;
         let ph = page_no_to_data_header(sbi, page_no)?;
 
         ph.page_type = PageType::DATA;
+        ph.offset = offset;
         Ok(DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             page_no,
             page: ph,
         })
+    }
+}
+
+impl<'a> DataPageWrapper<'a, Clean, Writeable> {
+    // TODO: this doesn't need to be unsafe I think
+    unsafe fn wrap_data_page_header(ph: &'a mut DataPageHeader, page_no: PageNum) -> Result<Self> {
+        if !ph.is_initialized() {
+            Err(EPERM)
+        } else {
+            Ok(Self {
+                state: PhantomData,
+                op: PhantomData,
+                page_no,
+                page: ph,
+            })
+        }
+    }
+
+    /// This method returns a DataPageWrapper ONLY if the page is initialized
+    /// Otherwise it returns an error
+    pub(crate) fn from_data_page_info(sbi: &'a SbInfo, info: DataPageInfo) -> Result<Self> {
+        let page_no = info.get_page_no();
+        let ph = page_no_to_data_header(sbi, page_no)?;
+        // wrap_data_page_header checks whether the page is initialized
+        unsafe { Self::wrap_data_page_header(ph, page_no) }
+    }
+}
+
+impl<'a, Op> DataPageWrapper<'a, Dirty, Op> {
+    pub(crate) fn flush(self) -> DataPageWrapper<'a, InFlight, Op> {
+        flush_buffer(self.page, mem::size_of::<DataPageHeader>(), false);
+        DataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            page_no: self.page_no,
+            page: self.page,
+        }
+    }
+}
+
+impl<'a, Op> DataPageWrapper<'a, InFlight, Op> {
+    pub(crate) fn fence(self) -> DataPageWrapper<'a, Clean, Op> {
+        sfence();
+        DataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            page_no: self.page_no,
+            page: self.page,
+        }
     }
 }

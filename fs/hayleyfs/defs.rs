@@ -96,6 +96,7 @@ pub(crate) struct SbInfo {
     // TODO: fix this.
     pub(crate) ino_dentry_map: BasicInoDentryMap, // InoDentryMap
     pub(crate) ino_dir_page_map: BasicInoDirPageMap, // InoDirPageMap
+    pub(crate) ino_data_page_map: BasicInoDataPageMap, // InoDataPageMap
 
     // volatile allocators
     // again, these should really be trait objects, but the system won't compile
@@ -121,9 +122,10 @@ impl SbInfo {
             sb: ptr::null_mut(),
             dax_dev: ptr::null_mut(),
             virt_addr: ptr::null_mut(),
-            size: 0,                                         // total size of the PM device
-            ino_dentry_map: InoDentryMap::new().unwrap(),    // TODO: handle possible panic
-            ino_dir_page_map: InoDirPageMap::new().unwrap(), // TODO: handle possible panic
+            size: 0,                                           // total size of the PM device
+            ino_dentry_map: InoDentryMap::new().unwrap(),      // TODO: handle possible panic
+            ino_dir_page_map: InoDirPageMap::new().unwrap(),   // TODO: handle possible panic
+            ino_data_page_map: InoDataPageMap::new().unwrap(), // TODO: handle possible panic
             page_allocator: PageAllocator::new(DATA_PAGE_START),
             inode_allocator: InodeAllocator::new(ROOT_INO + 1),
         }

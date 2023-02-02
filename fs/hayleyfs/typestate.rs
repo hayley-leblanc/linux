@@ -10,6 +10,7 @@ pub(crate) struct Alloc {}
 pub(crate) struct Init {}
 pub(crate) struct IncLink {}
 pub(crate) struct Complete {}
+pub(crate) struct Writeable {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}
