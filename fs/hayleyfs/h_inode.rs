@@ -26,6 +26,7 @@ impl AnyInode for DirInode {}
 pub(crate) struct HayleyFsInode {
     link_count: u16,
     inode_type: InodeType,
+    size: u64,
     ino: InodeNum,
 }
 
@@ -45,6 +46,7 @@ impl HayleyFsInode {
         let mut root_ino = unsafe { sbi.get_inode_by_ino(ROOT_INO)? };
         root_ino.ino = ROOT_INO;
         root_ino.link_count = 2;
+        root_ino.size = 4096; // dir size always set to 4KB
         root_ino.inode_type = InodeType::DIR;
         Ok(root_ino)
     }
@@ -121,6 +123,23 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         } else {
             unsafe { self.inode.inc_link_count() };
             Ok(Self::new(self))
+        }
+    }
+
+    /// NOTE: this has basically no restrictions on when it can be called. it also
+    /// lets you move an inode into IncSize even if its size does not increase. these
+    /// may or may not be real problems
+    pub(crate) fn inc_size(self, pos: u64) -> InodeWrapper<'a, Clean, IncSize, Type> {
+        if self.inode.ino < pos {
+            self.inode.ino = pos;
+            flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+        }
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            inode_type: PhantomData,
+            ino: self.ino,
+            inode: self.inode,
         }
     }
 }

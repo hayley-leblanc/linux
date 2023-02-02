@@ -11,6 +11,8 @@ pub(crate) struct Init {}
 pub(crate) struct IncLink {}
 pub(crate) struct Complete {}
 pub(crate) struct Writeable {}
+pub(crate) struct Written {}
+pub(crate) struct IncSize {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}

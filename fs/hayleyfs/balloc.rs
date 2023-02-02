@@ -5,12 +5,13 @@ use crate::pm::*;
 use crate::typestate::*;
 use crate::volatile::*;
 use core::{
+    ffi::c_void,
     marker::PhantomData,
     mem,
     sync::atomic::{AtomicU64, Ordering},
 };
 use kernel::prelude::*;
-use kernel::PAGE_SIZE;
+use kernel::{io_buffer::IoBufferReader, PAGE_SIZE};
 
 pub(crate) trait PageAllocator {
     fn new(val: u64) -> Self;
@@ -248,6 +249,10 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
     pub(crate) fn get_offset(&self) -> u64 {
         self.page.offset
     }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.page.ino
+    }
 }
 
 #[allow(dead_code)]
@@ -307,6 +312,60 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         let ph = page_no_to_data_header(sbi, page_no)?;
         // wrap_data_page_header checks whether the page is initialized
         unsafe { Self::wrap_data_page_header(ph, page_no) }
+    }
+
+    pub(crate) fn write_to_page(
+        self,
+        reader: &mut impl IoBufferReader,
+        offset: u64,
+        len: usize,
+    ) -> Result<(usize, DataPageWrapper<'a, InFlight, Written>)> {
+        // get raw pointer to the actual DataPageHeader
+        let ptr: *mut DataPageHeader = self.page;
+        // then offset by the size of the header and the offset into the page
+        let ptr = unsafe { ptr.offset(mem::size_of::<DataPageHeader>().try_into()?) };
+        let ptr = unsafe { ptr.offset(offset.try_into()?) };
+
+        // FIXME: read_raw and read_raw_nt return a Result that does NOT include the
+        // number of bytes actually read. they return an error if all bytes are not
+        // read. this is not the behavior we expect or want here. It does return an
+        // error if all bytes are not written so we can safely return len if
+        // the read does succeed though
+        unsafe { reader.read_raw_nt(ptr as *mut u8, len) }?;
+
+        unsafe { flush_edge_cachelines(ptr as *mut c_void, len) }?;
+
+        Ok((
+            len,
+            DataPageWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                page_no: self.page_no,
+                page: self.page,
+            },
+        ))
+    }
+}
+
+impl<'a> DataPageWrapper<'a, Clean, Written> {
+    /// NOTE: this method returns a clean backpointer, since some pages
+    /// will not actually need to be modified here. when they do, this method
+    /// flushes and fences
+    pub(crate) fn set_data_page_backpointer(
+        self,
+        inode: &InodeWrapper<'a, Clean, Start, RegInode>,
+    ) -> DataPageWrapper<'a, Clean, Init> {
+        // page needs to be switched to Init typestate but does not need to be updated
+        if self.get_ino() == 0 {
+            self.page.ino = inode.get_ino();
+            flush_buffer(self.page, mem::size_of::<DataPageHeader>(), true);
+        }
+        DataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            page_no: self.page_no,
+            page: self.page,
+        }
     }
 }
 
