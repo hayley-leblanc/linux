@@ -208,12 +208,38 @@ impl InoDataPageMap for BasicInoDataPageMap {
         })
     }
 
-    fn insert<'a>(&self, _ino: InodeNum, _page: &DataPageWrapper<'a, Clean, Init>) -> Result<()> {
-        unimplemented!();
+    fn insert<'a>(&self, ino: InodeNum, page: &DataPageWrapper<'a, Clean, Init>) -> Result<()> {
+        let map = Arc::clone(&self.map);
+        let mut map = map.lock();
+        let page_no = page.get_page_no();
+        let page_info = DataPageInfo {
+            owner: ino,
+            page_no,
+            offset: page.get_offset(),
+        };
+
+        if let Some(node) = map.get_mut(&ino) {
+            node.try_push(page_info)?;
+        } else {
+            let mut vec = Vec::new();
+            vec.try_push(page_info)?;
+            map.try_insert(ino, vec)?;
+        }
+        Ok(())
     }
 
-    fn find(&self, _ino: &InodeNum, _offset: u64) -> Option<DataPageInfo> {
-        unimplemented!();
+    fn find(&self, ino: &InodeNum, offset: u64) -> Option<DataPageInfo> {
+        let map = Arc::clone(&self.map);
+        let map = map.lock();
+        let pages = map.get(&ino);
+        if let Some(pages) = pages {
+            for page in pages {
+                if page.offset == offset {
+                    return Some(page.clone());
+                }
+            }
+        }
+        None
     }
 
     fn delete(&self, _ino: &InodeNum, _offset: u64) -> Result<()> {

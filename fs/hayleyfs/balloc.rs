@@ -225,6 +225,10 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
     pub(crate) fn get_page_no(&self) -> PageNum {
         self.page_no
     }
+
+    pub(crate) fn get_offset(&self) -> u64 {
+        self.page.offset
+    }
 }
 
 #[allow(dead_code)]
