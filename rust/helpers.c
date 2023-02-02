@@ -290,6 +290,11 @@ void rust_helper_init_waitqueue_func_entry(struct wait_queue_entry *wq_entry,
 }
 EXPORT_SYMBOL_GPL(rust_helper_init_waitqueue_func_entry);
 
+void rust_helper_i_size_write(struct inode *inode, loff_t i_size) {
+	i_size_write(inode, i_size);
+}
+EXPORT_SYMBOL_GPL(rust_helper_i_size_write);
+
 int rust_helper_signal_pending(struct task_struct *t)
 {
 	return signal_pending(t);

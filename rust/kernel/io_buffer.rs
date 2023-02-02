@@ -25,6 +25,14 @@ pub trait IoBufferReader {
     /// The output buffer must be valid.
     unsafe fn read_raw(&mut self, out: *mut u8, len: usize) -> Result;
 
+    /// Reads raw data from the io buffer into a raw kernel buffer, using non-temporal
+    /// stores for the copy.
+    ///
+    /// # Safety
+    ///
+    /// The output buffer must be valid.
+    unsafe fn read_raw_nt(&mut self, out: *mut u8, len: usize) -> Result;
+
     /// Reads all data remaining in the io buffer.
     ///
     /// Returns `EFAULT` if the address does not currently point to mapped, readable memory.

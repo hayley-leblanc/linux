@@ -125,6 +125,27 @@ impl IoBufferReader for UserSlicePtrReader {
         self.1 -= len;
         Ok(())
     }
+
+    /// Reads raw data from the user slice into a raw kernel buffer using non-temporal stores
+    ///
+    /// # Safety
+    ///
+    /// The output buffer must be valid.
+    unsafe fn read_raw_nt(&mut self, out: *mut u8, len: usize) -> Result {
+        if len > self.1 || len > u32::MAX as usize {
+            return Err(EFAULT);
+        }
+        let res = unsafe { bindings::copy_from_user_inatomic_nocache(out as _, self.0, len as _) };
+        if res != 0 {
+            return Err(EFAULT);
+        }
+        // Since this is not a pointer to a valid object in our program,
+        // we cannot use `add`, which has C-style rules for defined
+        // behavior.
+        self.0 = self.0.wrapping_add(len);
+        self.1 -= len;
+        Ok(())
+    }
 }
 
 /// A writer for [`UserSlicePtr`].
