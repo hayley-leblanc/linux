@@ -78,4 +78,13 @@ impl IoBufferReader for IovIter {
             Ok(())
         }
     }
+
+    unsafe fn read_raw_nt(&mut self, out: *mut u8, len: usize) -> Result {
+        let res = unsafe { bindings::_copy_from_iter_nocache(out as _, len, self.ptr) };
+        if res != len {
+            Err(EFAULT)
+        } else {
+            Ok(())
+        }
+    }
 }
