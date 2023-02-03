@@ -91,24 +91,23 @@ fn hayleyfs_write<'a>(
     // TODO: update timestamp
 
     let bytes_per_page = bytes_per_page();
+    let mut offset: usize = offset.try_into()?;
     let mut written = 0;
     while count > 0 {
         // this is the value of the `offset` field of the page that
         // we want to write to
-        let page_offset = page_offset(offset)?;
+        let page_offset = page_offset(offset.try_into()?)?;
 
         // does this page exist yet? if not, allocate it
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
         let data_page = if let Some(page_info) = result {
             DataPageWrapper::from_data_page_info(sbi, page_info)?
         } else {
-            pr_info!("Page does not exist\n");
             DataPageWrapper::alloc_data_page(sbi, offset)?
                 .flush()
                 .fence()
         };
-        let offset_in_page = data_page.get_offset() - offset;
-        let offset: usize = offset.try_into()?;
+        let offset_in_page = page_offset - offset;
         let bytes_after_offset = bytes_per_page - offset;
         // either write the rest of the count or write to the end of the page
         let to_write = if count < bytes_after_offset {
@@ -137,11 +136,11 @@ fn hayleyfs_write<'a>(
 
         count -= bytes_written;
         written += bytes_written;
+        offset += bytes_written;
     }
 
-    let written_u64: u64 = written.try_into()?;
-    let pos = offset + written_u64;
-    let pi = pi.inc_size(pos);
+    let pos = offset + written;
+    let pi = pi.inc_size(pos.try_into()?);
 
     // update the VFS inode's size
     inode.i_size_write(pos.try_into()?);
@@ -157,7 +156,7 @@ fn hayleyfs_read(
 ) -> Result<usize> {
     let count = writer.len();
     pr_info!("reading {:?} bytes at offset {:?}\n", count, offset);
-
+    let mut offset: usize = offset.try_into()?;
     // TODO: update timestamp
 
     // acquire shared read lock
@@ -166,22 +165,36 @@ fn hayleyfs_read(
     let ino = inode.i_ino();
     let mut count = writer.len();
 
-    let _bytes_per_page = bytes_per_page();
-    // let mut read = 0;
+    let bytes_per_page = bytes_per_page();
+    let mut bytes_read = 0;
     while count > 0 {
-        let page_offset = page_offset(offset)?;
-        pr_info!("offset {:?}\n", page_offset);
+        let page_offset = page_offset(offset.try_into()?)?;
+
+        let offset_in_page = page_offset - offset;
+        // let offset_usize: usize = offset.try_into()?;
+        let bytes_after_offset = bytes_per_page - offset;
+        // either read the rest of the count or write to the end of the page
+        let to_read = if count < bytes_after_offset {
+            count
+        } else {
+            bytes_after_offset
+        };
 
         // if the page exists, read from it. Otherwise, return zeroes
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
         if let Some(page_info) = result {
-            pr_info!("Page exists {:?}\n", page_info);
+            let data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
+            data_page.read_from_page(writer, offset_in_page, to_read)?;
+            bytes_read += to_read;
+            offset += to_read;
+            count -= bytes_read;
         } else {
-            pr_info!("page does not exist\n");
+            writer.clear(to_read)?;
+            bytes_read += to_read;
+            offset += to_read;
+            count -= bytes_read;
         }
-
-        count = 0;
     }
 
-    Err(EINVAL)
+    Ok(bytes_read)
 }

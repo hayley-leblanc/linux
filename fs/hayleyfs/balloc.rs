@@ -11,7 +11,10 @@ use core::{
     sync::atomic::{AtomicU64, Ordering},
 };
 use kernel::prelude::*;
-use kernel::{io_buffer::IoBufferReader, PAGE_SIZE};
+use kernel::{
+    io_buffer::{IoBufferReader, IoBufferWriter},
+    PAGE_SIZE,
+};
 
 pub(crate) trait PageAllocator {
     fn new(val: u64) -> Self;
@@ -274,13 +277,13 @@ fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPag
 impl<'a> DataPageWrapper<'a, Dirty, Writeable> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
-    pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: u64) -> Result<Self> {
+    pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: usize) -> Result<Self> {
         // TODO: should we zero the page here?
         let page_no = sbi.page_allocator.alloc_page()?;
         let ph = page_no_to_data_header(sbi, page_no)?;
 
         ph.page_type = PageType::DATA;
-        ph.offset = offset;
+        ph.offset = offset.try_into()?;
         Ok(DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
@@ -317,7 +320,7 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     pub(crate) fn write_to_page(
         self,
         reader: &mut impl IoBufferReader,
-        offset: u64,
+        offset: usize,
         len: usize,
     ) -> Result<(usize, DataPageWrapper<'a, InFlight, Written>)> {
         // get raw pointer to the actual DataPageHeader
@@ -344,6 +347,25 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
                 page: self.page,
             },
         ))
+    }
+
+    pub(crate) fn read_from_page(
+        &self,
+        writer: &mut impl IoBufferWriter,
+        offset: usize,
+        len: usize,
+    ) -> Result<usize> {
+        // get raw pointer to the actual DataPageHeader
+        let ptr: *const DataPageHeader = self.page;
+        // then offset by the size of the header and the offset into the page
+        let ptr = unsafe { ptr.offset(mem::size_of::<DataPageHeader>().try_into()?) };
+        let ptr = unsafe { ptr.offset(offset.try_into()?) };
+
+        // FIXME: same problem as write_to_page - write_raw returns an error if
+        // the bytes are not all written, which is not what we want.
+        unsafe { writer.write_raw(ptr as *const u8, len) }?;
+
+        Ok(len)
     }
 }
 
