@@ -83,7 +83,6 @@ fn hayleyfs_write<'a>(
 ) -> Result<(usize, InodeWrapper<'a, Clean, IncSize, RegInode>)> {
     // TODO: give a way out if reader.len() is 0
     let mut count = reader.len();
-    pr_info!("writing {:?} bytes to offset {:?}\n", count, offset);
     let mut inode = inode.write();
     let ino = inode.i_ino();
     let pi = sbi.get_init_reg_inode_by_ino(ino)?;
@@ -108,13 +107,18 @@ fn hayleyfs_write<'a>(
                 .fence()
         };
         let offset_in_page = page_offset - offset;
-        let bytes_after_offset = bytes_per_page - offset;
+        let bytes_after_offset = bytes_per_page - offset_in_page;
         // either write the rest of the count or write to the end of the page
         let to_write = if count < bytes_after_offset {
             count
         } else {
             bytes_after_offset
         };
+        pr_info!(
+            "writing {:?} bytes to page {:?}\n",
+            to_write,
+            data_page.get_page_no()
+        );
 
         let (bytes_written, data_page) =
             data_page.write_to_page(reader, offset_in_page, to_write)?;
@@ -133,7 +137,6 @@ fn hayleyfs_write<'a>(
             );
             break;
         }
-
         count -= bytes_written;
         written += bytes_written;
         offset += bytes_written;
@@ -171,8 +174,7 @@ fn hayleyfs_read(
         let page_offset = page_offset(offset.try_into()?)?;
 
         let offset_in_page = page_offset - offset;
-        // let offset_usize: usize = offset.try_into()?;
-        let bytes_after_offset = bytes_per_page - offset;
+        let bytes_after_offset = bytes_per_page - offset_in_page;
         // either read the rest of the count or write to the end of the page
         let to_read = if count < bytes_after_offset {
             count
@@ -187,7 +189,7 @@ fn hayleyfs_read(
             data_page.read_from_page(writer, offset_in_page, to_read)?;
             bytes_read += to_read;
             offset += to_read;
-            count -= bytes_read;
+            count -= to_read;
         } else {
             writer.clear(to_read)?;
             bytes_read += to_read;

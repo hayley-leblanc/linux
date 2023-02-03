@@ -326,7 +326,10 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         // get raw pointer to the actual DataPageHeader
         let ptr: *mut DataPageHeader = self.page;
         // then offset by the size of the header and the offset into the page
-        let ptr = unsafe { ptr.offset(mem::size_of::<DataPageHeader>().try_into()?) };
+        let ptr = unsafe { ptr.offset(1) };
+        // offset length is calculated by count * size of the type of the ptr
+        // so we need to cast it to a u8 to offset by a byte count
+        let ptr = ptr as *mut u8;
         let ptr = unsafe { ptr.offset(offset.try_into()?) };
 
         // FIXME: read_raw and read_raw_nt return a Result that does NOT include the
@@ -358,7 +361,10 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         // get raw pointer to the actual DataPageHeader
         let ptr: *const DataPageHeader = self.page;
         // then offset by the size of the header and the offset into the page
-        let ptr = unsafe { ptr.offset(mem::size_of::<DataPageHeader>().try_into()?) };
+        let ptr = unsafe { ptr.offset(1) };
+        // offset length is calculated by count * size of the type of the ptr
+        // so we need to cast it to a u8 to offset by a byte count
+        let ptr = ptr as *const u8;
         let ptr = unsafe { ptr.offset(offset.try_into()?) };
 
         // FIXME: same problem as write_to_page - write_raw returns an error if
