@@ -800,6 +800,16 @@ impl INode {
         unsafe { bindings::inc_nlink(self.0.get()) }
     }
 
+    /// Reads the inode's size using `i_size_read`
+    pub fn i_size_read(&self) -> i64 {
+        unsafe { bindings::i_size_read(self.0.get()) }
+    }
+
+    /// Updates the inode's size using `i_size_write`
+    pub fn i_size_write(&mut self, pos: i64) {
+        unsafe { bindings::i_size_write(self.0.get(), pos) };
+    }
+
     /// Returns the inner inode wrapped in the Rust binding for its RwSemaphore
     ///
     /// # Safety
