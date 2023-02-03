@@ -295,6 +295,11 @@ void rust_helper_i_size_write(struct inode *inode, loff_t i_size) {
 }
 EXPORT_SYMBOL_GPL(rust_helper_i_size_write);
 
+loff_t rust_helper_i_size_read(const struct inode *inode) {
+	return i_size_read(inode);
+}
+EXPORT_SYMBOL_GPL(rust_helper_i_size_read);
+
 int rust_helper_signal_pending(struct task_struct *t)
 {
 	return signal_pending(t);
