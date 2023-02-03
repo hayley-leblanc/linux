@@ -263,7 +263,7 @@ fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPag
     // cast raw page address to data page header
     let ph: &mut DataPageHeader = unsafe { &mut *page_addr.cast() };
     // check page type
-    if ph.page_type != PageType::DATA {
+    if !(ph.page_type == PageType::DATA || ph.page_type == PageType::NONE) {
         Err(EINVAL)
     } else {
         Ok(ph)

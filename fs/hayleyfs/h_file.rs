@@ -5,7 +5,11 @@ use crate::typestate::*;
 use crate::volatile::*;
 use core::{marker::Sync, ptr};
 use kernel::prelude::*;
-use kernel::{bindings, error, file, fs, io_buffer::IoBufferReader, sync::RwSemaphore};
+use kernel::{
+    bindings, error, file, fs,
+    io_buffer::{IoBufferReader, IoBufferWriter},
+    sync::RwSemaphore,
+};
 
 pub(crate) struct Adapter {}
 
@@ -35,7 +39,6 @@ impl file::Operations for FileOps {
         reader: &mut impl IoBufferReader,
         offset: u64,
     ) -> Result<usize> {
-        pr_info!("write\n");
         // TODO: cleaner way to set up the semaphore with Rust RwSemaphore
         let sem = unsafe { (*file.inode()).i_rwsem };
         let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
@@ -50,6 +53,26 @@ impl file::Operations for FileOps {
 
         Ok(bytes_written)
     }
+
+    fn read(
+        _data: (),
+        file: &file::File,
+        writer: &mut impl IoBufferWriter,
+        offset: u64,
+    ) -> Result<usize> {
+        // TODO: cleaner way to set up the semaphore with Rust RwSemaphore
+        let sem = unsafe { (*file.inode()).i_rwsem };
+        let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
+        let sb = inode.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let inode = unsafe { RwSemaphore::new_with_sem(inode, sem) };
+
+        hayleyfs_read(sbi, inode, writer, offset)
+    }
 }
 
 fn hayleyfs_write<'a>(
@@ -61,7 +84,7 @@ fn hayleyfs_write<'a>(
     // TODO: give a way out if reader.len() is 0
     let mut count = reader.len();
     pr_info!("writing {:?} bytes to offset {:?}\n", count, offset);
-    let inode = inode.write();
+    let mut inode = inode.write();
     let ino = inode.i_ino();
     let pi = sbi.get_init_reg_inode_by_ino(ino)?;
 
@@ -72,13 +95,11 @@ fn hayleyfs_write<'a>(
     while count > 0 {
         // this is the value of the `offset` field of the page that
         // we want to write to
-        let page_offset = page_offset(offset);
-        pr_info!("offset {:?}\n", page_offset);
+        let page_offset = page_offset(offset)?;
 
         // does this page exist yet? if not, allocate it
-        let result = sbi.ino_data_page_map.find(&ino, offset);
+        let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
         let data_page = if let Some(page_info) = result {
-            pr_info!("page info {:?}\n", page_info);
             DataPageWrapper::from_data_page_info(sbi, page_info)?
         } else {
             pr_info!("Page does not exist\n");
@@ -122,10 +143,45 @@ fn hayleyfs_write<'a>(
     let pos = offset + written_u64;
     let pi = pi.inc_size(pos);
 
-    // ideally this would be called by write(), but we need it here because
-    // we acquire the lock in this method and we need to hold the lock when
-    // we call i_size_write
-    unsafe { bindings::i_size_write(inode.get_inner(), pos.try_into()?) };
+    // update the VFS inode's size
+    inode.i_size_write(pos.try_into()?);
 
     Ok((written, pi))
+}
+
+fn hayleyfs_read(
+    sbi: &SbInfo,
+    inode: RwSemaphore<&mut fs::INode>,
+    writer: &mut impl IoBufferWriter,
+    offset: u64,
+) -> Result<usize> {
+    let count = writer.len();
+    pr_info!("reading {:?} bytes at offset {:?}\n", count, offset);
+
+    // TODO: update timestamp
+
+    // acquire shared read lock
+    let inode = inode.read();
+    let _size = inode.i_size_read();
+    let ino = inode.i_ino();
+    let mut count = writer.len();
+
+    let _bytes_per_page = bytes_per_page();
+    // let mut read = 0;
+    while count > 0 {
+        let page_offset = page_offset(offset)?;
+        pr_info!("offset {:?}\n", page_offset);
+
+        // if the page exists, read from it. Otherwise, return zeroes
+        let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
+        if let Some(page_info) = result {
+            pr_info!("Page exists {:?}\n", page_info);
+        } else {
+            pr_info!("page does not exist\n");
+        }
+
+        count = 0;
+    }
+
+    Err(EINVAL)
 }
