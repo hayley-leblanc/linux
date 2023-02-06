@@ -316,7 +316,7 @@ impl<T: Type + ?Sized> Tables<T> {
         freeze_fs: None,
         thaw_super: None,
         unfreeze_fs: None,
-        statfs: None,
+        statfs: Some(Self::statfs_callback),
         remount_fs: None,
         umount_begin: None,
         show_options: None,
@@ -332,6 +332,14 @@ impl<T: Type + ?Sized> Tables<T> {
         nr_cached_objects: None,
         free_cached_objects: None,
     };
+
+    unsafe extern "C" fn statfs_callback(
+        dentry: *mut bindings::dentry,
+        buf: *mut bindings::kstatfs,
+    ) -> core::ffi::c_int {
+        let sb: &SuperBlock<T> = unsafe { &*(*dentry).d_sb.cast() };
+        from_kernel_result! {T::statfs(sb, buf)?; Ok(0)}
+    }
 }
 
 /// A file system type.
@@ -361,6 +369,9 @@ pub trait Type {
         data: <Self::Context as Context<Self>>::Data,
         sb: NewSuperBlock<'_, Self>,
     ) -> Result<&SuperBlock<Self>>;
+
+    /// Returns metadata about this file system.
+    fn statfs(sb: &SuperBlock<Self>, buf: *mut bindings::kstatfs) -> Result<()>;
 }
 
 /// File system flags.
