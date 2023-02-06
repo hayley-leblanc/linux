@@ -116,6 +116,19 @@ impl inode::Operations for InodeOps {
 
         Ok(0)
     }
+
+    fn rename(
+        _mnt_userns: &fs::UserNamespace,
+        _old_dir: &fs::INode,
+        _old_dentry: &fs::DEntry,
+        _new_dir: &fs::INode,
+        _new_dentry: &fs::DEntry,
+        _flags: u32,
+    ) -> Result<()> {
+        unimplemented!();
+
+        // TODO: decrement the inode's link count and delete it if link count == 0
+    }
 }
 
 // TODO: add type
