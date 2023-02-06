@@ -6,7 +6,7 @@ use core::{ffi, ptr};
 use defs::*;
 use h_inode::*;
 use kernel::prelude::*;
-use kernel::{bindings, c_str, fs};
+use kernel::{bindings, c_str, fs, PAGE_SIZE};
 use namei::*;
 use pm::*;
 
@@ -77,6 +77,27 @@ impl fs::Type for HayleyFs {
         let sb = sb.init_root()?;
         Ok(sb)
     }
+
+    fn statfs(sb: &fs::SuperBlock<Self>, buf: *mut bindings::kstatfs) -> Result<()> {
+        pr_info!("statfs\n");
+        // TODO: better support in rust/ so we don't have to do this all via raw pointers
+        let sbi = unsafe { &*(sb.s_fs_info() as *const SbInfo) };
+        unsafe {
+            (*buf).f_type = SUPER_MAGIC;
+            (*buf).f_bsize = sbi.blocksize;
+            (*buf).f_blocks = sbi.num_blocks;
+            pr_info!("num blocks: {:?}\n", sbi.num_blocks);
+            pr_info!("fs size: {:?}\n", sbi.size);
+            pr_info!("block size {:?}\n", sbi.blocksize);
+            (*buf).f_bfree = sbi.num_blocks - sbi.get_pages_in_use();
+            (*buf).f_bavail = sbi.num_blocks - sbi.get_pages_in_use();
+            (*buf).f_files = NUM_INODES;
+            (*buf).f_ffree = NUM_INODES - sbi.get_inodes_in_use();
+            (*buf).f_namelen = MAX_FILENAME_LEN.try_into()?;
+        }
+
+        Ok(())
+    }
 }
 
 /// # Safety
@@ -116,7 +137,7 @@ impl PmDevice for SbInfo {
         // a newly-allocated superblock. The safety condition of `get_dax_dev` guarantees
         // that `dax_dev` is the only active pointer to the associated `dax_device`, so it is
         // safe to mutably dereference it.
-        let size = unsafe {
+        let num_blocks = unsafe {
             bindings::dax_direct_access(
                 dax_dev,
                 0,
@@ -131,7 +152,9 @@ impl PmDevice for SbInfo {
             self.set_dax_dev(dax_dev);
             self.set_virt_addr(virt_addr);
         }
-        self.size = size;
+        let pgsize_i64: i64 = PAGE_SIZE.try_into()?;
+        self.size = num_blocks * pgsize_i64;
+        self.num_blocks = num_blocks.try_into()?;
 
         Ok(())
     }

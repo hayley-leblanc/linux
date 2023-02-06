@@ -102,9 +102,11 @@ fn hayleyfs_write<'a>(
         let data_page = if let Some(page_info) = result {
             DataPageWrapper::from_data_page_info(sbi, page_info)?
         } else {
-            DataPageWrapper::alloc_data_page(sbi, offset)?
+            let page = DataPageWrapper::alloc_data_page(sbi, offset)?
                 .flush()
-                .fence()
+                .fence();
+            sbi.inc_blocks_in_use();
+            page
         };
         let offset_in_page = page_offset - offset;
         let bytes_after_offset = bytes_per_page - offset_in_page;

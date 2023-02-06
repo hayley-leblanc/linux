@@ -2,9 +2,15 @@ use crate::balloc::*;
 use crate::h_inode::*;
 use crate::typestate::*;
 use crate::volatile::*;
-use core::{ffi, ptr};
-use kernel::bindings;
+use core::{
+    ffi, ptr,
+    sync::atomic::{AtomicU64, Ordering},
+};
 use kernel::prelude::*;
+use kernel::{bindings, PAGE_SIZE};
+
+// TODO: different magic value
+pub(crate) const SUPER_MAGIC: i64 = 0xabcdef;
 
 /// Reserved inodes
 pub(crate) const ROOT_INO: InodeNum = 1;
@@ -88,6 +94,12 @@ pub(crate) struct SbInfo {
     virt_addr: *mut ffi::c_void,
     pub(crate) size: i64,
 
+    pub(crate) blocksize: i64,
+    pub(crate) num_blocks: u64,
+
+    pub(crate) inodes_in_use: AtomicU64,
+    pub(crate) blocks_in_use: AtomicU64,
+
     // volatile index structures
     // these should really be trait objects,
     // but writing it this way would cause SbInfo to be !Sized which causes
@@ -122,13 +134,33 @@ impl SbInfo {
             sb: ptr::null_mut(),
             dax_dev: ptr::null_mut(),
             virt_addr: ptr::null_mut(),
-            size: 0,                                           // total size of the PM device
-            ino_dentry_map: InoDentryMap::new().unwrap(),      // TODO: handle possible panic
-            ino_dir_page_map: InoDirPageMap::new().unwrap(),   // TODO: handle possible panic
+            size: 0, // total size of the PM device
+            blocksize: PAGE_SIZE.try_into().unwrap(),
+            num_blocks: 0,
+            inodes_in_use: AtomicU64::new(1),
+            blocks_in_use: AtomicU64::new(0), // TODO: mark reserved pages as in use
+            ino_dentry_map: InoDentryMap::new().unwrap(), // TODO: handle possible panic
+            ino_dir_page_map: InoDirPageMap::new().unwrap(), // TODO: handle possible panic
             ino_data_page_map: InoDataPageMap::new().unwrap(), // TODO: handle possible panic
             page_allocator: PageAllocator::new(DATA_PAGE_START),
             inode_allocator: InodeAllocator::new(ROOT_INO + 1),
         }
+    }
+
+    pub(crate) fn inc_inodes_in_use(&self) {
+        self.inodes_in_use.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(crate) fn get_inodes_in_use(&self) -> u64 {
+        self.inodes_in_use.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn inc_blocks_in_use(&self) {
+        self.inodes_in_use.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(crate) fn get_pages_in_use(&self) -> u64 {
+        self.inodes_in_use.load(Ordering::SeqCst)
     }
 
     pub(crate) fn get_size(&self) -> i64 {

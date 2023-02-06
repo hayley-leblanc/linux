@@ -290,6 +290,7 @@ fn alloc_page_for_dentry<'a>(
     pr_info!("allocating new dir page for inode {:?}\n", parent_ino);
     // allocate a page
     let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
+    sbi.inc_blocks_in_use();
     let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino);
     if let Ok(parent_inode) = parent_inode {
         let dir_page = dir_page
@@ -318,6 +319,7 @@ fn init_dentry_with_new_reg_inode<'a>(
     let new_ino = sbi.inode_allocator.alloc_ino()?;
     let inode = InodeWrapper::get_free_reg_inode_by_ino(sbi, new_ino)?;
     let inode = inode.allocate_file_inode().flush().fence();
+    sbi.inc_inodes_in_use();
 
     // set the ino in the dentry
     let (dentry, inode) = dentry.set_file_ino(inode);
