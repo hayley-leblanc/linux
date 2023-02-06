@@ -91,6 +91,26 @@ impl<T: Operations> OperationsVtable<T> {
         }
     }
 
+    unsafe extern "C" fn rename_callback(
+        mnt_userns: *mut bindings::user_namespace,
+        old_dir: *mut bindings::inode,
+        old_dentry: *mut bindings::dentry,
+        new_dir: *mut bindings::inode,
+        new_dentry: *mut bindings::dentry,
+        flags: ffi::c_uint,
+    ) -> ffi::c_int {
+        from_kernel_result! {
+        // TODO: safety notes
+        let mnt_userns = unsafe { &*mnt_userns.cast() };
+        let old_dir = unsafe { &mut *old_dir.cast() };
+        let old_dentry = unsafe { &mut *old_dentry.cast() };
+        let new_dir = unsafe { &mut *new_dir.cast() };
+        let new_dentry = unsafe { &mut *new_dentry.cast() };
+        T::rename(mnt_userns, old_dir, old_dentry, new_dir, new_dentry, flags)?;
+        Ok(0)
+        }
+    }
+
     const VTABLE: bindings::inode_operations = bindings::inode_operations {
         lookup: Some(Self::lookup_callback),
         get_link: None,
@@ -104,7 +124,7 @@ impl<T: Operations> OperationsVtable<T> {
         mkdir: Some(Self::mkdir_callback),
         rmdir: None,
         mknod: None,
-        rename: None,
+        rename: Some(Self::rename_callback),
         setattr: None,
         getattr: None,
         listxattr: None,
@@ -153,4 +173,13 @@ pub trait Operations {
     ) -> Result<i32>;
     /// Corresponds to the ``link` function pointer in `struct inode_operations`.
     fn link(old_dentry: &DEntry, dir: &mut INode, dentry: &DEntry) -> Result<i32>;
+    /// Corresponds to the`rename` function pointer in `struct inode_operations`
+    fn rename(
+        mnt_userns: &UserNamespace,
+        old_dir: &INode,
+        old_dentry: &DEntry,
+        new_dir: &INode,
+        new_dentry: &DEntry,
+        flags: u32,
+    ) -> Result<()>;
 }
