@@ -22,3 +22,7 @@ impl Initialized for Start {}
 pub(crate) trait AddLink {}
 impl AddLink for Alloc {}
 impl AddLink for IncLink {}
+
+pub(crate) trait CanWrite {}
+impl CanWrite for Writeable {}
+impl CanWrite for Init {}

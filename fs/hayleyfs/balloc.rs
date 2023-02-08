@@ -310,7 +310,7 @@ fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPag
 }
 
 #[allow(dead_code)]
-impl<'a> DataPageWrapper<'a, Dirty, Writeable> {
+impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
     pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: usize) -> Result<Self> {
@@ -356,6 +356,43 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         unsafe { Self::wrap_data_page_header(ph, page_no) }
     }
 
+    pub(crate) fn read_from_page(
+        &mut self,
+        writer: &mut impl IoBufferWriter,
+        offset: usize,
+        len: usize,
+    ) -> Result<(DataPageWrapper<'a, Clean, Complete>, usize)> {
+        if let Some(ref page) = self.page {
+            let ptr: *const DataPageHeader = *page;
+            // then offset by the size of the header and the offset into the page
+            let ptr = unsafe { ptr.offset(1) };
+            // offset length is calculated by count * size of the type of the ptr
+            // so we need to cast it to a u8 to offset by a byte count
+            let ptr = ptr as *const u8;
+            let ptr = unsafe { ptr.offset(offset.try_into()?) };
+            // FIXME: same problem as write_to_page - write_raw returns an error if
+            // the bytes are not all written, which is not what we want.
+            unsafe { writer.write_raw(ptr as *const u8, len) }?;
+        } else {
+            panic!("ERROR: tried to read from DataPageWrapper with no associated page");
+        }
+
+        // Ok(len)
+        let page = self.make_drop_safe_and_take();
+        Ok((
+            DataPageWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                page_no: self.page_no,
+                drop_type: DropType::DropOk,
+                page,
+            },
+            len,
+        ))
+    }
+}
+
+impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     pub(crate) fn write_to_page(
         mut self,
         reader: &mut impl IoBufferReader,
@@ -393,54 +430,35 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
             },
         ))
     }
-
-    pub(crate) fn read_from_page(
-        &self,
-        writer: &mut impl IoBufferWriter,
-        offset: usize,
-        len: usize,
-    ) -> Result<usize> {
-        // get raw pointer to the actual DataPageHeader
-        // let ptr: *const DataPageHeader = self.page.take().unwrap();
-        let ptr: *const DataPageHeader = *self.page.as_ref().unwrap();
-        // then offset by the size of the header and the offset into the page
-        let ptr = unsafe { ptr.offset(1) };
-        // offset length is calculated by count * size of the type of the ptr
-        // so we need to cast it to a u8 to offset by a byte count
-        let ptr = ptr as *const u8;
-        let ptr = unsafe { ptr.offset(offset.try_into()?) };
-        // FIXME: same problem as write_to_page - write_raw returns an error if
-        // the bytes are not all written, which is not what we want.
-        unsafe { writer.write_raw(ptr as *const u8, len) }?;
-
-        Ok(len)
-    }
 }
 
-impl<'a> DataPageWrapper<'a, Clean, Written> {
-    /// NOTE: this method returns a clean backpointer, since some pages
-    /// will not actually need to be modified here. when they do, this method
-    /// flushes and fences
+impl<'a> DataPageWrapper<'a, Clean, Alloc> {
     pub(crate) fn set_data_page_backpointer(
         mut self,
         inode: &InodeWrapper<'a, Clean, Start, RegInode>,
-    ) -> DataPageWrapper<'a, Clean, Init> {
-        // page needs to be switched to Init typestate but does not need to be updated
-        if self.get_ino() == 0 {
-            self.set_ino(inode.get_ino());
-            inspect_option(&mut self.page, |p| {
-                flush_buffer(p, mem::size_of::<DataPageHeader>(), true)
-            });
-        }
+    ) -> DataPageWrapper<'a, Dirty, Writeable> {
+        self.set_ino(inode.get_ino());
         let page = self.make_drop_safe_and_take();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             page_no: self.page_no,
-            drop_type: DropType::DropOk, // init wrappers can be dropped safely
+            drop_type: DropType::DropPanic,
             page,
         }
-        // TODO: move wrappers to Complete state when they are done?
+    }
+}
+
+impl<'a> DataPageWrapper<'a, Clean, Written> {
+    pub(crate) fn drop_safe(mut self) -> DataPageWrapper<'a, Clean, Complete> {
+        let page = self.make_drop_safe_and_take();
+        DataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            page_no: self.page_no,
+            drop_type: DropType::DropOk,
+            page,
+        }
     }
 }
 

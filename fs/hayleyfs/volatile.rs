@@ -196,7 +196,7 @@ pub(crate) trait InoDataPageMap {
     fn new() -> Result<Self>
     where
         Self: Sized;
-    fn insert<'a>(&self, ino: InodeNum, page: &DataPageWrapper<'a, Clean, Init>) -> Result<()>;
+    fn insert<'a>(&self, ino: InodeNum, page: &DataPageWrapper<'a, Clean, Written>) -> Result<()>;
     fn find(&self, ino: &InodeNum, offset: u64) -> Option<DataPageInfo>;
     fn delete(&self, ino: &InodeNum, offset: u64) -> Result<()>;
 }
@@ -214,7 +214,7 @@ impl InoDataPageMap for BasicInoDataPageMap {
         })
     }
 
-    fn insert<'a>(&self, ino: InodeNum, page: &DataPageWrapper<'a, Clean, Init>) -> Result<()> {
+    fn insert<'a>(&self, ino: InodeNum, page: &DataPageWrapper<'a, Clean, Written>) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
         let page_no = page.get_page_no();

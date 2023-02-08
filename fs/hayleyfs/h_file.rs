@@ -76,7 +76,7 @@ impl file::Operations for FileOps {
 }
 
 fn hayleyfs_write<'a>(
-    sbi: &SbInfo,
+    sbi: &'a SbInfo,
     inode: RwSemaphore<&mut fs::INode>,
     reader: &mut impl IoBufferReader,
     offset: u64,
@@ -86,6 +86,9 @@ fn hayleyfs_write<'a>(
     let mut inode = inode.write();
     let ino = inode.i_ino();
     let pi = sbi.get_init_reg_inode_by_ino(ino)?;
+
+    // vector of tuples - (written page, # bytes written to that page)
+    let mut page_vec: Vec<(DataPageWrapper<'a, Clean, Written>, u64)> = Vec::new();
 
     // TODO: update timestamp
 
@@ -106,6 +109,7 @@ fn hayleyfs_write<'a>(
                 .flush()
                 .fence();
             sbi.inc_blocks_in_use();
+            let page = page.set_data_page_backpointer(&pi).flush().fence();
             page
         };
         let offset_in_page = page_offset - offset;
@@ -126,10 +130,11 @@ fn hayleyfs_write<'a>(
             data_page.write_to_page(reader, offset_in_page, to_write)?;
         let data_page = data_page.fence();
 
-        let data_page = data_page.set_data_page_backpointer(&pi);
-
         // add page to the index
         sbi.ino_data_page_map.insert(ino, &data_page)?;
+
+        page_vec.try_push((data_page, bytes_written.try_into()?))?;
+
         if bytes_written < to_write {
             pr_info!(
                 "WARNING: wrote {:?} out of {:?} bytes\n",
@@ -143,11 +148,10 @@ fn hayleyfs_write<'a>(
         offset += bytes_written;
     }
 
-    let pos = offset + written;
-    let pi = pi.inc_size(pos.try_into()?);
+    let (pi, size) = pi.inc_size(page_vec);
 
     // update the VFS inode's size
-    inode.i_size_write(pos.try_into()?);
+    inode.i_size_write(size.try_into()?);
 
     Ok((written, pi))
 }
@@ -186,8 +190,8 @@ fn hayleyfs_read(
         // if the page exists, read from it. Otherwise, return zeroes
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
         if let Some(page_info) = result {
-            let data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
-            data_page.read_from_page(writer, offset_in_page, to_read)?;
+            let mut data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
+            let _ = data_page.read_from_page(writer, offset_in_page, to_read)?;
             bytes_read += to_read;
             offset += to_read;
             count -= to_read;

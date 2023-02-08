@@ -1,3 +1,4 @@
+use crate::balloc::*;
 use crate::defs::*;
 use crate::pm::*;
 use crate::typestate::*;
@@ -126,21 +127,43 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         }
     }
 
-    /// NOTE: this has basically no restrictions on when it can be called. it also
-    /// lets you move an inode into IncSize even if its size does not increase. these
-    /// may or may not be real problems
-    pub(crate) fn inc_size(self, pos: u64) -> InodeWrapper<'a, Clean, IncSize, Type> {
-        if self.inode.ino < pos {
-            self.inode.ino = pos;
+    // To avoid redundant flushes/fences, this method returns a Clean InodeWrapper
+    // and does the flush/fence itself if the size has to be updated
+    // TODO: we should be able to call this on dir pages as well??
+    pub(crate) fn inc_size(
+        self,
+        mut pages: Vec<(DataPageWrapper<'a, Clean, Written>, u64)>,
+    ) -> (InodeWrapper<'a, Clean, IncSize, Type>, u64) {
+        let mut cur_size = self.inode.size;
+        for (page, bytes_written) in pages.drain(..) {
+            let bytes = page.get_offset() + bytes_written;
+            if bytes > cur_size {
+                cur_size = bytes;
+            }
+            let _ = page.drop_safe();
+        }
+        let size = if self.inode.size < cur_size {
+            self.inode.size = cur_size;
             flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
-        }
-        InodeWrapper {
-            state: PhantomData,
-            op: PhantomData,
-            inode_type: PhantomData,
-            ino: self.ino,
-            inode: self.inode,
-        }
+            cur_size
+        } else {
+            self.inode.size
+        };
+
+        // if self.inode.ino < pos {
+        //     self.inode.ino = pos;
+        //     flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+        // }
+        (
+            InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                ino: self.ino,
+                inode: self.inode,
+            },
+            size,
+        )
     }
 }
 
