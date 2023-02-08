@@ -54,6 +54,24 @@ pub(crate) enum InodeType {
     REG,
     DIR,
 }
+
+#[derive(Copy, Clone)]
+pub(crate) enum DropType {
+    DropOk,
+    DropPanic,
+}
+
+/// Hand-rolled option inspect function until result_option_inspect becomes stable
+/// because I can't figure out how to use the unstable feature for it
+pub(crate) fn inspect_option<T, F>(option: &mut Option<T>, f: F)
+where
+    F: FnOnce(&mut T),
+{
+    if let Some(ref mut x) = option {
+        f(x)
+    }
+}
+
 /// Persistent super block
 /// TODO: add stuff
 #[repr(C)]

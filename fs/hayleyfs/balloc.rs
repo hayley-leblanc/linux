@@ -237,7 +237,8 @@ pub(crate) struct DataPageWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
     page_no: PageNum,
-    page: &'a mut DataPageHeader,
+    drop_type: DropType,
+    page: Option<&'a mut DataPageHeader>,
 }
 
 // TODO: we may be able to combine some DataPageWrapper methods with DirPageWrapper methods
@@ -250,11 +251,46 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
     }
 
     pub(crate) fn get_offset(&self) -> u64 {
-        self.page.offset
+        match &self.page {
+            Some(page) => page.offset,
+            None => panic!("ERROR: Wrapper does not have a page"),
+        }
     }
 
     pub(crate) fn get_ino(&self) -> InodeNum {
-        self.page.ino
+        match &self.page {
+            Some(page) => page.ino,
+            None => panic!("ERROR: Wrapper does not have a page"),
+        }
+    }
+
+    fn set_ino(&mut self, ino: InodeNum) {
+        match &mut self.page {
+            Some(page) => page.ino = ino,
+            None => panic!("ERROR: Wrapper does not have a page"),
+        }
+    }
+
+    // TODO: make unsafe?
+    fn make_drop_safe_and_take(&mut self) -> Option<&'a mut DataPageHeader> {
+        self.drop_type = DropType::DropOk;
+        self.page.take()
+    }
+
+    fn make_drop_safe(&mut self) {
+        assert!(self.page.is_none());
+        self.drop_type = DropType::DropOk;
+    }
+}
+
+// TODO: we have to fully move the page OUT of the wrapper before we can
+// drop it. what the hell was it doing with the page before?????????????
+impl<'a, State, Op> Drop for DataPageWrapper<'a, State, Op> {
+    fn drop(&mut self) {
+        match self.drop_type {
+            DropType::DropOk => {}
+            DropType::DropPanic => panic!("ERROR: attempted to drop an undroppable object"),
+        };
     }
 }
 
@@ -284,11 +320,13 @@ impl<'a> DataPageWrapper<'a, Dirty, Writeable> {
 
         ph.page_type = PageType::DATA;
         ph.offset = offset.try_into()?;
+
         Ok(DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             page_no,
-            page: ph,
+            drop_type: DropType::DropPanic,
+            page: Some(ph),
         })
     }
 }
@@ -303,7 +341,8 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
                 state: PhantomData,
                 op: PhantomData,
                 page_no,
-                page: ph,
+                drop_type: DropType::DropPanic,
+                page: Some(ph),
             })
         }
     }
@@ -318,13 +357,13 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     }
 
     pub(crate) fn write_to_page(
-        self,
+        mut self,
         reader: &mut impl IoBufferReader,
         offset: usize,
         len: usize,
     ) -> Result<(usize, DataPageWrapper<'a, InFlight, Written>)> {
         // get raw pointer to the actual DataPageHeader
-        let ptr: *mut DataPageHeader = self.page;
+        let ptr: *mut DataPageHeader = self.page.take().unwrap();
         // then offset by the size of the header and the offset into the page
         let ptr = unsafe { ptr.offset(1) };
         // offset length is calculated by count * size of the type of the ptr
@@ -341,25 +380,27 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
 
         unsafe { flush_edge_cachelines(ptr as *mut c_void, len) }?;
 
+        self.make_drop_safe();
         Ok((
             len,
             DataPageWrapper {
                 state: PhantomData,
                 op: PhantomData,
                 page_no: self.page_no,
-                page: self.page,
+                drop_type: DropType::DropPanic,
+                page: unsafe { Some(&mut *ptr.cast()) },
             },
         ))
     }
 
     pub(crate) fn read_from_page(
-        &self,
+        &mut self,
         writer: &mut impl IoBufferWriter,
         offset: usize,
         len: usize,
     ) -> Result<usize> {
         // get raw pointer to the actual DataPageHeader
-        let ptr: *const DataPageHeader = self.page;
+        let ptr: *const DataPageHeader = self.page.take().unwrap();
         // then offset by the size of the header and the offset into the page
         let ptr = unsafe { ptr.offset(1) };
         // offset length is calculated by count * size of the type of the ptr
@@ -380,43 +421,56 @@ impl<'a> DataPageWrapper<'a, Clean, Written> {
     /// will not actually need to be modified here. when they do, this method
     /// flushes and fences
     pub(crate) fn set_data_page_backpointer(
-        self,
+        mut self,
         inode: &InodeWrapper<'a, Clean, Start, RegInode>,
     ) -> DataPageWrapper<'a, Clean, Init> {
         // page needs to be switched to Init typestate but does not need to be updated
         if self.get_ino() == 0 {
-            self.page.ino = inode.get_ino();
-            flush_buffer(self.page, mem::size_of::<DataPageHeader>(), true);
+            self.set_ino(inode.get_ino());
+            inspect_option(&mut self.page, |p| {
+                flush_buffer(p, mem::size_of::<DataPageHeader>(), true)
+            });
         }
+        let page = self.make_drop_safe_and_take();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             page_no: self.page_no,
-            page: self.page,
+            drop_type: DropType::DropOk, // init wrappers can be dropped safely
+            page,
         }
+        // TODO: move wrappers to Complete state when they are done?
     }
 }
 
 impl<'a, Op> DataPageWrapper<'a, Dirty, Op> {
-    pub(crate) fn flush(self) -> DataPageWrapper<'a, InFlight, Op> {
-        flush_buffer(self.page, mem::size_of::<DataPageHeader>(), false);
+    pub(crate) fn flush(mut self) -> DataPageWrapper<'a, InFlight, Op> {
+        inspect_option(&mut self.page, |p| {
+            flush_buffer(p, mem::size_of::<DataPageHeader>(), false)
+        });
+        let old_drop_type = self.drop_type;
+        let page = self.make_drop_safe_and_take();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             page_no: self.page_no,
-            page: self.page,
+            drop_type: old_drop_type,
+            page,
         }
     }
 }
 
 impl<'a, Op> DataPageWrapper<'a, InFlight, Op> {
-    pub(crate) fn fence(self) -> DataPageWrapper<'a, Clean, Op> {
+    pub(crate) fn fence(mut self) -> DataPageWrapper<'a, Clean, Op> {
         sfence();
+        let old_drop_type = self.drop_type;
+        let page = self.make_drop_safe_and_take();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             page_no: self.page_no,
-            page: self.page,
+            drop_type: old_drop_type,
+            page,
         }
     }
 }

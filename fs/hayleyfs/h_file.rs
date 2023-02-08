@@ -187,7 +187,7 @@ fn hayleyfs_read(
         // if the page exists, read from it. Otherwise, return zeroes
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
         if let Some(page_info) = result {
-            let data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
+            let mut data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
             data_page.read_from_page(writer, offset_in_page, to_read)?;
             bytes_read += to_read;
             offset += to_read;
@@ -196,7 +196,7 @@ fn hayleyfs_read(
             writer.clear(to_read)?;
             bytes_read += to_read;
             offset += to_read;
-            count -= bytes_read;
+            count -= to_read;
         }
     }
 
