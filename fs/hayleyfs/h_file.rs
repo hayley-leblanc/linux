@@ -130,7 +130,6 @@ fn hayleyfs_write<'a>(
 
         // add page to the index
         sbi.ino_data_page_map.insert(ino, &data_page)?;
-
         if bytes_written < to_write {
             pr_info!(
                 "WARNING: wrote {:?} out of {:?} bytes\n",
@@ -187,7 +186,7 @@ fn hayleyfs_read(
         // if the page exists, read from it. Otherwise, return zeroes
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
         if let Some(page_info) = result {
-            let mut data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
+            let data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
             data_page.read_from_page(writer, offset_in_page, to_read)?;
             bytes_read += to_read;
             offset += to_read;

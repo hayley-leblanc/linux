@@ -363,7 +363,8 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         len: usize,
     ) -> Result<(usize, DataPageWrapper<'a, InFlight, Written>)> {
         // get raw pointer to the actual DataPageHeader
-        let ptr: *mut DataPageHeader = self.page.take().unwrap();
+        let page = self.page.take().unwrap();
+        let ptr: *mut DataPageHeader = page;
         // then offset by the size of the header and the offset into the page
         let ptr = unsafe { ptr.offset(1) };
         // offset length is calculated by count * size of the type of the ptr
@@ -388,26 +389,26 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
                 op: PhantomData,
                 page_no: self.page_no,
                 drop_type: DropType::DropPanic,
-                page: unsafe { Some(&mut *ptr.cast()) },
+                page: Some(page),
             },
         ))
     }
 
     pub(crate) fn read_from_page(
-        &mut self,
+        &self,
         writer: &mut impl IoBufferWriter,
         offset: usize,
         len: usize,
     ) -> Result<usize> {
         // get raw pointer to the actual DataPageHeader
-        let ptr: *const DataPageHeader = self.page.take().unwrap();
+        // let ptr: *const DataPageHeader = self.page.take().unwrap();
+        let ptr: *const DataPageHeader = *self.page.as_ref().unwrap();
         // then offset by the size of the header and the offset into the page
         let ptr = unsafe { ptr.offset(1) };
         // offset length is calculated by count * size of the type of the ptr
         // so we need to cast it to a u8 to offset by a byte count
         let ptr = ptr as *const u8;
         let ptr = unsafe { ptr.offset(offset.try_into()?) };
-
         // FIXME: same problem as write_to_page - write_raw returns an error if
         // the bytes are not all written, which is not what we want.
         unsafe { writer.write_raw(ptr as *const u8, len) }?;
