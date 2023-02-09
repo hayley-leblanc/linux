@@ -112,7 +112,7 @@ fn hayleyfs_write<'a>(
         let page = page.set_data_page_backpointer(&pi).flush().fence();
         page
     };
-    let offset_in_page = page_offset - offset;
+    let offset_in_page = offset - page_offset;
     let bytes_after_offset = bytes_per_page - offset_in_page;
     // either write the rest of the count or write to the end of the page
     let to_write = if count < bytes_after_offset {
