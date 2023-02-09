@@ -82,7 +82,7 @@ fn hayleyfs_write<'a>(
     offset: u64,
 ) -> Result<(usize, InodeWrapper<'a, Clean, IncSize, RegInode>)> {
     // TODO: give a way out if reader.len() is 0
-    let mut count = reader.len();
+    let count = reader.len();
     let mut inode = inode.write();
     let ino = inode.i_ino();
     let pi = sbi.get_init_reg_inode_by_ino(ino)?;
@@ -90,59 +90,54 @@ fn hayleyfs_write<'a>(
     // TODO: update timestamp
 
     let bytes_per_page = bytes_per_page();
-    let mut offset: usize = offset.try_into()?;
+    let offset: usize = offset.try_into()?;
+
     let mut written = 0;
-    while count > 0 {
-        // this is the value of the `offset` field of the page that
-        // we want to write to
-        let page_offset = page_offset(offset.try_into()?)?;
+    // this is the value of the `offset` field of the page that
+    // we want to write to
+    let page_offset = page_offset(offset.try_into()?)?;
 
-        // does this page exist yet? if not, allocate it
-        let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
-        let data_page = if let Some(page_info) = result {
-            DataPageWrapper::from_data_page_info(sbi, page_info)?
-        } else {
-            let page = DataPageWrapper::alloc_data_page(sbi, offset)?
-                .flush()
-                .fence();
-            sbi.inc_blocks_in_use();
-            page
-        };
-        let offset_in_page = page_offset - offset;
-        let bytes_after_offset = bytes_per_page - offset_in_page;
-        // either write the rest of the count or write to the end of the page
-        let to_write = if count < bytes_after_offset {
-            count
-        } else {
-            bytes_after_offset
-        };
+    // does this page exist yet? if not, allocate it
+    let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
+    let data_page = if let Some(page_info) = result {
+        DataPageWrapper::from_data_page_info(sbi, page_info)?
+    } else {
+        let page = DataPageWrapper::alloc_data_page(sbi, offset)?
+            .flush()
+            .fence();
+        sbi.inc_blocks_in_use();
+        page
+    };
+    let offset_in_page = page_offset - offset;
+    let bytes_after_offset = bytes_per_page - offset_in_page;
+    // either write the rest of the count or write to the end of the page
+    let to_write = if count < bytes_after_offset {
+        count
+    } else {
+        bytes_after_offset
+    };
+    pr_info!(
+        "writing {:?} bytes to page {:?}\n",
+        to_write,
+        data_page.get_page_no()
+    );
+
+    let (bytes_written, data_page) = data_page.write_to_page(reader, offset_in_page, to_write)?;
+    let data_page = data_page.fence();
+
+    let data_page = data_page.set_data_page_backpointer(&pi);
+
+    // add page to the index
+    sbi.ino_data_page_map.insert(ino, &data_page)?;
+
+    if bytes_written < to_write {
         pr_info!(
-            "writing {:?} bytes to page {:?}\n",
-            to_write,
-            data_page.get_page_no()
+            "WARNING: wrote {:?} out of {:?} bytes\n",
+            bytes_written,
+            to_write
         );
-
-        let (bytes_written, data_page) =
-            data_page.write_to_page(reader, offset_in_page, to_write)?;
-        let data_page = data_page.fence();
-
-        let data_page = data_page.set_data_page_backpointer(&pi);
-
-        // add page to the index
-        sbi.ino_data_page_map.insert(ino, &data_page)?;
-
-        if bytes_written < to_write {
-            pr_info!(
-                "WARNING: wrote {:?} out of {:?} bytes\n",
-                bytes_written,
-                to_write
-            );
-            break;
-        }
-        count -= bytes_written;
-        written += bytes_written;
-        offset += bytes_written;
     }
+    written += bytes_written;
 
     let pos = offset + written;
     let pi = pi.inc_size(pos.try_into()?);
@@ -196,7 +191,7 @@ fn hayleyfs_read(
             writer.clear(to_read)?;
             bytes_read += to_read;
             offset += to_read;
-            count -= bytes_read;
+            count -= to_read;
         }
     }
 
