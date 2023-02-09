@@ -120,11 +120,11 @@ fn hayleyfs_write<'a>(
         } else {
             bytes_after_offset
         };
-        pr_info!(
-            "writing {:?} bytes to page {:?}\n",
-            to_write,
-            data_page.get_page_no()
-        );
+        // pr_info!(
+        //     "writing {:?} bytes to page {:?}\n",
+        //     to_write,
+        //     data_page.get_page_no()
+        // );
 
         let (bytes_written, data_page) =
             data_page.write_to_page(reader, offset_in_page, to_write)?;
