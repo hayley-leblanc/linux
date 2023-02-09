@@ -274,7 +274,7 @@ fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPag
 }
 
 #[allow(dead_code)]
-impl<'a> DataPageWrapper<'a, Dirty, Writeable> {
+impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
     pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: usize) -> Result<Self> {
@@ -375,19 +375,15 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     }
 }
 
-impl<'a> DataPageWrapper<'a, Clean, Written> {
+impl<'a> DataPageWrapper<'a, Clean, Alloc> {
     /// NOTE: this method returns a clean backpointer, since some pages
     /// will not actually need to be modified here. when they do, this method
     /// flushes and fences
     pub(crate) fn set_data_page_backpointer(
         self,
         inode: &InodeWrapper<'a, Clean, Start, RegInode>,
-    ) -> DataPageWrapper<'a, Clean, Init> {
-        // page needs to be switched to Init typestate but does not need to be updated
-        if self.get_ino() == 0 {
-            self.page.ino = inode.get_ino();
-            flush_buffer(self.page, mem::size_of::<DataPageHeader>(), true);
-        }
+    ) -> DataPageWrapper<'a, Dirty, Writeable> {
+        self.page.ino = inode.get_ino();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,

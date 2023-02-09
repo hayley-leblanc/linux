@@ -76,23 +76,26 @@ impl file::Operations for FileOps {
 }
 
 fn hayleyfs_write<'a>(
-    sbi: &SbInfo,
+    sbi: &'a SbInfo,
     inode: RwSemaphore<&mut fs::INode>,
     reader: &mut impl IoBufferReader,
     offset: u64,
 ) -> Result<(usize, InodeWrapper<'a, Clean, IncSize, RegInode>)> {
+    let bytes_per_page = bytes_per_page();
     // TODO: give a way out if reader.len() is 0
-    let count = reader.len();
+    let count = if bytes_per_page < reader.len() {
+        bytes_per_page
+    } else {
+        reader.len()
+    };
     let mut inode = inode.write();
     let ino = inode.i_ino();
     let pi = sbi.get_init_reg_inode_by_ino(ino)?;
 
     // TODO: update timestamp
 
-    let bytes_per_page = bytes_per_page();
     let offset: usize = offset.try_into()?;
 
-    let mut written = 0;
     // this is the value of the `offset` field of the page that
     // we want to write to
     let page_offset = page_offset(offset.try_into()?)?;
@@ -106,6 +109,7 @@ fn hayleyfs_write<'a>(
             .flush()
             .fence();
         sbi.inc_blocks_in_use();
+        let page = page.set_data_page_backpointer(&pi).flush().fence();
         page
     };
     let offset_in_page = page_offset - offset;
@@ -125,8 +129,6 @@ fn hayleyfs_write<'a>(
     let (bytes_written, data_page) = data_page.write_to_page(reader, offset_in_page, to_write)?;
     let data_page = data_page.fence();
 
-    let data_page = data_page.set_data_page_backpointer(&pi);
-
     // add page to the index
     sbi.ino_data_page_map.insert(ino, &data_page)?;
 
@@ -137,15 +139,13 @@ fn hayleyfs_write<'a>(
             to_write
         );
     }
-    written += bytes_written;
 
-    let pos = offset + written;
-    let pi = pi.inc_size(pos.try_into()?);
+    let (inode_size, pi) = pi.inc_size(bytes_written.try_into()?, data_page);
 
     // update the VFS inode's size
-    inode.i_size_write(pos.try_into()?);
+    inode.i_size_write(inode_size.try_into()?);
 
-    Ok((written, pi))
+    Ok((bytes_written, pi))
 }
 
 fn hayleyfs_read(

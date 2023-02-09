@@ -1,3 +1,4 @@
+use crate::balloc::*;
 use crate::defs::*;
 use crate::pm::*;
 use crate::typestate::*;
@@ -126,21 +127,27 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         }
     }
 
-    /// NOTE: this has basically no restrictions on when it can be called. it also
-    /// lets you move an inode into IncSize even if its size does not increase. these
-    /// may or may not be real problems
-    pub(crate) fn inc_size(self, pos: u64) -> InodeWrapper<'a, Clean, IncSize, Type> {
-        if self.inode.ino < pos {
-            self.inode.ino = pos;
+    // TODO: get the number of bytes written from the page itself, somehow?
+    pub(crate) fn inc_size(
+        self,
+        bytes_written: u64,
+        page: DataPageWrapper<'a, Clean, Written>,
+    ) -> (u64, InodeWrapper<'a, Clean, IncSize, Type>) {
+        let total_size = bytes_written + page.get_offset();
+        if self.inode.size < total_size {
+            self.inode.size = total_size;
             flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
         }
-        InodeWrapper {
-            state: PhantomData,
-            op: PhantomData,
-            inode_type: PhantomData,
-            ino: self.ino,
-            inode: self.inode,
-        }
+        (
+            self.inode.size,
+            InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                ino: self.ino,
+                inode: self.inode,
+            },
+        )
     }
 }
 
