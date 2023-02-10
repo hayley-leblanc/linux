@@ -105,7 +105,7 @@ fn hayleyfs_write<'a>(
         let data_page = if let Some(page_info) = result {
             DataPageWrapper::from_data_page_info(sbi, page_info)?
         } else {
-            let page = DataPageWrapper::alloc_data_page(sbi, offset)?
+            let page = DataPageWrapper::alloc_data_page(sbi, page_offset)?
                 .flush()
                 .fence();
             sbi.inc_blocks_in_use();
@@ -127,7 +127,7 @@ fn hayleyfs_write<'a>(
         // );
 
         let (bytes_written, data_page) =
-            data_page.write_to_page(reader, offset_in_page, to_write)?;
+            data_page.write_to_page(sbi, reader, offset_in_page, to_write)?;
         let data_page = data_page.fence();
 
         // add page to the index
@@ -191,7 +191,7 @@ fn hayleyfs_read(
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
         if let Some(page_info) = result {
             let mut data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
-            let _ = data_page.read_from_page(writer, offset_in_page, to_read)?;
+            let _ = data_page.read_from_page(sbi, writer, offset_in_page, to_read)?;
             bytes_read += to_read;
             offset += to_read;
             count -= to_read;

@@ -5,9 +5,9 @@ use crate::pm::*;
 use crate::typestate::*;
 use crate::volatile::*;
 use core::{
-    ffi::c_void,
+    ffi,
     marker::PhantomData,
-    mem,
+    mem, slice,
     sync::atomic::{AtomicU64, Ordering},
 };
 use kernel::prelude::*;
@@ -57,12 +57,18 @@ impl PageAllocator for BasicPageAllocator {
 struct DirPageHeader {
     page_type: PageType,
     ino: InodeNum,
-    dentries: [HayleyFsDentry; DENTRIES_PER_PAGE],
+    page_no: PageNum,
+}
+
+// be careful here... slice should have size DENTRIES_PER_PAGE
+// i can't figure out how to just make this be an array
+struct DirPage<'a> {
+    dentries: &'a mut [HayleyFsDentry],
 }
 
 impl DirPageHeader {
     pub(crate) fn is_initialized(&self) -> bool {
-        self.page_type != PageType::NONE && self.ino != 0
+        self.page_type != PageType::NONE && self.ino != 0 && self.page_no != 0
     }
 }
 
@@ -107,16 +113,32 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
 
 // TODO: safety
 fn page_no_to_dir_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
-    let virt_addr = sbi.get_virt_addr();
+    let virt_addr = sbi.get_virt_addr() as *mut u8;
     let page_size_u64: u64 = PAGE_SIZE.try_into()?;
-    let page_addr = unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) };
-    // cast raw page address to dir page header
-    let ph: &mut DirPageHeader = unsafe { &mut *page_addr.cast() };
+    // TODO: make sure this address is right
+    let page_desc_table_addr =
+        unsafe { virt_addr.offset((page_size_u64 * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
+    let page_desc_addr =
+        unsafe { page_desc_table_addr.offset((PAGE_DESCRIPTOR_SIZE * page_no).try_into()?) };
+    // cast raw address to a dir page descriptor
+    let ph: &mut DirPageHeader = unsafe { &mut *page_desc_addr.cast() };
     // check page type
     if !(ph.page_type == PageType::DIR || ph.page_type == PageType::NONE) {
         Err(EINVAL)
     } else {
         Ok(ph)
+    }
+}
+
+// TODO: safety
+unsafe fn page_no_to_page(sbi: &SbInfo, page_no: PageNum) -> Result<*mut u8> {
+    if page_no > MAX_PAGES {
+        Err(ENOSPC)
+    } else {
+        let virt_addr: *mut u8 = sbi.get_virt_addr() as *mut u8;
+        let page_size_u64: u64 = PAGE_SIZE.try_into()?;
+        let res = Ok(unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) });
+        res
     }
 }
 
@@ -156,17 +178,24 @@ impl<'a> DirPageWrapper<'a, Clean, Alloc> {
 }
 
 impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
+    fn get_dir_page(&self, sbi: &SbInfo) -> Result<DirPage<'a>> {
+        let page_addr = unsafe { page_no_to_page(sbi, self.get_page_no())? as *mut HayleyFsDentry };
+        let dentries = unsafe { slice::from_raw_parts_mut(page_addr, DENTRIES_PER_PAGE) };
+        Ok(DirPage { dentries })
+    }
+
     /// Obtains a wrapped pointer to a free dentry.
     /// This does NOT allocate the dentry - just obtains a pointer to a free dentry
     /// This requires a mutable reference to self because we need to acquire a
     /// mutable reference to a dentry, but it doesn't actually modify the DirPageWrapper
-    pub(crate) fn get_free_dentry(self) -> Result<DentryWrapper<'a, Clean, Free>> {
+    pub(crate) fn get_free_dentry(self, sbi: &SbInfo) -> Result<DentryWrapper<'a, Clean, Free>> {
+        let page = self.get_dir_page(&sbi)?;
         // iterate until we find a free dentry
         // VFS *should* have locked the parent, so there is no possibility of
         // this racing with another operation trying to create in the same directory
         // TODO: confirm that
         // TODO: safety notes based on VFS locking.
-        for dentry in self.page.dentries.iter_mut() {
+        for dentry in page.dentries.iter_mut() {
             // if any part of a dentry is NOT zeroed out, that dentry is allocated; we need
             // an unallocated dentry
             if dentry.get_ino() == 0 && dentry.is_rename_ptr_null() && !dentry.has_name() {
@@ -208,11 +237,12 @@ struct DataPageHeader {
     page_type: PageType,
     ino: InodeNum,
     offset: u64,
+    page_no: PageNum,
 }
 
 // TODO: inline? macro?
 pub(crate) fn bytes_per_page() -> usize {
-    PAGE_SIZE - mem::size_of::<DataPageHeader>()
+    PAGE_SIZE
 }
 
 /// Given the offset into a file, returns the offset of the
@@ -296,11 +326,13 @@ impl<'a, State, Op> Drop for DataPageWrapper<'a, State, Op> {
 
 #[allow(dead_code)]
 fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
-    let virt_addr = sbi.get_virt_addr();
+    let virt_addr = sbi.get_virt_addr() as *mut u8;
     let page_size_u64: u64 = PAGE_SIZE.try_into()?;
-    let page_addr = unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) };
-    // cast raw page address to data page header
-    let ph: &mut DataPageHeader = unsafe { &mut *page_addr.cast() };
+    let page_desc_table_addr =
+        unsafe { virt_addr.offset((page_size_u64 * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
+    let page_desc_addr =
+        unsafe { page_desc_table_addr.offset((PAGE_DESCRIPTOR_SIZE * page_no).try_into()?) };
+    let ph: &mut DataPageHeader = unsafe { &mut *page_desc_addr.cast() };
     // check page type
     if !(ph.page_type == PageType::DATA || ph.page_type == PageType::NONE) {
         Err(EINVAL)
@@ -358,26 +390,21 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
 
     pub(crate) fn read_from_page(
         &mut self,
+        sbi: &SbInfo,
         writer: &mut impl IoBufferWriter,
         offset: usize,
         len: usize,
     ) -> Result<(DataPageWrapper<'a, Clean, Complete>, usize)> {
-        if let Some(ref page) = self.page {
-            let ptr: *const DataPageHeader = *page;
-            // then offset by the size of the header and the offset into the page
-            let ptr = unsafe { ptr.offset(1) };
-            // offset length is calculated by count * size of the type of the ptr
-            // so we need to cast it to a u8 to offset by a byte count
-            let ptr = ptr as *const u8;
+        if let Some(_) = self.page {
+            let ptr = self.get_page_addr(sbi)? as *mut u8;
             let ptr = unsafe { ptr.offset(offset.try_into()?) };
             // FIXME: same problem as write_to_page - write_raw returns an error if
             // the bytes are not all written, which is not what we want.
-            unsafe { writer.write_raw(ptr as *const u8, len) }?;
+            unsafe { writer.write_raw(ptr, len) }?;
         } else {
             panic!("ERROR: tried to read from DataPageWrapper with no associated page");
         }
 
-        // Ok(len)
         let page = self.make_drop_safe_and_take();
         Ok((
             DataPageWrapper {
@@ -390,23 +417,15 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
             len,
         ))
     }
-}
 
-impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     pub(crate) fn write_to_page(
         mut self,
+        sbi: &SbInfo,
         reader: &mut impl IoBufferReader,
         offset: usize,
         len: usize,
     ) -> Result<(usize, DataPageWrapper<'a, InFlight, Written>)> {
-        // get raw pointer to the actual DataPageHeader
-        let page = self.page.take().unwrap();
-        let ptr: *mut DataPageHeader = page;
-        // then offset by the size of the header and the offset into the page
-        let ptr = unsafe { ptr.offset(1) };
-        // offset length is calculated by count * size of the type of the ptr
-        // so we need to cast it to a u8 to offset by a byte count
-        let ptr = ptr as *mut u8;
+        let ptr = self.get_page_addr(sbi)? as *mut u8;
         let ptr = unsafe { ptr.offset(offset.try_into()?) };
 
         // FIXME: read_raw and read_raw_nt return a Result that does NOT include the
@@ -414,11 +433,11 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         // read. this is not the behavior we expect or want here. It does return an
         // error if all bytes are not written so we can safely return len if
         // the read does succeed though
-        unsafe { reader.read_raw_nt(ptr as *mut u8, len) }?;
+        unsafe { reader.read_raw_nt(ptr, len) }?;
+        unsafe { flush_edge_cachelines(ptr as *mut ffi::c_void, len) }?;
 
-        unsafe { flush_edge_cachelines(ptr as *mut c_void, len) }?;
+        let page = self.make_drop_safe_and_take();
 
-        self.make_drop_safe();
         Ok((
             len,
             DataPageWrapper {
@@ -426,9 +445,14 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
                 op: PhantomData,
                 page_no: self.page_no,
                 drop_type: DropType::DropPanic,
-                page: Some(page),
+                page: page,
             },
         ))
+    }
+
+    fn get_page_addr(&self, sbi: &SbInfo) -> Result<*mut u8> {
+        let page_addr = unsafe { page_no_to_page(sbi, self.get_page_no())? };
+        Ok(page_addr)
     }
 }
 
