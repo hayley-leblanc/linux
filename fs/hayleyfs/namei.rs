@@ -289,7 +289,7 @@ fn get_free_dentry<'a>(
     let result = sbi.ino_dir_page_map.find_page_with_free_dentry(&parent_ino);
     if let Some(page_info) = result {
         let dir_page = DirPageWrapper::from_dir_page_info(sbi, &page_info)?;
-        dir_page.get_free_dentry()
+        dir_page.get_free_dentry(sbi)
     } else {
         // no pages have any free dentries
         alloc_page_for_dentry(sbi, parent_ino)
@@ -313,7 +313,7 @@ fn alloc_page_for_dentry<'a>(
         sbi.ino_dir_page_map.insert(parent_ino, &dir_page)?;
         // TODO: get_free_dentry() should never return an error since all dentries
         // in the newly-allocated page should be free - but check on that and confirm
-        let pd = dir_page.get_free_dentry()?;
+        let pd = dir_page.get_free_dentry(sbi)?;
         Ok(pd)
     } else {
         pr_info!("ERROR: parent inode is not initialized");

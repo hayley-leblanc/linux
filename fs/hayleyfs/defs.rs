@@ -25,13 +25,16 @@ pub(crate) const MAX_PAGES: u64 = u64::MAX; // TODO: remove (or make much bigger
 pub(crate) const MAX_LINKS: u16 = u16::MAX;
 pub(crate) const DENTRIES_PER_PAGE: usize = 16; // TODO: update with true dentry size
 
+pub(crate) const PAGE_DESCRIPTOR_SIZE: u64 = 32; // TODO: can we reduce this?
+
 /// Reserved pages
 /// TODO: update these
 #[allow(dead_code)]
 pub(crate) const SB_PAGE: PageNum = 0;
 #[allow(dead_code)]
 pub(crate) const INO_PAGE_START: PageNum = 1;
-pub(crate) const DATA_PAGE_START: PageNum = 4;
+pub(crate) const PAGE_DESCRIPTOR_TABLE_START: PageNum = 2;
+pub(crate) const DATA_PAGE_START: PageNum = 6;
 
 /// Sizes of persistent objects
 /// Update these if they get bigger or are permanently smaller
@@ -156,11 +159,11 @@ impl SbInfo {
     }
 
     pub(crate) fn inc_blocks_in_use(&self) {
-        self.inodes_in_use.fetch_add(1, Ordering::SeqCst);
+        self.blocks_in_use.fetch_add(1, Ordering::SeqCst);
     }
 
     pub(crate) fn get_pages_in_use(&self) -> u64 {
-        self.inodes_in_use.load(Ordering::SeqCst)
+        self.blocks_in_use.load(Ordering::SeqCst)
     }
 
     pub(crate) fn get_size(&self) -> i64 {
