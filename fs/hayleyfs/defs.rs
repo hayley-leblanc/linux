@@ -3,7 +3,7 @@ use crate::h_inode::*;
 use crate::typestate::*;
 use crate::volatile::*;
 use core::{
-    ffi, ptr,
+    ptr, slice,
     sync::atomic::{AtomicU64, Ordering},
 };
 use kernel::bindings;
@@ -44,8 +44,8 @@ pub(crate) const DATA_PAGE_START: PageNum =
 
 /// Sizes of persistent objects
 /// Update these if they get bigger or are permanently smaller
-pub(crate) const INODE_SIZE: u64 = 32; // TODO: update when inode size changes
-pub(crate) const SB_SIZE: usize = 64;
+pub(crate) const INODE_SIZE: u64 = 32;
+pub(crate) const SB_SIZE: u64 = HAYLEYFS_PAGESIZE;
 
 #[repr(C)]
 #[allow(dead_code)]
@@ -58,8 +58,9 @@ pub(crate) enum PageType {
 
 #[repr(C)]
 #[allow(dead_code)]
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Debug, Copy, Clone)]
 pub(crate) enum InodeType {
+    NONE = 0,
     REG,
     DIR,
 }
@@ -67,19 +68,30 @@ pub(crate) enum InodeType {
 /// TODO: add stuff
 #[repr(C)]
 pub(crate) struct HayleyFsSuperBlock {
+    magic: i64,
+    block_size: u64,
     size: i64,
+    // TODO: mount and write timestamps
+    // TODO: make sure remounted file systems use the page size specified in the superblock
 }
 
 impl HayleyFsSuperBlock {
     pub(crate) unsafe fn init_super_block(
-        virt_addr: *mut ffi::c_void,
+        virt_addr: *mut u8,
         size: i64,
     ) -> &'static HayleyFsSuperBlock {
         // we already zeroed out the entire device, so no need to zero out the superblock
         let super_block = unsafe { &mut *(virt_addr as *mut HayleyFsSuperBlock) };
         super_block.size = size;
+        super_block.magic = SUPER_MAGIC;
+        super_block.block_size = HAYLEYFS_PAGESIZE;
         super_block
     }
+}
+
+#[derive(Default)]
+pub(crate) struct HayleyfsParams {
+    pub(crate) init: Option<bool>,
 }
 
 /// A volatile structure containing information about the file system superblock.
@@ -100,10 +112,10 @@ pub(crate) struct SbInfo {
     // CXL PM might be obtained in a different way.
     sb: *mut bindings::super_block,
     dax_dev: *mut bindings::dax_device,
-    virt_addr: *mut ffi::c_void,
+    virt_addr: *mut u8,
     pub(crate) size: i64,
 
-    pub(crate) blocksize: i64,
+    pub(crate) blocksize: u64,
     pub(crate) num_blocks: u64,
 
     pub(crate) inodes_in_use: AtomicU64,
@@ -125,6 +137,8 @@ pub(crate) struct SbInfo {
     // TODO: fix this.
     pub(crate) page_allocator: BasicPageAllocator,
     pub(crate) inode_allocator: BasicInodeAllocator,
+
+    pub(crate) mount_opts: HayleyfsParams,
 }
 
 // SbInfo must be Send and Sync for it to be used as the Context's data.
@@ -153,6 +167,7 @@ impl SbInfo {
             ino_data_page_map: InoDataPageMap::new().unwrap(), // TODO: handle possible panic
             page_allocator: PageAllocator::new(DATA_PAGE_START),
             inode_allocator: InodeAllocator::new(ROOT_INO + 1),
+            mount_opts: HayleyfsParams::default(),
         }
     }
 
@@ -177,11 +192,11 @@ impl SbInfo {
     }
 
     /// obtaining the virtual address is safe - dereferencing it is not
-    pub(crate) fn get_virt_addr(&self) -> *mut ffi::c_void {
+    pub(crate) fn get_virt_addr(&self) -> *mut u8 {
         self.virt_addr
     }
 
-    pub(crate) unsafe fn set_virt_addr(&mut self, virt_addr: *mut ffi::c_void) {
+    pub(crate) unsafe fn set_virt_addr(&mut self, virt_addr: *mut u8) {
         self.virt_addr = virt_addr;
     }
 
@@ -189,22 +204,54 @@ impl SbInfo {
         self.dax_dev = dax_dev;
     }
 
-    pub(crate) unsafe fn get_inode_by_ino(&self, ino: InodeNum) -> Result<&mut HayleyFsInode> {
+    pub(crate) fn get_super_block(&mut self) -> Result<&HayleyFsSuperBlock> {
+        let super_block = unsafe { &mut *(self.virt_addr as *mut HayleyFsSuperBlock) };
+        // assume for now that if the magic is fine, the rest of the super block is fine
+        if super_block.magic != SUPER_MAGIC {
+            pr_err!(
+                "Magic should be {:?} but found {:?}\n",
+                SUPER_MAGIC,
+                super_block.magic
+            );
+            return Err(EINVAL);
+        }
+        if super_block.size != self.size {
+            pr_err!(
+                "Device size should be {:?} but found {:?}\n",
+                self.size,
+                super_block.size
+            );
+            return Err(EINVAL);
+        }
+        self.blocksize = super_block.block_size;
+        Ok(super_block)
+    }
+
+    pub(crate) fn get_inode_table<'a>(&self) -> Result<&'a mut [HayleyFsInode]> {
+        let inode_table_addr: *mut HayleyFsInode = unsafe {
+            self.virt_addr
+                .offset((HAYLEYFS_PAGESIZE * INO_PAGE_START).try_into()?)
+                as *mut HayleyFsInode
+        };
+        let table = unsafe { slice::from_raw_parts_mut(inode_table_addr, NUM_INODES.try_into()?) };
+        Ok(table)
+    }
+
+    pub(crate) unsafe fn get_inode_by_ino<'a>(
+        &self,
+        ino: InodeNum,
+    ) -> Result<&'a mut HayleyFsInode> {
         // we don't use inode 0
         if ino >= NUM_INODES || ino == 0 {
             return Err(EINVAL);
         }
 
-        // for now, assume that sb and inodes are 64 bytes
-        // TODO: update that with the final size
-        let inode_size = 64;
-        let sb_size = 64;
-        // let sb_size = mem::size_of::<HayleyFsSuperBlock>();
-        // let inode_size = mem::size_of::<HayleyFsInode>();
-
-        let inode_offset: usize = (ino * inode_size).try_into()?;
+        let inode_offset: usize = (ino * INODE_SIZE).try_into()?;
         unsafe {
-            let inode_addr = self.virt_addr.offset((sb_size + inode_offset).try_into()?);
+            let inode_table_addr = self
+                .virt_addr
+                .offset((HAYLEYFS_PAGESIZE * INO_PAGE_START).try_into()?);
+            let inode_addr = inode_table_addr.offset(inode_offset.try_into()?);
             Ok(&mut *(inode_addr as *mut HayleyFsInode))
         }
     }
@@ -214,32 +261,19 @@ impl SbInfo {
         &self,
         ino: InodeNum,
     ) -> Result<InodeWrapper<'a, Clean, Start, RegInode>> {
-        // FIXME: code is repeated from unsafe get_inode_by_ino because
-        // calling that method here causes lifetime problems.
-
         // we don't use inode 0
         if ino >= NUM_INODES || ino == 0 {
             return Err(EINVAL);
         }
 
-        // for now, assume that sb and inodes are 64 bytes
-        // TODO: update that with the final size
-        let inode_size = 64;
-        let sb_size = 64;
+        let inode = unsafe { self.get_inode_by_ino(ino)? };
 
-        let inode_offset: usize = (ino * inode_size).try_into()?;
-
-        let raw_inode = unsafe {
-            let inode_addr = self.virt_addr.offset((sb_size + inode_offset).try_into()?);
-            &mut *(inode_addr as *mut HayleyFsInode)
-        };
-
-        if raw_inode.get_type() != InodeType::REG {
+        if inode.get_type() != InodeType::REG {
             pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
             return Err(EPERM);
         }
-        if raw_inode.is_initialized() {
-            Ok(InodeWrapper::wrap_inode(ino, raw_inode))
+        if inode.is_initialized() {
+            Ok(InodeWrapper::wrap_inode(ino, inode))
         } else {
             pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)
@@ -250,32 +284,18 @@ impl SbInfo {
         &self,
         ino: InodeNum,
     ) -> Result<InodeWrapper<'a, Clean, Start, DirInode>> {
-        // FIXME: code is repeated from unsafe get_inode_by_ino because
-        // calling that method here causes lifetime problems.
-
         // we don't use inode 0
         if ino >= NUM_INODES || ino == 0 {
             return Err(EINVAL);
         }
 
-        // for now, assume that sb and inodes are 64 bytes
-        // TODO: update that with the final size
-        let inode_size = 64;
-        let sb_size = 64;
+        let inode = unsafe { self.get_inode_by_ino(ino)? };
 
-        let inode_offset: usize = (ino * inode_size).try_into()?;
-
-        let raw_inode = unsafe {
-            let inode_addr = self.virt_addr.offset((sb_size + inode_offset).try_into()?);
-            &mut *(inode_addr as *mut HayleyFsInode)
-        };
-
-        if raw_inode.get_type() != InodeType::DIR {
-            pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
+        if inode.get_type() != InodeType::DIR {
             return Err(EPERM);
         }
-        if raw_inode.is_initialized() {
-            Ok(InodeWrapper::wrap_inode(ino, raw_inode))
+        if inode.is_initialized() {
+            Ok(InodeWrapper::wrap_inode(ino, inode))
         } else {
             pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)

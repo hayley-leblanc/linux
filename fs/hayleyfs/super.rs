@@ -34,6 +34,10 @@ struct HayleyFs;
 impl fs::Context<Self> for HayleyFs {
     type Data = Box<SbInfo>;
 
+    kernel::define_fs_params! {Box<SbInfo>,
+        {flag, "init", |s, v| {s.mount_opts.init = Some(v); Ok(())}},
+    }
+
     fn try_new() -> Result<Self::Data> {
         pr_info!("Context created");
         Ok(Box::try_new(SbInfo::new())?)
@@ -53,17 +57,22 @@ impl fs::Type for HayleyFs {
         mut data: Box<SbInfo>,
         sb: fs::NewSuperBlock<'_, Self>,
     ) -> Result<&fs::SuperBlock<Self>> {
-        pr_info!("fill super");
+        pr_info!("fill super\n");
 
         // obtain virtual address and size of PM device
         data.get_pm_info(&sb)?;
 
-        // zero out PM device with non-temporal stores
-        unsafe {
-            memset_nt(data.get_virt_addr(), 0, data.get_size().try_into()?, true);
-        }
+        if let Some(true) = data.mount_opts.init {
+            // initialize the file system
+            // zero out PM device with non-temporal stores
+            pr_info!("initializing file system...\n");
 
-        unsafe { init_fs(&mut data)? };
+            unsafe { init_fs(&mut data)? };
+        } else {
+            // remount
+            pr_info!("mounting existing file system...\n");
+            remount_fs(&mut data)?;
+        }
 
         // initialize superblock
         let sb = sb.init(
@@ -84,7 +93,7 @@ impl fs::Type for HayleyFs {
         let sbi = unsafe { &*(sb.s_fs_info() as *const SbInfo) };
         unsafe {
             (*buf).f_type = SUPER_MAGIC;
-            (*buf).f_bsize = sbi.blocksize;
+            (*buf).f_bsize = sbi.blocksize.try_into()?;
             (*buf).f_blocks = sbi.num_blocks;
             pr_info!("num blocks: {:?}\n", sbi.num_blocks);
             pr_info!("fs size: {:?}\n", sbi.size);
@@ -108,16 +117,43 @@ unsafe fn init_fs(sbi: &mut SbInfo) -> Result<()> {
     pr_info!("init fs\n");
 
     unsafe {
+        memset_nt(
+            sbi.get_virt_addr() as *mut ffi::c_void,
+            0,
+            sbi.get_size().try_into()?,
+            true,
+        );
+
         let root_ino = HayleyFsInode::init_root_inode(sbi)?;
-        // let super_block = HayleyFsSuperBlock::init_super_block(sbi);
         let super_block = HayleyFsSuperBlock::init_super_block(sbi.get_virt_addr(), sbi.get_size());
 
         flush_buffer(root_ino, INODE_SIZE.try_into()?, false);
-        flush_buffer(super_block, SB_SIZE, true);
+        flush_buffer(super_block, SB_SIZE.try_into()?, true);
     }
 
-    // let _iops = unsafe { inode::OperationsVtable::<InodeData>::build() };
+    Ok(())
+}
 
+fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
+    // 1. check the super block to make sure it is a valid fs and to fill in sbi
+    let _sb = sbi.get_super_block()?;
+
+    // 2. scan the inode table to determine which inodes are allocated
+    // TODO: this scan will change significantly if the inode table is ever
+    // not a single contiguous array
+    let inode_table = sbi.get_inode_table()?;
+    let mut _alloc_inode_vec: Vec<InodeNum> = Vec::new();
+    // FIXME: This code
+    // for inode in inode_table {
+    //     if !inode.is_free() {
+    //         alloc_inode_vec.try_push(inode.get_ino())?;
+    //     }
+    // }
+    // pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
+
+    // 3. scan the page descriptor table to determine which pages are live
+
+    // 4. scan the directory entries in live pages to determine which inodes are live
     Ok(())
 }
 
@@ -150,7 +186,7 @@ impl PmDevice for SbInfo {
 
         unsafe {
             self.set_dax_dev(dax_dev);
-            self.set_virt_addr(virt_addr);
+            self.set_virt_addr(virt_addr as *mut u8);
         }
         let pgsize_i64: i64 = HAYLEYFS_PAGESIZE.try_into()?;
         self.size = num_blocks * pgsize_i64;

@@ -24,6 +24,7 @@ impl AnyInode for DirInode {}
 /// It is always unsafe to access this structure directly
 /// TODO: add the rest of the fields
 #[repr(C)]
+#[derive(Debug)]
 pub(crate) struct HayleyFsInode {
     link_count: u16,
     inode_type: InodeType,
@@ -70,12 +71,12 @@ impl HayleyFsInode {
 
     // TODO: update as fields are added
     pub(crate) fn is_initialized(&self) -> bool {
-        self.ino != 0 && self.link_count != 0
+        self.ino != 0 && self.link_count != 0 && self.inode_type != InodeType::NONE
     }
 
     // TODO: update as fields are added
     pub(crate) fn is_free(&self) -> bool {
-        self.ino == 0 && self.link_count == 0
+        self.ino == 0 && self.link_count == 0 && self.inode_type == InodeType::NONE
     }
 }
 

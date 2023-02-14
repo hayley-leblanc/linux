@@ -109,7 +109,7 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
 
 // TODO: safety
 fn page_no_to_dir_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
-    let virt_addr = sbi.get_virt_addr() as *mut u8;
+    let virt_addr = sbi.get_virt_addr();
     // TODO: make sure this address is right
     let page_desc_table_addr =
         unsafe { virt_addr.offset((HAYLEYFS_PAGESIZE * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
@@ -130,7 +130,7 @@ unsafe fn page_no_to_page(sbi: &SbInfo, page_no: PageNum) -> Result<*mut u8> {
     if page_no > MAX_PAGES {
         Err(ENOSPC)
     } else {
-        let virt_addr: *mut u8 = sbi.get_virt_addr() as *mut u8;
+        let virt_addr: *mut u8 = sbi.get_virt_addr();
         let res = Ok(unsafe { virt_addr.offset((HAYLEYFS_PAGESIZE * page_no).try_into()?) });
         res
     }
@@ -276,7 +276,7 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
 
 #[allow(dead_code)]
 fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
-    let virt_addr = sbi.get_virt_addr() as *mut u8;
+    let virt_addr = sbi.get_virt_addr();
     let page_desc_table_addr =
         unsafe { virt_addr.offset((HAYLEYFS_PAGESIZE * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
     let page_desc_addr =

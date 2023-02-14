@@ -173,6 +173,7 @@ fn new_vfs_inode<'a, Type>(
                 bindings::set_nlink(vfs_inode, 2);
             }
         }
+        InodeType::NONE => panic!("Inode type is none"),
     }
 
     let current_time = unsafe { bindings::current_time(vfs_inode) };
