@@ -57,7 +57,6 @@ impl PageAllocator for BasicPageAllocator {
 struct DirPageHeader {
     page_type: PageType,
     ino: InodeNum,
-    page_no: PageNum,
 }
 
 // be careful here... slice should have size DENTRIES_PER_PAGE
@@ -68,7 +67,7 @@ struct DirPage<'a> {
 
 impl DirPageHeader {
     pub(crate) fn is_initialized(&self) -> bool {
-        self.page_type != PageType::NONE && self.ino != 0 && self.page_no != 0
+        self.page_type != PageType::NONE && self.ino != 0
     }
 }
 
@@ -237,7 +236,6 @@ struct DataPageHeader {
     page_type: PageType,
     ino: InodeNum,
     offset: u64,
-    page_no: PageNum,
 }
 
 // TODO: inline? macro?
