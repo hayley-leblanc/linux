@@ -6,7 +6,7 @@ use core::{ffi, ptr};
 use defs::*;
 use h_inode::*;
 use kernel::prelude::*;
-use kernel::{bindings, c_str, fs, PAGE_SIZE};
+use kernel::{bindings, c_str, fs};
 use namei::*;
 use pm::*;
 
@@ -112,7 +112,7 @@ unsafe fn init_fs(sbi: &mut SbInfo) -> Result<()> {
         // let super_block = HayleyFsSuperBlock::init_super_block(sbi);
         let super_block = HayleyFsSuperBlock::init_super_block(sbi.get_virt_addr(), sbi.get_size());
 
-        flush_buffer(root_ino, INODE_SIZE, false);
+        flush_buffer(root_ino, INODE_SIZE.try_into()?, false);
         flush_buffer(super_block, SB_SIZE, true);
     }
 
@@ -141,7 +141,7 @@ impl PmDevice for SbInfo {
             bindings::dax_direct_access(
                 dax_dev,
                 0,
-                (usize::MAX / kernel::PAGE_SIZE).try_into()?,
+                (u64::MAX / HAYLEYFS_PAGESIZE).try_into()?,
                 bindings::dax_access_mode_DAX_ACCESS,
                 &mut virt_addr,
                 ptr::null_mut(),
@@ -152,7 +152,7 @@ impl PmDevice for SbInfo {
             self.set_dax_dev(dax_dev);
             self.set_virt_addr(virt_addr);
         }
-        let pgsize_i64: i64 = PAGE_SIZE.try_into()?;
+        let pgsize_i64: i64 = HAYLEYFS_PAGESIZE.try_into()?;
         self.size = num_blocks * pgsize_i64;
         self.num_blocks = num_blocks.try_into()?;
 

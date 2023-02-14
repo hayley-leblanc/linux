@@ -10,11 +10,8 @@ use core::{
     mem, slice,
     sync::atomic::{AtomicU64, Ordering},
 };
+use kernel::io_buffer::{IoBufferReader, IoBufferWriter};
 use kernel::prelude::*;
-use kernel::{
-    io_buffer::{IoBufferReader, IoBufferWriter},
-    PAGE_SIZE,
-};
 
 pub(crate) trait PageAllocator {
     fn new(val: u64) -> Self;
@@ -113,10 +110,9 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
 // TODO: safety
 fn page_no_to_dir_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
     let virt_addr = sbi.get_virt_addr() as *mut u8;
-    let page_size_u64: u64 = PAGE_SIZE.try_into()?;
     // TODO: make sure this address is right
     let page_desc_table_addr =
-        unsafe { virt_addr.offset((page_size_u64 * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
+        unsafe { virt_addr.offset((HAYLEYFS_PAGESIZE * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
     let page_desc_addr =
         unsafe { page_desc_table_addr.offset((PAGE_DESCRIPTOR_SIZE * page_no).try_into()?) };
     // cast raw address to a dir page descriptor
@@ -135,8 +131,7 @@ unsafe fn page_no_to_page(sbi: &SbInfo, page_no: PageNum) -> Result<*mut u8> {
         Err(ENOSPC)
     } else {
         let virt_addr: *mut u8 = sbi.get_virt_addr() as *mut u8;
-        let page_size_u64: u64 = PAGE_SIZE.try_into()?;
-        let res = Ok(unsafe { virt_addr.offset((page_size_u64 * page_no).try_into()?) });
+        let res = Ok(unsafe { virt_addr.offset((HAYLEYFS_PAGESIZE * page_no).try_into()?) });
         res
     }
 }
@@ -238,19 +233,12 @@ struct DataPageHeader {
     offset: u64,
 }
 
-// TODO: inline? macro?
-pub(crate) fn bytes_per_page() -> usize {
-    PAGE_SIZE
-}
-
 /// Given the offset into a file, returns the offset of the
 /// DataPageHeader that includes that offset
-pub(crate) fn page_offset(offset: u64) -> Result<usize> {
-    let bytes_per_page = bytes_per_page();
-    let offset_usize: usize = offset.try_into()?;
-    // integer division removes the remainder; multiplying by bytes_per_page
+pub(crate) fn page_offset(offset: u64) -> Result<u64> {
+    // integer division removes the remainder; multiplying by HAYLEYFS_PAGESIZE
     // gives us the offset of the page to read/write
-    Ok((offset_usize / bytes_per_page) * bytes_per_page)
+    Ok((offset / HAYLEYFS_PAGESIZE) * HAYLEYFS_PAGESIZE)
 }
 
 #[allow(dead_code)]
@@ -289,9 +277,8 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
 #[allow(dead_code)]
 fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
     let virt_addr = sbi.get_virt_addr() as *mut u8;
-    let page_size_u64: u64 = PAGE_SIZE.try_into()?;
     let page_desc_table_addr =
-        unsafe { virt_addr.offset((page_size_u64 * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
+        unsafe { virt_addr.offset((HAYLEYFS_PAGESIZE * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
     let page_desc_addr =
         unsafe { page_desc_table_addr.offset((PAGE_DESCRIPTOR_SIZE * page_no).try_into()?) };
     let ph: &mut DataPageHeader = unsafe { &mut *page_desc_addr.cast() };
@@ -307,7 +294,7 @@ fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPag
 impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
-    pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: usize) -> Result<Self> {
+    pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: u64) -> Result<Self> {
         // TODO: should we zero the page here?
         let page_no = sbi.page_allocator.alloc_page()?;
         let ph = page_no_to_data_header(sbi, page_no)?;
@@ -351,15 +338,14 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         &self,
         sbi: &SbInfo,
         writer: &mut impl IoBufferWriter,
-        offset: usize,
-        len: usize,
-        // ) -> Result<(DataPageWrapper<'a, Clean, Complete>, usize)> {
-    ) -> Result<usize> {
+        offset: u64,
+        len: u64,
+    ) -> Result<u64> {
         let ptr = self.get_page_addr(sbi)? as *mut u8;
         let ptr = unsafe { ptr.offset(offset.try_into()?) };
         // FIXME: same problem as write_to_page - write_raw returns an error if
         // the bytes are not all written, which is not what we want.
-        unsafe { writer.write_raw(ptr, len) }?;
+        unsafe { writer.write_raw(ptr, len.try_into()?) }?;
 
         Ok(len)
     }
@@ -368,9 +354,9 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         self,
         sbi: &SbInfo,
         reader: &mut impl IoBufferReader,
-        offset: usize,
-        len: usize,
-    ) -> Result<(usize, DataPageWrapper<'a, InFlight, Written>)> {
+        offset: u64,
+        len: u64,
+    ) -> Result<(u64, DataPageWrapper<'a, InFlight, Written>)> {
         let ptr = self.get_page_addr(sbi)? as *mut u8;
         let ptr = unsafe { ptr.offset(offset.try_into()?) };
 
@@ -379,7 +365,7 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         // read. this is not the behavior we expect or want here. It does return an
         // error if all bytes are not written so we can safely return len if
         // the read does succeed though
-        unsafe { reader.read_raw_nt(ptr, len) }?;
+        unsafe { reader.read_raw_nt(ptr, len.try_into()?) }?;
         unsafe { flush_edge_cachelines(ptr as *mut ffi::c_void, len) }?;
 
         Ok((

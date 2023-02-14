@@ -6,8 +6,8 @@ use core::{
     ffi, ptr,
     sync::atomic::{AtomicU64, Ordering},
 };
+use kernel::bindings;
 use kernel::prelude::*;
-use kernel::{bindings, PAGE_SIZE};
 
 // TODO: different magic value
 pub(crate) const SUPER_MAGIC: i64 = 0xabcdef;
@@ -19,12 +19,17 @@ pub(crate) const ROOT_INO: InodeNum = 1;
 pub(crate) type InodeNum = u64;
 pub(crate) type PageNum = u64;
 
+pub(crate) const HAYLEYFS_PAGESIZE: u64 = 4096;
+
 pub(crate) const MAX_FILENAME_LEN: usize = 64; // TODO: increase
-pub(crate) const NUM_INODES: u64 = 64; // max inodes in the FS
-pub(crate) const MAX_PAGES: u64 = u64::MAX; // TODO: remove (or make much bigger)
+pub(crate) const NUM_INODES: u64 = INODE_TABLE_SIZE / INODE_SIZE; // max inodes in the FS
+pub(crate) const MAX_PAGES: u64 = u64::MAX;
 pub(crate) const MAX_LINKS: u16 = u16::MAX;
 pub(crate) const DENTRIES_PER_PAGE: usize = 16; // TODO: update with true dentry size
-
+pub(crate) const INODE_TABLE_SIZE: u64 = 1024 * 1024 * 2; // 2MB
+pub(crate) const NUM_INODE_PAGES: u64 = INODE_TABLE_SIZE / HAYLEYFS_PAGESIZE;
+pub(crate) const DESCRIPTOR_TABLE_SIZE: u64 = 1024 * 1024 * 2; // 2MB
+pub(crate) const NUM_DESCRIPTOR_TABLE_PAGES: u64 = DESCRIPTOR_TABLE_SIZE / HAYLEYFS_PAGESIZE;
 pub(crate) const PAGE_DESCRIPTOR_SIZE: u64 = 32; // TODO: can we reduce this?
 
 /// Reserved pages
@@ -33,12 +38,13 @@ pub(crate) const PAGE_DESCRIPTOR_SIZE: u64 = 32; // TODO: can we reduce this?
 pub(crate) const SB_PAGE: PageNum = 0;
 #[allow(dead_code)]
 pub(crate) const INO_PAGE_START: PageNum = 1;
-pub(crate) const PAGE_DESCRIPTOR_TABLE_START: PageNum = 2;
-pub(crate) const DATA_PAGE_START: PageNum = 6;
+pub(crate) const PAGE_DESCRIPTOR_TABLE_START: PageNum = INO_PAGE_START + NUM_INODE_PAGES;
+pub(crate) const DATA_PAGE_START: PageNum =
+    PAGE_DESCRIPTOR_TABLE_START + NUM_DESCRIPTOR_TABLE_PAGES;
 
 /// Sizes of persistent objects
 /// Update these if they get bigger or are permanently smaller
-pub(crate) const INODE_SIZE: usize = 64;
+pub(crate) const INODE_SIZE: u64 = 32; // TODO: update when inode size changes
 pub(crate) const SB_SIZE: usize = 64;
 
 #[repr(C)]
@@ -138,7 +144,7 @@ impl SbInfo {
             dax_dev: ptr::null_mut(),
             virt_addr: ptr::null_mut(),
             size: 0, // total size of the PM device
-            blocksize: PAGE_SIZE.try_into().unwrap(),
+            blocksize: HAYLEYFS_PAGESIZE.try_into().unwrap(),
             num_blocks: 0,
             inodes_in_use: AtomicU64::new(1),
             blocks_in_use: AtomicU64::new(0), // TODO: mark reserved pages as in use

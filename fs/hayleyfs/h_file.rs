@@ -51,7 +51,7 @@ impl file::Operations for FileOps {
         let inode = unsafe { RwSemaphore::new_with_sem(inode, sem) };
         let (bytes_written, _) = hayleyfs_write(sbi, inode, reader, offset)?;
 
-        Ok(bytes_written)
+        Ok(bytes_written.try_into()?)
     }
 
     fn read(
@@ -71,7 +71,8 @@ impl file::Operations for FileOps {
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
         let inode = unsafe { RwSemaphore::new_with_sem(inode, sem) };
 
-        hayleyfs_read(sbi, inode, writer, offset)
+        let result = hayleyfs_read(sbi, inode, writer, offset)?;
+        Ok(result.try_into()?)
     }
 }
 
@@ -80,13 +81,13 @@ fn hayleyfs_write<'a>(
     inode: RwSemaphore<&mut fs::INode>,
     reader: &mut impl IoBufferReader,
     offset: u64,
-) -> Result<(usize, InodeWrapper<'a, Clean, IncSize, RegInode>)> {
-    let bytes_per_page = bytes_per_page();
+) -> Result<(u64, InodeWrapper<'a, Clean, IncSize, RegInode>)> {
     // TODO: give a way out if reader.len() is 0
-    let count = if bytes_per_page < reader.len() {
-        bytes_per_page
+    let len: u64 = reader.len().try_into()?;
+    let count = if HAYLEYFS_PAGESIZE < len {
+        HAYLEYFS_PAGESIZE
     } else {
-        reader.len()
+        len
     };
     let mut inode = inode.write();
     let ino = inode.i_ino();
@@ -94,14 +95,14 @@ fn hayleyfs_write<'a>(
 
     // TODO: update timestamp
 
-    let offset: usize = offset.try_into()?;
+    // let offset: usize = offset.try_into()?;
 
     // this is the value of the `offset` field of the page that
     // we want to write to
-    let page_offset = page_offset(offset.try_into()?)?;
+    let page_offset = page_offset(offset)?;
 
     // does this page exist yet? if not, allocate it
-    let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
+    let result = sbi.ino_data_page_map.find(&ino, page_offset);
     let data_page = if let Some(page_info) = result {
         DataPageWrapper::from_data_page_info(sbi, page_info)?
     } else {
@@ -113,18 +114,13 @@ fn hayleyfs_write<'a>(
         page
     };
     let offset_in_page = offset - page_offset;
-    let bytes_after_offset = bytes_per_page - offset_in_page;
+    let bytes_after_offset = HAYLEYFS_PAGESIZE - offset_in_page;
     // either write the rest of the count or write to the end of the page
     let to_write = if count < bytes_after_offset {
         count
     } else {
         bytes_after_offset
     };
-    // pr_info!(
-    //     "writing {:?} bytes to page {:?}\n",
-    //     to_write,
-    //     data_page.get_page_no()
-    // );
 
     let (bytes_written, data_page) =
         data_page.write_to_page(sbi, reader, offset_in_page, to_write)?;
@@ -153,26 +149,23 @@ fn hayleyfs_read(
     sbi: &SbInfo,
     inode: RwSemaphore<&mut fs::INode>,
     writer: &mut impl IoBufferWriter,
-    offset: u64,
-) -> Result<usize> {
-    let count = writer.len();
+    mut offset: u64,
+) -> Result<u64> {
+    let mut count: u64 = writer.len().try_into()?;
     pr_info!("reading {:?} bytes at offset {:?}\n", count, offset);
-    let mut offset: usize = offset.try_into()?;
     // TODO: update timestamp
 
     // acquire shared read lock
     let inode = inode.read();
     let _size = inode.i_size_read();
     let ino = inode.i_ino();
-    let mut count = writer.len();
 
-    let bytes_per_page = bytes_per_page();
     let mut bytes_read = 0;
     while count > 0 {
-        let page_offset = page_offset(offset.try_into()?)?;
+        let page_offset = page_offset(offset)?;
 
         let offset_in_page = page_offset - offset;
-        let bytes_after_offset = bytes_per_page - offset_in_page;
+        let bytes_after_offset = HAYLEYFS_PAGESIZE - offset_in_page;
         // either read the rest of the count or write to the end of the page
         let to_read = if count < bytes_after_offset {
             count
@@ -189,7 +182,7 @@ fn hayleyfs_read(
             offset += to_read;
             count -= to_read;
         } else {
-            writer.clear(to_read)?;
+            writer.clear(to_read.try_into()?)?;
             bytes_read += to_read;
             offset += to_read;
             count -= to_read;

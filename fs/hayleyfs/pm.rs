@@ -80,8 +80,8 @@ pub(crate) unsafe fn memcpy_nt<T: ?Sized>(
     Ok(ret)
 }
 
-pub(crate) unsafe fn flush_edge_cachelines(ptr: *mut c_void, size: usize) -> Result<()> {
-    let raw_ptr = ptr as usize;
+pub(crate) unsafe fn flush_edge_cachelines(ptr: *mut c_void, size: u64) -> Result<()> {
+    let raw_ptr = ptr as u64;
     if raw_ptr & 0x7 != 0 {
         flush_buffer(ptr, 1, false);
     }
