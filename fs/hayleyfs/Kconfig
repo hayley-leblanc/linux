@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config HAYLEY_FS
+	tristate "Hayley filesystem"
+	depends on FS_DAX
+	depends on X86_PMEM_LEGACY
+	help
+	  This is the Hayley filesystem. More details to follow.
