@@ -13,7 +13,9 @@ use kernel::prelude::*;
 // These are not typestate since they don't change, but they are a generic
 // parameter for inodes so that the compiler can check that we are using
 // the right kind of inode
+#[derive(Debug)]
 pub(crate) struct RegInode {}
+#[derive(Debug)]
 pub(crate) struct DirInode {}
 
 pub(crate) trait AnyInode {}
@@ -34,6 +36,7 @@ pub(crate) struct HayleyFsInode {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) struct InodeWrapper<'a, State, Op, Type> {
     state: PhantomData<State>,
     op: PhantomData<Op>,

@@ -135,6 +135,9 @@ unsafe fn init_fs(sbi: &mut SbInfo) -> Result<()> {
 }
 
 fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
+    let mut alloc_inode_vec: Vec<InodeNum> = Vec::new();
+    let mut alloc_page_vec: Vec<PageNum> = Vec::new();
+
     // 1. check the super block to make sure it is a valid fs and to fill in sbi
     let _sb = sbi.get_super_block()?;
 
@@ -142,7 +145,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     // TODO: this scan will change significantly if the inode table is ever
     // not a single contiguous array
     let inode_table = sbi.get_inode_table()?;
-    let mut alloc_inode_vec: Vec<InodeNum> = Vec::new();
+
     for inode in inode_table {
         if !inode.is_free() {
             alloc_inode_vec.try_push(inode.get_ino())?;
@@ -151,6 +154,15 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
 
     // 3. scan the page descriptor table to determine which pages are live
+    let page_desc_table = sbi.get_page_desc_table()?;
+    for (i, desc) in page_desc_table.iter().enumerate() {
+        if !desc.is_free() {
+            // pr_info!("{:?}\n", desc);
+            let index: u64 = i.try_into()?;
+            alloc_page_vec.try_push(index + DATA_PAGE_START)?;
+        }
+    }
+    pr_info!("allocated pages: {:?}\n", alloc_page_vec);
 
     // 4. scan the directory entries in live pages to determine which inodes are live
     Ok(())

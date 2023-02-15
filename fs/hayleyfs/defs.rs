@@ -30,7 +30,7 @@ pub(crate) const INODE_TABLE_SIZE: u64 = 1024 * 1024 * 2; // 2MB
 pub(crate) const NUM_INODE_PAGES: u64 = INODE_TABLE_SIZE / HAYLEYFS_PAGESIZE;
 pub(crate) const DESCRIPTOR_TABLE_SIZE: u64 = 1024 * 1024 * 2; // 2MB
 pub(crate) const NUM_DESCRIPTOR_TABLE_PAGES: u64 = DESCRIPTOR_TABLE_SIZE / HAYLEYFS_PAGESIZE;
-pub(crate) const PAGE_DESCRIPTOR_SIZE: u64 = 32; // TODO: can we reduce this?
+pub(crate) const NUM_PAGE_DESCRIPTORS: u64 = DESCRIPTOR_TABLE_SIZE / PAGE_DESCRIPTOR_SIZE;
 
 /// Reserved pages
 /// TODO: update these
@@ -45,6 +45,7 @@ pub(crate) const DATA_PAGE_START: PageNum =
 /// Sizes of persistent objects
 /// Update these if they get bigger or are permanently smaller
 pub(crate) const INODE_SIZE: u64 = 32;
+pub(crate) const PAGE_DESCRIPTOR_SIZE: u64 = 32; // TODO: can we reduce this?
 pub(crate) const SB_SIZE: u64 = HAYLEYFS_PAGESIZE;
 
 #[repr(C)]
@@ -227,6 +228,17 @@ impl SbInfo {
         Ok(super_block)
     }
 
+    pub(crate) fn get_page_desc_table<'a>(&self) -> Result<&'a mut [PageDescriptor]> {
+        let page_desc_table_addr = unsafe {
+            self.virt_addr
+                .offset((HAYLEYFS_PAGESIZE * PAGE_DESCRIPTOR_TABLE_START).try_into()?)
+        } as *mut PageDescriptor;
+        let table = unsafe {
+            slice::from_raw_parts_mut(page_desc_table_addr, NUM_PAGE_DESCRIPTORS.try_into()?)
+        };
+        Ok(table)
+    }
+
     pub(crate) fn get_inode_table<'a>(&self) -> Result<&'a mut [HayleyFsInode]> {
         let inode_table_addr: *mut HayleyFsInode = unsafe {
             self.virt_addr
@@ -246,14 +258,10 @@ impl SbInfo {
             return Err(EINVAL);
         }
 
-        let inode_offset: usize = (ino * INODE_SIZE).try_into()?;
-        unsafe {
-            let inode_table_addr = self
-                .virt_addr
-                .offset((HAYLEYFS_PAGESIZE * INO_PAGE_START).try_into()?);
-            let inode_addr = inode_table_addr.offset(inode_offset.try_into()?);
-            Ok(&mut *(inode_addr as *mut HayleyFsInode))
-        }
+        let table = self.get_inode_table()?;
+        let ino_usize: usize = ino.try_into()?;
+        let inode = &mut table[ino_usize];
+        Ok(inode)
     }
 
     #[allow(dead_code)]

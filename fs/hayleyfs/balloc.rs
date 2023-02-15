@@ -49,11 +49,44 @@ impl PageAllocator for BasicPageAllocator {
     }
 }
 
-#[allow(dead_code)]
+// placeholder page descriptor that can represent either a dir or data page descriptor
+// mainly useful so that we can represent the page descriptor table as a slice and index
+// into it. fields cannot be accessed directly - we can only convert this type into a
+// narrower page descriptor type
+#[derive(Debug)]
 #[repr(C)]
-struct DirPageHeader {
+pub(crate) struct PageDescriptor {
     page_type: PageType,
     ino: InodeNum,
+    offset: u64,
+    _padding0: u64,
+}
+
+impl PageDescriptor {
+    pub(crate) fn is_free(&self) -> bool {
+        self.page_type == PageType::NONE && self.ino == 0 && self.offset == 0
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub(crate) struct DirPageHeader {
+    page_type: PageType,
+    ino: InodeNum,
+    _padding0: u64,
+    _padding1: u64,
+}
+
+impl TryFrom<&mut PageDescriptor> for &mut DirPageHeader {
+    type Error = Error;
+
+    fn try_from(value: &mut PageDescriptor) -> Result<Self> {
+        if value.page_type == PageType::DIR || value.page_type == PageType::NONE {
+            Ok(unsafe { &mut *(value as *mut PageDescriptor as *mut DirPageHeader) })
+        } else {
+            Err(ENOTDIR)
+        }
+    }
 }
 
 // be careful here... slice should have size DENTRIES_PER_PAGE
@@ -109,20 +142,11 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
 
 // TODO: safety
 fn page_no_to_dir_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
-    let virt_addr = sbi.get_virt_addr();
-    // TODO: make sure this address is right
-    let page_desc_table_addr =
-        unsafe { virt_addr.offset((HAYLEYFS_PAGESIZE * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
-    let page_desc_addr =
-        unsafe { page_desc_table_addr.offset((PAGE_DESCRIPTOR_SIZE * page_no).try_into()?) };
-    // cast raw address to a dir page descriptor
-    let ph: &mut DirPageHeader = unsafe { &mut *page_desc_addr.cast() };
-    // check page type
-    if !(ph.page_type == PageType::DIR || ph.page_type == PageType::NONE) {
-        Err(EINVAL)
-    } else {
-        Ok(ph)
-    }
+    let page_desc_table = sbi.get_page_desc_table()?;
+    let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
+    let ph: &mut PageDescriptor = &mut page_desc_table[page_index];
+    let ph: &mut DirPageHeader = ph.try_into()?;
+    Ok(ph)
 }
 
 // TODO: safety
@@ -227,10 +251,23 @@ impl<'a, Op> DirPageWrapper<'a, InFlight, Op> {
 
 #[allow(dead_code)]
 #[repr(C)]
-struct DataPageHeader {
+pub(crate) struct DataPageHeader {
     page_type: PageType,
     ino: InodeNum,
     offset: u64,
+    _padding: u64,
+}
+
+impl TryFrom<&mut PageDescriptor> for &mut DataPageHeader {
+    type Error = Error;
+
+    fn try_from(value: &mut PageDescriptor) -> Result<Self> {
+        if value.page_type == PageType::DATA || value.page_type == PageType::NONE {
+            Ok(unsafe { &mut *(value as *mut PageDescriptor as *mut DataPageHeader) })
+        } else {
+            Err(EISDIR)
+        }
+    }
 }
 
 /// Given the offset into a file, returns the offset of the
@@ -276,18 +313,11 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
 
 #[allow(dead_code)]
 fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
-    let virt_addr = sbi.get_virt_addr();
-    let page_desc_table_addr =
-        unsafe { virt_addr.offset((HAYLEYFS_PAGESIZE * PAGE_DESCRIPTOR_TABLE_START).try_into()?) };
-    let page_desc_addr =
-        unsafe { page_desc_table_addr.offset((PAGE_DESCRIPTOR_SIZE * page_no).try_into()?) };
-    let ph: &mut DataPageHeader = unsafe { &mut *page_desc_addr.cast() };
-    // check page type
-    if !(ph.page_type == PageType::DATA || ph.page_type == PageType::NONE) {
-        Err(EINVAL)
-    } else {
-        Ok(ph)
-    }
+    let page_desc_table = sbi.get_page_desc_table()?;
+    let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
+    let ph: &mut PageDescriptor = &mut page_desc_table[page_index];
+    let ph: &mut DataPageHeader = ph.try_into()?;
+    Ok(ph)
 }
 
 #[allow(dead_code)]

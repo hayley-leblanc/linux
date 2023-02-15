@@ -269,6 +269,7 @@ fn hayleyfs_mkdir<'a>(
     InodeWrapper<'a, Clean, Complete, DirInode>, // parent
     InodeWrapper<'a, Clean, Complete, DirInode>, // new inode
 )> {
+    pr_info!("hayleyfs mkdir\n");
     let parent_ino = dir.i_ino();
     let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
     let parent_inode = parent_inode.inc_link_count()?.flush().fence();
@@ -277,7 +278,6 @@ fn hayleyfs_mkdir<'a>(
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     let (dentry, parent, inode) = init_dentry_with_new_dir_inode(sbi, pd, parent_inode)?;
-
     dentry.index(dir.i_ino(), sbi)?;
 
     Ok((dentry, parent, inode))
@@ -359,7 +359,6 @@ fn init_dentry_with_new_dir_inode<'a>(
     // set the ino in the dentry
     let (dentry, new_inode, parent_inode) = dentry.set_dir_ino(new_inode, parent_inode);
     let dentry = dentry.flush().fence();
-
     Ok((dentry, new_inode, parent_inode))
 }
 

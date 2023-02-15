@@ -7,6 +7,7 @@ use core::{ffi, marker::PhantomData, mem};
 use kernel::prelude::*;
 
 #[repr(C)]
+#[derive(Debug)]
 pub(crate) struct HayleyFsDentry {
     ino: InodeNum,
     name: [u8; MAX_FILENAME_LEN],
@@ -34,6 +35,7 @@ impl HayleyFsDentry {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) struct DentryWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
