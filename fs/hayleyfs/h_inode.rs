@@ -30,6 +30,7 @@ pub(crate) struct HayleyFsInode {
     inode_type: InodeType,
     size: u64,
     ino: InodeNum,
+    _padding: u64,
 }
 
 #[allow(dead_code)]

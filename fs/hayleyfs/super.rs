@@ -142,14 +142,13 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     // TODO: this scan will change significantly if the inode table is ever
     // not a single contiguous array
     let inode_table = sbi.get_inode_table()?;
-    let mut _alloc_inode_vec: Vec<InodeNum> = Vec::new();
-    // FIXME: This code
-    // for inode in inode_table {
-    //     if !inode.is_free() {
-    //         alloc_inode_vec.try_push(inode.get_ino())?;
-    //     }
-    // }
-    // pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
+    let mut alloc_inode_vec: Vec<InodeNum> = Vec::new();
+    for inode in inode_table {
+        if !inode.is_free() {
+            alloc_inode_vec.try_push(inode.get_ino())?;
+        }
+    }
+    pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
 
     // 3. scan the page descriptor table to determine which pages are live
 
