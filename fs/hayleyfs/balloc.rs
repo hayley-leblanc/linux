@@ -66,6 +66,10 @@ impl PageDescriptor {
     pub(crate) fn is_free(&self) -> bool {
         self.page_type == PageType::NONE && self.ino == 0 && self.offset == 0
     }
+
+    pub(crate) fn get_page_type(&self) -> PageType {
+        self.page_type
+    }
 }
 
 #[repr(C)]
@@ -89,15 +93,50 @@ impl TryFrom<&mut PageDescriptor> for &mut DirPageHeader {
     }
 }
 
+impl TryFrom<&PageDescriptor> for &DirPageHeader {
+    type Error = Error;
+
+    fn try_from(value: &PageDescriptor) -> Result<Self> {
+        if value.page_type == PageType::DIR || value.page_type == PageType::NONE {
+            Ok(unsafe { &*(value as *const PageDescriptor as *const DirPageHeader) })
+        } else {
+            Err(ENOTDIR)
+        }
+    }
+}
+
 // be careful here... slice should have size DENTRIES_PER_PAGE
 // i can't figure out how to just make this be an array
 struct DirPage<'a> {
     dentries: &'a mut [HayleyFsDentry],
 }
 
+impl DirPage<'_> {
+    pub(crate) fn get_live_inodes_from_dentries(self) -> Result<Vec<InodeNum>> {
+        let mut inode_vec = Vec::new();
+        let live_inodes = self.dentries.iter().filter_map(|d| {
+            let ino = d.get_ino();
+            if ino != 0 {
+                Some(ino)
+            } else {
+                None
+            }
+        });
+        // TODO: a more efficient way? kernel doesn't provide collect()
+        for ino in live_inodes {
+            inode_vec.try_push(ino)?;
+        }
+        Ok(inode_vec)
+    }
+}
+
 impl DirPageHeader {
     pub(crate) fn is_initialized(&self) -> bool {
         self.page_type != PageType::NONE && self.ino != 0
+    }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.ino
     }
 }
 
@@ -125,11 +164,8 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
         }
     }
 
-    /// This method returns a DirPageWrapper ONLY if the page is initialized
-    /// Otherwise it returns an error
-    pub(crate) fn from_dir_page_info(sbi: &'a SbInfo, info: &DirPageInfo) -> Result<Self> {
-        let page_no = info.get_page_no();
-        let ph = page_no_to_dir_header(sbi, page_no)?;
+    pub(crate) fn from_page_no(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
+        let ph = page_no_to_dir_header(&sbi, page_no)?;
         if !ph.is_initialized() {
             Err(EPERM)
         } else {
@@ -138,10 +174,17 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
             unsafe { Ok(Self::wrap_dir_page_header(ph, page_no)) }
         }
     }
+
+    /// This method returns a DirPageWrapper ONLY if the page is initialized
+    /// Otherwise it returns an error
+    pub(crate) fn from_dir_page_info(sbi: &'a SbInfo, info: &DirPageInfo) -> Result<Self> {
+        let page_no = info.get_page_no();
+        Self::from_page_no(sbi, page_no)
+    }
 }
 
 // TODO: safety
-fn page_no_to_dir_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DirPageHeader> {
+fn page_no_to_dir_header<'a>(sbi: &'a SbInfo, page_no: PageNum) -> Result<&'a mut DirPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
     let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
     let ph: &mut PageDescriptor = &mut page_desc_table[page_index];
@@ -196,6 +239,11 @@ impl<'a> DirPageWrapper<'a, Clean, Alloc> {
 }
 
 impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
+    pub(crate) fn get_live_inodes(&self, sbi: &SbInfo) -> Result<Vec<InodeNum>> {
+        let dir_page = self.get_dir_page(sbi)?;
+        dir_page.get_live_inodes_from_dentries()
+    }
+
     fn get_dir_page(&self, sbi: &SbInfo) -> Result<DirPage<'a>> {
         let page_addr = unsafe { page_no_to_page(sbi, self.get_page_no())? as *mut HayleyFsDentry };
         let dentries = unsafe { slice::from_raw_parts_mut(page_addr, DENTRIES_PER_PAGE) };

@@ -2,11 +2,12 @@
 
 //! Rust file system sample.
 
+use balloc::*;
 use core::{ffi, ptr};
 use defs::*;
 use h_inode::*;
 use kernel::prelude::*;
-use kernel::{bindings, c_str, fs};
+use kernel::{bindings, c_str, fs, rbtree::RBTree};
 use namei::*;
 use pm::*;
 
@@ -137,6 +138,11 @@ unsafe fn init_fs(sbi: &mut SbInfo) -> Result<()> {
 fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut alloc_inode_vec: Vec<InodeNum> = Vec::new();
     let mut alloc_page_vec: Vec<PageNum> = Vec::new();
+    let mut init_dir_pages: RBTree<InodeNum, Vec<PageNum>> = RBTree::new();
+    let mut live_inode_vec: Vec<InodeNum> = Vec::new();
+    let mut processed_live_inodes: RBTree<InodeNum, ()> = RBTree::new(); // rbtree as a set
+
+    live_inode_vec.try_push(1)?;
 
     // 1. check the super block to make sure it is a valid fs and to fill in sbi
     let _sb = sbi.get_super_block()?;
@@ -157,14 +163,56 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let page_desc_table = sbi.get_page_desc_table()?;
     for (i, desc) in page_desc_table.iter().enumerate() {
         if !desc.is_free() {
-            // pr_info!("{:?}\n", desc);
             let index: u64 = i.try_into()?;
+            if desc.get_page_type() == PageType::DIR {
+                let dir_desc: &DirPageHeader = desc.try_into()?;
+                if dir_desc.is_initialized() {
+                    let parent = dir_desc.get_ino();
+                    if let Some(node) = init_dir_pages.get_mut(&parent) {
+                        node.try_push(index + DATA_PAGE_START)?;
+                    } else {
+                        let mut vec = Vec::new();
+                        vec.try_push(index + DATA_PAGE_START)?;
+                        init_dir_pages.try_insert(parent, vec)?;
+                    }
+                }
+            }
             alloc_page_vec.try_push(index + DATA_PAGE_START)?;
         }
     }
     pr_info!("allocated pages: {:?}\n", alloc_page_vec);
 
     // 4. scan the directory entries in live pages to determine which inodes are live
+
+    while !live_inode_vec.is_empty() {
+        let live_inode = live_inode_vec.pop().unwrap();
+        let owned_dir_pages = init_dir_pages.get(&live_inode);
+        pr_info!("live inode: {:?}\n", live_inode);
+        pr_info!("pages owned by inode: {:?}\n", owned_dir_pages);
+
+        // iterate over pages owned by this inode, find valid dentries in those
+        // pages, and add their inodes to the live inode list
+        if let Some(pages) = owned_dir_pages {
+            for page in pages {
+                // TODO: figure out safest way to get the dir page
+                let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
+                let live_inodes = dir_page_wrapper.get_live_inodes(sbi);
+                pr_info!("live inodes: {:?}\n", live_inodes);
+            }
+        }
+
+        processed_live_inodes.try_insert(live_inode, ())?;
+    }
+
+    // TODO: fill in inodes_in_use
+    // TODO: fill in blocks_in_use
+    // ^^ these two are based on real usage, not live objects
+    // TODO: fill in ino_dentry_map
+    // TODO: fill in ino_dir_page_map
+    // TODO: fill in ino_data_page_map
+    // TODO: set up page_allocator
+    // TODO: set up inode_allocator
+
     Ok(())
 }
 
