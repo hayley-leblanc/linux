@@ -10,6 +10,7 @@ use kernel::prelude::*;
 use kernel::{bindings, c_str, fs, rbtree::RBTree};
 use namei::*;
 use pm::*;
+use volatile::*;
 
 mod balloc;
 mod defs;
@@ -137,10 +138,16 @@ unsafe fn init_fs(sbi: &mut SbInfo) -> Result<()> {
 
 fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut alloc_inode_vec: Vec<InodeNum> = Vec::new();
-    let mut alloc_page_vec: Vec<PageNum> = Vec::new();
+    let mut alloc_page_vec: Vec<PageNum> = Vec::new(); // TODO: do we use this?
     let mut init_dir_pages: RBTree<InodeNum, Vec<PageNum>> = RBTree::new();
+    let mut init_data_pages: RBTree<InodeNum, Vec<PageNum>> = RBTree::new();
     let mut live_inode_vec: Vec<InodeNum> = Vec::new();
     let mut processed_live_inodes: RBTree<InodeNum, ()> = RBTree::new(); // rbtree as a set
+
+    // keeps track of maximum inode/page number in use to recreate the allocator
+    // TODO: this will have to change when inodes/pages can be reused
+    let mut max_inode = 0;
+    let mut max_page = 0;
 
     live_inode_vec.try_push(1)?;
 
@@ -155,15 +162,21 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     for inode in inode_table {
         if !inode.is_free() {
             alloc_inode_vec.try_push(inode.get_ino())?;
+            sbi.inc_inodes_in_use();
         }
     }
     pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
 
-    // 3. scan the page descriptor table to determine which pages are live
+    // 3. scan the page descriptor table to determine which pages are in use
     let page_desc_table = sbi.get_page_desc_table()?;
     for (i, desc) in page_desc_table.iter().enumerate() {
         if !desc.is_free() {
+            max_page = i;
+            sbi.inc_blocks_in_use();
             let index: u64 = i.try_into()?;
+            // add pages to maps that associate inodes with the pages they own
+            // we don't add them to the index yet because an initialized page
+            // is not necessarily live (right?)
             if desc.get_page_type() == PageType::DIR {
                 let dir_desc: &DirPageHeader = desc.try_into()?;
                 if dir_desc.is_initialized() {
@@ -176,6 +189,18 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                         init_dir_pages.try_insert(parent, vec)?;
                     }
                 }
+            } else if desc.get_page_type() == PageType::DATA {
+                let data_desc: &DataPageHeader = desc.try_into()?;
+                if data_desc.is_initialized() {
+                    let parent = data_desc.get_ino();
+                    if let Some(node) = init_data_pages.get_mut(&parent) {
+                        node.try_push(index + DATA_PAGE_START)?;
+                    } else {
+                        let mut vec = Vec::new();
+                        vec.try_push(index + DATA_PAGE_START)?;
+                        init_data_pages.try_insert(parent, vec)?;
+                    }
+                }
             }
             alloc_page_vec.try_push(index + DATA_PAGE_START)?;
         }
@@ -186,32 +211,53 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
 
     while !live_inode_vec.is_empty() {
         let live_inode = live_inode_vec.pop().unwrap();
+        if live_inode > max_inode {
+            max_inode = live_inode;
+        }
         let owned_dir_pages = init_dir_pages.get(&live_inode);
+        let owned_data_pages = init_data_pages.get(&live_inode);
         pr_info!("live inode: {:?}\n", live_inode);
-        pr_info!("pages owned by inode: {:?}\n", owned_dir_pages);
+        pr_info!("dir pages owned by inode: {:?}\n", owned_dir_pages);
+        pr_info!("data pages owned by inode: {:?}\n", owned_data_pages);
 
         // iterate over pages owned by this inode, find valid dentries in those
-        // pages, and add their inodes to the live inode list
+        // pages, and add their inodes to the live inode list. also add the dir pages
+        // to the volatile index
         if let Some(pages) = owned_dir_pages {
             for page in pages {
-                // TODO: figure out safest way to get the dir page
                 let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
-                let live_inodes = dir_page_wrapper.get_live_inodes(sbi);
-                pr_info!("live inodes: {:?}\n", live_inodes);
+                let live_dentries = dir_page_wrapper.get_live_dentry_info(sbi)?;
+                pr_info!("live dentries: {:?}\n", live_dentries);
+                let full = if live_dentries.len() == DENTRIES_PER_PAGE {
+                    true
+                } else {
+                    false
+                };
+                // add these live dentries to the index
+                for dentry in live_dentries {
+                    sbi.ino_dentry_map.insert(live_inode, dentry)?;
+                }
+
+                sbi.ino_dir_page_map
+                    .insert(live_inode, &dir_page_wrapper, full)?;
+            }
+        }
+
+        // add data page to the volatile index
+        if let Some(pages) = owned_data_pages {
+            for page in pages {
+                let data_page_wrapper = DataPageWrapper::from_page_no(sbi, *page)?;
+                sbi.ino_data_page_map
+                    .insert(live_inode, &data_page_wrapper)?;
             }
         }
 
         processed_live_inodes.try_insert(live_inode, ())?;
     }
 
-    // TODO: fill in inodes_in_use
-    // TODO: fill in blocks_in_use
-    // ^^ these two are based on real usage, not live objects
-    // TODO: fill in ino_dentry_map
-    // TODO: fill in ino_dir_page_map
-    // TODO: fill in ino_data_page_map
-    // TODO: set up page_allocator
-    // TODO: set up inode_allocator
+    // TODO: update when allocators change
+    sbi.page_allocator = BasicPageAllocator::new((max_page + 1).try_into()?);
+    sbi.inode_allocator = BasicInodeAllocator::new(max_inode + 1);
 
     Ok(())
 }

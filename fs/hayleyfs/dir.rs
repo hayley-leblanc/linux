@@ -32,6 +32,10 @@ impl HayleyFsDentry {
         }
         false
     }
+
+    pub(crate) fn get_name(&self) -> [u8; MAX_FILENAME_LEN] {
+        self.name
+    }
 }
 
 #[allow(dead_code)]

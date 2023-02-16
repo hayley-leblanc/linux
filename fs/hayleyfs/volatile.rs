@@ -35,6 +35,7 @@ impl DentryInfo {
     }
 }
 
+/// maps inodes to info about dentries for inode's children
 pub(crate) trait InoDentryMap {
     fn new() -> Result<Self>
     where
@@ -120,11 +121,17 @@ impl DirPageInfo {
     }
 }
 
+/// maps dir inodes to info about their pages
 pub(crate) trait InoDirPageMap {
     fn new() -> Result<Self>
     where
         Self: Sized;
-    fn insert<'a>(&self, ino: InodeNum, page: &DirPageWrapper<'a, Clean, Init>) -> Result<()>;
+    fn insert<'a, State: Initialized>(
+        &self,
+        ino: InodeNum,
+        page: &DirPageWrapper<'a, Clean, State>,
+        full: bool,
+    ) -> Result<()>;
     fn find_page_with_free_dentry(&self, ino: &InodeNum) -> Option<DirPageInfo>;
     fn delete(&self, ino: InodeNum, page: DirPageInfo) -> Result<()>;
 }
@@ -140,14 +147,19 @@ impl InoDirPageMap for BasicInoDirPageMap {
         })
     }
 
-    fn insert<'a>(&self, ino: InodeNum, page: &DirPageWrapper<'a, Clean, Init>) -> Result<()> {
+    fn insert<'a, State: Initialized>(
+        &self,
+        ino: InodeNum,
+        page: &DirPageWrapper<'a, Clean, State>,
+        full: bool,
+    ) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
         let page_no = page.get_page_no();
         let page_info = DirPageInfo {
             owner: ino,
             page_no,
-            full: false, // typestate requires it was just initialized, so we know it's empty
+            full,
         };
         if let Some(node) = map.get_mut(&ino) {
             node.try_push(page_info)?;
@@ -165,6 +177,7 @@ impl InoDirPageMap for BasicInoDirPageMap {
         let pages = map.get(&ino);
         if let Some(pages) = pages {
             for page in pages {
+                // TODO: we never actually set page.full to true
                 if !page.full {
                     return Some(page.clone());
                 }
@@ -192,11 +205,16 @@ impl DataPageInfo {
     }
 }
 
+/// maps file inodes to info about their pages
 pub(crate) trait InoDataPageMap {
     fn new() -> Result<Self>
     where
         Self: Sized;
-    fn insert<'a>(&self, ino: InodeNum, page: &DataPageWrapper<'a, Clean, Written>) -> Result<()>;
+    fn insert<'a, State: Initialized>(
+        &self,
+        ino: InodeNum,
+        page: &DataPageWrapper<'a, Clean, State>,
+    ) -> Result<()>;
     fn find(&self, ino: &InodeNum, offset: u64) -> Option<DataPageInfo>;
     fn delete(&self, ino: &InodeNum, offset: u64) -> Result<()>;
 }
@@ -214,7 +232,11 @@ impl InoDataPageMap for BasicInoDataPageMap {
         })
     }
 
-    fn insert<'a>(&self, ino: InodeNum, page: &DataPageWrapper<'a, Clean, Written>) -> Result<()> {
+    fn insert<'a, State: Initialized>(
+        &self,
+        ino: InodeNum,
+        page: &DataPageWrapper<'a, Clean, State>,
+    ) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
         let page_no = page.get_page_no();

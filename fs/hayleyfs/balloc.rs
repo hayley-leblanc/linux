@@ -112,21 +112,23 @@ struct DirPage<'a> {
 }
 
 impl DirPage<'_> {
-    pub(crate) fn get_live_inodes_from_dentries(self) -> Result<Vec<InodeNum>> {
-        let mut inode_vec = Vec::new();
-        let live_inodes = self.dentries.iter().filter_map(|d| {
+    pub(crate) fn get_dentry_info_from_dentries(self) -> Result<Vec<DentryInfo>> {
+        let mut dentry_vec = Vec::new();
+        let live_dentries = self.dentries.iter().filter_map(|d| {
             let ino = d.get_ino();
             if ino != 0 {
-                Some(ino)
+                let name = d.get_name().as_ptr() as *const i8;
+                let virt_addr = d as *const HayleyFsDentry as *const ffi::c_void;
+                Some(DentryInfo::new(ino, virt_addr, name))
             } else {
                 None
             }
         });
         // TODO: a more efficient way? kernel doesn't provide collect()
-        for ino in live_inodes {
-            inode_vec.try_push(ino)?;
+        for d in live_dentries {
+            dentry_vec.try_push(d)?;
         }
-        Ok(inode_vec)
+        Ok(dentry_vec)
     }
 }
 
@@ -239,9 +241,9 @@ impl<'a> DirPageWrapper<'a, Clean, Alloc> {
 }
 
 impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
-    pub(crate) fn get_live_inodes(&self, sbi: &SbInfo) -> Result<Vec<InodeNum>> {
+    pub(crate) fn get_live_dentry_info(&self, sbi: &SbInfo) -> Result<Vec<DentryInfo>> {
         let dir_page = self.get_dir_page(sbi)?;
-        dir_page.get_live_inodes_from_dentries()
+        dir_page.get_dentry_info_from_dentries()
     }
 
     fn get_dir_page(&self, sbi: &SbInfo) -> Result<DirPage<'a>> {
@@ -318,6 +320,18 @@ impl TryFrom<&mut PageDescriptor> for &mut DataPageHeader {
     }
 }
 
+impl TryFrom<&PageDescriptor> for &DataPageHeader {
+    type Error = Error;
+
+    fn try_from(value: &PageDescriptor) -> Result<Self> {
+        if value.page_type == PageType::DATA || value.page_type == PageType::NONE {
+            Ok(unsafe { &*(value as *const PageDescriptor as *const DataPageHeader) })
+        } else {
+            Err(EISDIR)
+        }
+    }
+}
+
 /// Given the offset into a file, returns the offset of the
 /// DataPageHeader that includes that offset
 pub(crate) fn page_offset(offset: u64) -> Result<u64> {
@@ -330,6 +344,10 @@ pub(crate) fn page_offset(offset: u64) -> Result<u64> {
 impl DataPageHeader {
     pub(crate) fn is_initialized(&self) -> bool {
         self.page_type != PageType::NONE && self.ino != 0
+    }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.ino
     }
 }
 
@@ -389,6 +407,11 @@ impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
 }
 
 impl<'a> DataPageWrapper<'a, Clean, Writeable> {
+    pub(crate) fn from_page_no(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
+        let ph = page_no_to_data_header(&sbi, page_no)?;
+        unsafe { Self::wrap_data_page_header(ph, page_no) }
+    }
+
     // TODO: this doesn't need to be unsafe I think
     unsafe fn wrap_data_page_header(ph: &'a mut DataPageHeader, page_no: PageNum) -> Result<Self> {
         if !ph.is_initialized() {

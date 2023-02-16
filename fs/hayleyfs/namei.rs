@@ -311,7 +311,7 @@ fn alloc_page_for_dentry<'a>(
             .set_dir_page_backpointer(parent_inode)
             .flush()
             .fence();
-        sbi.ino_dir_page_map.insert(parent_ino, &dir_page)?;
+        sbi.ino_dir_page_map.insert(parent_ino, &dir_page, false)?;
         // TODO: get_free_dentry() should never return an error since all dentries
         // in the newly-allocated page should be free - but check on that and confirm
         let pd = dir_page.get_free_dentry(sbi)?;
