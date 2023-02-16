@@ -693,6 +693,51 @@ unsigned long rust_helper_le64_to_cpu(unsigned long value) {
 }
 EXPORT_SYMBOL_GPL(rust_helper_le64_to_cpu);
 
+unsigned short rust_helper_cpu_to_le16(unsigned short value) {
+	return cpu_to_le16(value);
+}
+EXPORT_SYMBOL_GPL(rust_helper_cpu_to_le16);
+
+
+unsigned int rust_helper_cpu_to_le32(unsigned int value) {
+	return cpu_to_le32(value);
+}
+EXPORT_SYMBOL_GPL(rust_helper_cpu_to_le32);
+
+unsigned long rust_helper_cpu_to_le64(unsigned long value) {
+	return cpu_to_le64(value);
+}
+EXPORT_SYMBOL_GPL(rust_helper_cpu_to_le64);
+
+kuid_t rust_helper_current_fsuid(void) {
+	return current_fsuid();
+}
+EXPORT_SYMBOL_GPL(rust_helper_current_fsuid);
+
+kgid_t rust_helper_current_fsgid(void) {
+	return current_fsgid();
+}
+EXPORT_SYMBOL_GPL(rust_helper_current_fsgid);
+
+uid_t rust_helper_from_kuid(struct user_namespace *targ, kuid_t kuid) {
+	return from_kuid(targ, kuid);
+}
+EXPORT_SYMBOL_GPL(rust_helper_from_kuid);
+
+gid_t rust_helper_from_kgid(struct user_namespace *targ, kgid_t kgid) {
+	return from_kgid(targ, kgid);
+}
+EXPORT_SYMBOL_GPL(rust_helper_from_kgid);
+
+void rust_helper_i_uid_write(struct inode *inode, uid_t uid) {
+	i_uid_write(inode, uid);
+}
+EXPORT_SYMBOL_GPL(rust_helper_i_uid_write);
+
+void rust_helper_i_gid_write(struct inode *inode, gid_t gid) {
+	i_gid_write(inode, gid);
+}
+EXPORT_SYMBOL_GPL(rust_helper_i_gid_write);
 
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
