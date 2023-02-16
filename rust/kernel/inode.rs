@@ -9,7 +9,7 @@ use crate::{
     bindings,
     error::from_kernel_result,
     error::Result,
-    fs::{DEntry, INode, UserNamespace},
+    fs::{DEntry, INode},
 };
 use core::{ffi, marker, ptr};
 use macros::vtable;
@@ -55,7 +55,6 @@ impl<T: Operations> OperationsVtable<T> {
         // FIXME: error output is weird and incorrect in terminal
         from_kernel_result! {
             // TODO: safety notes
-            let mnt_userns = unsafe { &*mnt_userns.cast()};
             let dir = unsafe { &*dir.cast() };
             let dentry = unsafe { &mut *dentry.cast()};
             T::create(mnt_userns, dir, dentry, umode, excl)
@@ -83,7 +82,6 @@ impl<T: Operations> OperationsVtable<T> {
     ) -> ffi::c_int {
         from_kernel_result! {
             // TODO: safety notes
-            let mnt_userns = unsafe { &*mnt_userns.cast()};
             let dir = unsafe { &mut *dir.cast() };
             let dentry = unsafe { &mut *dentry.cast()};
             T::mkdir(mnt_userns, dir, dentry, umode)
@@ -100,7 +98,6 @@ impl<T: Operations> OperationsVtable<T> {
     ) -> ffi::c_int {
         from_kernel_result! {
         // TODO: safety notes
-        let mnt_userns = unsafe { &*mnt_userns.cast() };
         let old_dir = unsafe { &mut *old_dir.cast() };
         let old_dentry = unsafe { &mut *old_dentry.cast() };
         let new_dir = unsafe { &mut *new_dir.cast() };
@@ -158,7 +155,7 @@ pub trait Operations {
         -> Result<Option<*mut bindings::inode>>;
     /// Corresponds to the `create` function pointer in `struct inode_operations`.
     fn create(
-        mnt_userns: &UserNamespace,
+        mnt_userns: *mut bindings::user_namespace,
         dir: &INode,
         dentry: &DEntry,
         umode: bindings::umode_t,
@@ -166,7 +163,7 @@ pub trait Operations {
     ) -> Result<i32>;
     /// Corresponds to the `mkdir` function pointer in `struct inode_operations`.
     fn mkdir(
-        mnt_userns: &UserNamespace,
+        mnt_userns: *mut bindings::user_namespace,
         dir: &mut INode,
         dentry: &DEntry,
         umode: bindings::umode_t,
@@ -175,7 +172,7 @@ pub trait Operations {
     fn link(old_dentry: &DEntry, dir: &mut INode, dentry: &DEntry) -> Result<i32>;
     /// Corresponds to the`rename` function pointer in `struct inode_operations`
     fn rename(
-        mnt_userns: &UserNamespace,
+        mnt_userns: *const bindings::user_namespace,
         old_dir: &INode,
         old_dentry: &DEntry,
         new_dir: &INode,
