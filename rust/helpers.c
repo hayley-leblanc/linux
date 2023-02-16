@@ -677,6 +677,23 @@ int rust_helper_fs_parse(struct fs_context *fc,
 }
 EXPORT_SYMBOL_GPL(rust_helper_fs_parse);
 
+unsigned short rust_helper_le16_to_cpu(unsigned short value) {
+	return le16_to_cpu(value);
+}
+EXPORT_SYMBOL_GPL(rust_helper_le16_to_cpu);
+
+
+unsigned int rust_helper_le32_to_cpu(unsigned int value) {
+	return le32_to_cpu(value);
+}
+EXPORT_SYMBOL_GPL(rust_helper_le32_to_cpu);
+
+unsigned long rust_helper_le64_to_cpu(unsigned long value) {
+	return le64_to_cpu(value);
+}
+EXPORT_SYMBOL_GPL(rust_helper_le64_to_cpu);
+
+
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
  * as the Rust `usize` type, so we can use it in contexts where Rust
