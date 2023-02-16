@@ -116,8 +116,12 @@ pub(crate) struct SbInfo {
     virt_addr: *mut u8,
     pub(crate) size: i64,
 
+    pub(crate) uid: bindings::kuid_t, // uid for root dir
+    pub(crate) gid: bindings::kgid_t, // gid for root dir
+
     pub(crate) blocksize: u64,
     pub(crate) num_blocks: u64,
+    pub(crate) mode: u16,
 
     pub(crate) inodes_in_use: AtomicU64,
     pub(crate) blocks_in_use: AtomicU64,
@@ -159,6 +163,9 @@ impl SbInfo {
             dax_dev: ptr::null_mut(),
             virt_addr: ptr::null_mut(),
             size: 0, // total size of the PM device
+            uid: unsafe { bindings::current_fsuid() },
+            gid: unsafe { bindings::current_fsgid() },
+            mode: 0755,
             blocksize: HAYLEYFS_PAGESIZE.try_into().unwrap(),
             num_blocks: 0,
             inodes_in_use: AtomicU64::new(1),

@@ -7,6 +7,7 @@ use core::{
     mem,
     sync::atomic::{AtomicU64, Ordering},
 };
+use kernel::bindings;
 use kernel::prelude::*;
 
 // ZSTs for representing inode types
@@ -28,9 +29,16 @@ impl AnyInode for DirInode {}
 #[repr(C)]
 #[derive(Debug)]
 pub(crate) struct HayleyFsInode {
-    link_count: u16,
     inode_type: InodeType,
-    size: u64, // TODO: make this u32?
+    link_count: u16,
+    mode: u16,
+    uid: u32,
+    gid: u32,
+    _ctime: u32, // TODO: not properly updated right now
+    _atime: u32, // TODO: not properly updated right now
+    _mtime: u32, // TODO: not properly updated right now
+    blocks: u64, // TODO: not properly updated right now
+    size: u64,
     ino: InodeNum,
     _padding: u64,
 }
@@ -54,6 +62,20 @@ impl HayleyFsInode {
         root_ino.link_count = 2;
         root_ino.size = 4096; // dir size always set to 4KB
         root_ino.inode_type = InodeType::DIR;
+        root_ino.uid = unsafe {
+            bindings::from_kuid(
+                &mut bindings::init_user_ns as *mut bindings::user_namespace,
+                sbi.uid,
+            )
+        };
+        root_ino.gid = unsafe {
+            bindings::from_kgid(
+                &mut bindings::init_user_ns as *mut bindings::user_namespace,
+                sbi.gid,
+            )
+        };
+        root_ino.blocks = 0;
+        root_ino.mode = sbi.mode | bindings::S_IFDIR as u16;
         Ok(root_ino)
     }
 
@@ -71,6 +93,22 @@ impl HayleyFsInode {
 
     pub(crate) fn get_size(&self) -> u64 {
         self.size
+    }
+
+    pub(crate) fn get_mode(&self) -> u16 {
+        self.mode
+    }
+
+    pub(crate) fn get_uid(&self) -> u32 {
+        self.uid
+    }
+
+    pub(crate) fn get_gid(&self) -> u32 {
+        self.gid
+    }
+
+    pub(crate) fn get_blocks(&self) -> u64 {
+        self.blocks
     }
 
     pub(crate) unsafe fn inc_link_count(&mut self) {
@@ -91,6 +129,22 @@ impl HayleyFsInode {
 impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.inode.get_ino()
+    }
+
+    pub(crate) fn get_size(&self) -> u64 {
+        self.inode.get_size()
+    }
+
+    pub(crate) fn get_uid(&self) -> u32 {
+        self.inode.get_uid()
+    }
+
+    pub(crate) fn get_gid(&self) -> u32 {
+        self.inode.get_gid()
+    }
+
+    pub(crate) fn get_blocks(&self) -> u64 {
+        self.inode.get_blocks()
     }
 }
 
@@ -176,10 +230,19 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
         }
     }
 
-    pub(crate) fn allocate_file_inode(self) -> InodeWrapper<'a, Dirty, Alloc, RegInode> {
+    pub(crate) fn allocate_file_inode(
+        self,
+        sbi: &SbInfo,
+        mnt_userns: *mut bindings::user_namespace,
+        mode: u16,
+    ) -> InodeWrapper<'a, Dirty, Alloc, RegInode> {
         self.inode.link_count = 1;
         self.inode.ino = self.ino;
         self.inode.inode_type = InodeType::REG;
+        self.inode.mode = mode;
+        self.inode.blocks = 0;
+        self.inode.uid = unsafe { bindings::cpu_to_le32(bindings::from_kuid(mnt_userns, sbi.uid)) };
+        self.inode.gid = unsafe { bindings::cpu_to_le32(bindings::from_kgid(mnt_userns, sbi.gid)) };
         Self::new(self)
     }
 }
@@ -200,10 +263,19 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
         }
     }
 
-    pub(crate) fn allocate_dir_inode(self) -> InodeWrapper<'a, Dirty, Alloc, DirInode> {
+    pub(crate) fn allocate_dir_inode(
+        self,
+        sbi: &SbInfo,
+        mnt_userns: *mut bindings::user_namespace,
+        mode: u16,
+    ) -> InodeWrapper<'a, Dirty, Alloc, DirInode> {
         self.inode.link_count = 2;
         self.inode.ino = self.ino;
+        self.inode.blocks = 0;
         self.inode.inode_type = InodeType::DIR;
+        self.inode.mode = mode | bindings::S_IFDIR as u16;
+        self.inode.uid = unsafe { bindings::cpu_to_le32(bindings::from_kuid(mnt_userns, sbi.uid)) };
+        self.inode.gid = unsafe { bindings::cpu_to_le32(bindings::from_kgid(mnt_userns, sbi.gid)) };
         Self::new(self)
     }
 }
