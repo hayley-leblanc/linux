@@ -249,7 +249,19 @@ impl SbInfo {
         Ok(table)
     }
 
-    pub(crate) unsafe fn get_inode_by_ino<'a>(
+    pub(crate) fn get_inode_by_ino<'a>(&self, ino: InodeNum) -> Result<&'a HayleyFsInode> {
+        // we don't use inode 0
+        if ino >= NUM_INODES || ino == 0 {
+            return Err(EINVAL);
+        }
+
+        let table = self.get_inode_table()?;
+        let ino_usize: usize = ino.try_into()?;
+        let inode = &table[ino_usize];
+        Ok(inode)
+    }
+
+    pub(crate) unsafe fn get_inode_by_ino_mut<'a>(
         &self,
         ino: InodeNum,
     ) -> Result<&'a mut HayleyFsInode> {
@@ -274,7 +286,7 @@ impl SbInfo {
             return Err(EINVAL);
         }
 
-        let inode = unsafe { self.get_inode_by_ino(ino)? };
+        let inode = unsafe { self.get_inode_by_ino_mut(ino)? };
 
         if inode.get_type() != InodeType::REG {
             pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
@@ -297,7 +309,7 @@ impl SbInfo {
             return Err(EINVAL);
         }
 
-        let inode = unsafe { self.get_inode_by_ino(ino)? };
+        let inode = unsafe { self.get_inode_by_ino_mut(ino)? };
 
         if inode.get_type() != InodeType::DIR {
             return Err(EPERM);

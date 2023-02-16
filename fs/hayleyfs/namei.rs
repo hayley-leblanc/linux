@@ -5,7 +5,7 @@ use crate::h_file::*;
 use crate::h_inode::*;
 use crate::typestate::*;
 use crate::volatile::*;
-use core::ffi;
+// use core::ffi;
 use kernel::prelude::*;
 use kernel::{bindings, error, file, fs, inode};
 
@@ -16,7 +16,8 @@ impl inode::Operations for InodeOps {
         dir: &fs::INode,
         dentry: &mut fs::DEntry,
         _flags: u32,
-    ) -> Result<Option<ffi::c_ulong>> {
+    ) -> Result<Option<*mut bindings::inode>> {
+        // ) -> Result<Option<ffi::c_ulong>> {
         // TODO: handle flags
         // TODO: reorganize so that system call logic is separate from
         // conversion from raw pointers\
@@ -40,7 +41,8 @@ impl inode::Operations for InodeOps {
         pr_info!("result: {:?}\n", result);
         if let Some(dentry_info) = result {
             // the dentry exists in the specified directory
-            Ok(Some(dentry_info.get_ino()))
+            // Ok(Some(dentry_info.get_ino()))
+            Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino())?))
         } else {
             // the dentry does not exist in this directory
             Ok(None)
@@ -130,6 +132,49 @@ impl inode::Operations for InodeOps {
 
         // TODO: decrement the inode's link count and delete it if link count == 0
     }
+}
+
+// TODO: shouldn't really be generic but HayleyFs isn't accessible here
+fn hayleyfs_iget(
+    sb: *mut bindings::super_block,
+    sbi: &SbInfo,
+    ino: InodeNum,
+) -> Result<*mut bindings::inode> {
+    // obtain an inode from VFS
+    let inode = unsafe { bindings::iget_locked(sb, ino) };
+    if inode.is_null() {
+        return Err(ENOMEM);
+    }
+    // if we don't need to set up the inode, just return it
+    let i_new: u64 = bindings::I_NEW.into();
+    unsafe {
+        if (*inode).i_state & i_new != 0 {
+            return Ok(inode);
+        }
+    }
+
+    // set up the new inode
+    let pi = sbi.get_inode_by_ino(ino)?;
+    unsafe {
+        (*inode).i_size = bindings::le64_to_cpu(pi.get_size()).try_into()?;
+        bindings::set_nlink(inode, bindings::le16_to_cpu(pi.get_link_count()).into());
+        // TODO: set the rest of the fields!
+    }
+
+    let inode_type = pi.get_type();
+    match inode_type {
+        InodeType::REG => unsafe {
+            (*inode).i_op = inode::OperationsVtable::<InodeOps>::build();
+            (*inode).__bindgen_anon_3.i_fop = file::OperationsVtable::<Adapter, FileOps>::build();
+        },
+        InodeType::DIR => unsafe {
+            (*inode).i_op = inode::OperationsVtable::<InodeOps>::build();
+            (*inode).__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+        },
+        InodeType::NONE => panic!("Inode type is NONE"),
+    }
+    unsafe { bindings::unlock_new_inode(inode) };
+    Ok(inode)
 }
 
 // TODO: add type

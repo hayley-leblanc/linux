@@ -30,7 +30,7 @@ impl AnyInode for DirInode {}
 pub(crate) struct HayleyFsInode {
     link_count: u16,
     inode_type: InodeType,
-    size: u64,
+    size: u64, // TODO: make this u32?
     ino: InodeNum,
     _padding: u64,
 }
@@ -49,7 +49,7 @@ impl HayleyFsInode {
     /// Unsafe inode constructor for temporary use with init_fs only
     /// Does not flush the root inode
     pub(crate) unsafe fn init_root_inode(sbi: &SbInfo) -> Result<&HayleyFsInode> {
-        let mut root_ino = unsafe { sbi.get_inode_by_ino(ROOT_INO)? };
+        let mut root_ino = unsafe { sbi.get_inode_by_ino_mut(ROOT_INO)? };
         root_ino.ino = ROOT_INO;
         root_ino.link_count = 2;
         root_ino.size = 4096; // dir size always set to 4KB
@@ -67,6 +67,10 @@ impl HayleyFsInode {
 
     pub(crate) fn get_type(&self) -> InodeType {
         self.inode_type
+    }
+
+    pub(crate) fn get_size(&self) -> u64 {
+        self.size
     }
 
     pub(crate) unsafe fn inc_link_count(&mut self) {
@@ -158,7 +162,7 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
 
 impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
     pub(crate) fn get_free_reg_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
-        let raw_inode = unsafe { sbi.get_inode_by_ino(ino)? };
+        let raw_inode = unsafe { sbi.get_inode_by_ino_mut(ino)? };
         if raw_inode.is_free() {
             Ok(InodeWrapper {
                 state: PhantomData,
@@ -182,7 +186,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
 
 impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
     pub(crate) fn get_free_dir_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
-        let raw_inode = unsafe { sbi.get_inode_by_ino(ino)? };
+        let raw_inode = unsafe { sbi.get_inode_by_ino_mut(ino)? };
         if raw_inode.is_free() {
             Ok(InodeWrapper {
                 state: PhantomData,
