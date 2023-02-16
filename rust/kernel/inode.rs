@@ -36,9 +36,8 @@ impl<T: Operations> OperationsVtable<T> {
                 bindings::ERR_PTR(e.to_kernel_errno().into()) as *mut bindings::dentry
             },
             Ok(inode) => {
-                if let Some(_ino) = inode {
-                    // TODO: iget and d_splice_alias
-                    unimplemented!();
+                if let Some(inode) = inode {
+                    unsafe { bindings::d_splice_alias(inode, dentry) }
                 } else {
                     unsafe { bindings::d_splice_alias(ptr::null_mut(), dentry) }
                 }
@@ -155,7 +154,8 @@ impl<T: Operations> OperationsVtable<T> {
 #[vtable]
 pub trait Operations {
     /// Corresponds to the `lookup` function pointer in `struct inode_operations`.
-    fn lookup(dir: &INode, dentry: &mut DEntry, flags: u32) -> Result<Option<core::ffi::c_ulong>>;
+    fn lookup(dir: &INode, dentry: &mut DEntry, flags: u32)
+        -> Result<Option<*mut bindings::inode>>;
     /// Corresponds to the `create` function pointer in `struct inode_operations`.
     fn create(
         mnt_userns: &UserNamespace,

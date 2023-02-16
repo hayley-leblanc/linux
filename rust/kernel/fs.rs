@@ -759,6 +759,11 @@ impl<T: Type + ?Sized> SuperBlock<T> {
     pub unsafe fn s_fs_info(&self) -> *mut core::ffi::c_void {
         unsafe { (*self.0.get()).s_fs_info }
     }
+
+    /// Returns a raw pointer to the `struct super_block`
+    pub fn get_inner(&self) -> *mut bindings::super_block {
+        self.0.get()
+    }
 }
 
 /// Wraps the kernel's `struct inode`.
