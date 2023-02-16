@@ -17,7 +17,6 @@ impl inode::Operations for InodeOps {
         dentry: &mut fs::DEntry,
         _flags: u32,
     ) -> Result<Option<*mut bindings::inode>> {
-        // ) -> Result<Option<ffi::c_ulong>> {
         // TODO: handle flags
         // TODO: reorganize so that system call logic is separate from
         // conversion from raw pointers\
@@ -41,7 +40,6 @@ impl inode::Operations for InodeOps {
         pr_info!("result: {:?}\n", result);
         if let Some(dentry_info) = result {
             // the dentry exists in the specified directory
-            // Ok(Some(dentry_info.get_ino()))
             Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino())?))
         } else {
             // the dentry does not exist in this directory
