@@ -80,7 +80,7 @@ impl fs::Type for HayleyFs {
         let sb = sb.init(
             data,
             &fs::SuperParams {
-                magic: 0xabcdef,
+                magic: SUPER_MAGIC.try_into()?,
                 ..fs::SuperParams::DEFAULT
             },
         )?;

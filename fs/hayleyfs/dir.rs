@@ -130,7 +130,7 @@ impl<'a> DentryWrapper<'a, Clean, Complete> {
         let dentry_info = DentryInfo::new(
             self.dentry.ino,
             self.dentry as *const _ as *const ffi::c_void,
-            &self.dentry.name as *const _ as *const ffi::c_char,
+            self.dentry.name,
         );
         sb.ino_dentry_map.insert(parent, dentry_info)
     }

@@ -8,12 +8,13 @@ use kernel::{
     sync::{smutex::Mutex, Arc},
 };
 
+// TODO: how should name be represented here? array is probably not the best?
 #[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct DentryInfo {
     ino: InodeNum,
     virt_addr: *const ffi::c_void,
-    name: *const ffi::c_char,
+    name: [u8; MAX_FILENAME_LEN],
 }
 
 #[allow(dead_code)]
@@ -21,7 +22,7 @@ impl DentryInfo {
     pub(crate) fn new(
         ino: InodeNum,
         virt_addr: *const ffi::c_void,
-        name: *const ffi::c_char,
+        name: [u8; MAX_FILENAME_LEN],
     ) -> Self {
         Self {
             ino,
@@ -76,7 +77,7 @@ impl InoDentryMap for BasicInoDentryMap {
         let dentry_vec = map.get(&ino);
         if let Some(dentry_vec) = dentry_vec {
             for dentry in dentry_vec {
-                let dentry_name = unsafe { CStr::from_char_ptr(dentry.name) };
+                let dentry_name = unsafe { CStr::from_char_ptr(dentry.name.as_ptr() as *const i8) };
                 if str_equals(name, dentry_name) {
                     return Some(dentry.clone());
                 }

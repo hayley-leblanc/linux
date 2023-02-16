@@ -117,7 +117,7 @@ impl DirPage<'_> {
         let live_dentries = self.dentries.iter().filter_map(|d| {
             let ino = d.get_ino();
             if ino != 0 {
-                let name = d.get_name().as_ptr() as *const i8;
+                let name = d.get_name();
                 let virt_addr = d as *const HayleyFsDentry as *const ffi::c_void;
                 Some(DentryInfo::new(ino, virt_addr, name))
             } else {

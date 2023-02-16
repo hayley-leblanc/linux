@@ -19,7 +19,7 @@ impl inode::Operations for InodeOps {
     ) -> Result<Option<ffi::c_ulong>> {
         // TODO: handle flags
         // TODO: reorganize so that system call logic is separate from
-        // conversion from raw pointers
+        // conversion from raw pointers\
 
         let sb = dir.i_sb();
         // TODO: safety
@@ -37,6 +37,7 @@ impl inode::Operations for InodeOps {
         let result = sbi
             .ino_dentry_map
             .lookup_dentry(&dir.i_ino(), dentry.d_name());
+        pr_info!("result: {:?}\n", result);
         if let Some(dentry_info) = result {
             // the dentry exists in the specified directory
             Ok(Some(dentry_info.get_ino()))
