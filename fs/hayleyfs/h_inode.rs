@@ -7,8 +7,8 @@ use core::{
     mem,
     sync::atomic::{AtomicU64, Ordering},
 };
-use kernel::bindings;
 use kernel::prelude::*;
+use kernel::{bindings, fs};
 
 // ZSTs for representing inode types
 // These are not typestate since they don't change, but they are a generic
@@ -29,14 +29,14 @@ impl AnyInode for DirInode {}
 #[repr(C)]
 #[derive(Debug)]
 pub(crate) struct HayleyFsInode {
-    inode_type: InodeType,
+    inode_type: InodeType, // TODO: i think this enum is 8 bytes.. could make it smaller
     link_count: u16,
     mode: u16,
     uid: u32,
     gid: u32,
-    _ctime: u32, // TODO: not properly updated right now
-    _atime: u32, // TODO: not properly updated right now
-    _mtime: u32, // TODO: not properly updated right now
+    ctime: u32,  // TODO: not properly updated right now
+    atime: u32,  // TODO: not properly updated right now
+    mtime: u32,  // TODO: not properly updated right now
     blocks: u64, // TODO: not properly updated right now
     size: u64,
     ino: InodeNum,
@@ -107,6 +107,18 @@ impl HayleyFsInode {
         self.gid
     }
 
+    pub(crate) fn get_mtime(&self) -> u32 {
+        self.mtime
+    }
+
+    pub(crate) fn get_ctime(&self) -> u32 {
+        self.ctime
+    }
+
+    pub(crate) fn get_atime(&self) -> u32 {
+        self.atime
+    }
+
     pub(crate) fn get_blocks(&self) -> u64 {
         self.blocks
     }
@@ -117,12 +129,28 @@ impl HayleyFsInode {
 
     // TODO: update as fields are added
     pub(crate) fn is_initialized(&self) -> bool {
-        self.ino != 0 && self.link_count != 0 && self.inode_type != InodeType::NONE
+        self.inode_type != InodeType::NONE && 
+        self.link_count != 0 &&
+        self.mode != 0 &&
+        // uid/gid == 0 is root
+        // TODO: check timestamps?
+        self.ino != 0
     }
 
     // TODO: update as fields are added
     pub(crate) fn is_free(&self) -> bool {
-        self.ino == 0 && self.link_count == 0 && self.inode_type == InodeType::NONE
+        // if ANY field is non-zero, the inode is not free
+        self.inode_type == InodeType::NONE &&
+        self.link_count == 0 &&
+        self.mode == 0 &&
+        self.uid == 0 &&
+        self.gid == 0 &&
+        self.ctime == 0 &&
+        self.atime == 0 &&
+        self.mtime == 0 &&
+        self.blocks == 0 &&
+        self.size == 0 &&
+        self.ino == 0
     }
 }
 
@@ -141,6 +169,18 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
 
     pub(crate) fn get_gid(&self) -> u32 {
         self.inode.get_gid()
+    }
+
+    pub(crate) fn get_mtime(&self) -> u32 {
+        self.inode.get_mtime()
+    }
+
+    pub(crate) fn get_ctime(&self) -> u32 {
+        self.inode.get_ctime()
+    }
+
+    pub(crate) fn get_atime(&self) -> u32 {
+        self.inode.get_atime()
     }
 
     pub(crate) fn get_blocks(&self) -> u64 {
@@ -234,8 +274,9 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
         self,
         sbi: &SbInfo,
         mnt_userns: *mut bindings::user_namespace,
+        inode: &fs::INode,
         mode: u16,
-    ) -> InodeWrapper<'a, Dirty, Alloc, RegInode> {
+    ) -> Result<InodeWrapper<'a, Dirty, Alloc, RegInode>> {
         self.inode.link_count = 1;
         self.inode.ino = self.ino;
         self.inode.inode_type = InodeType::REG;
@@ -243,7 +284,17 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
         self.inode.blocks = 0;
         self.inode.uid = unsafe { bindings::cpu_to_le32(bindings::from_kuid(mnt_userns, sbi.uid)) };
         self.inode.gid = unsafe { bindings::cpu_to_le32(bindings::from_kgid(mnt_userns, sbi.gid)) };
-        Self::new(self)
+        let time = unsafe {
+            bindings::cpu_to_le32(
+                bindings::current_time(inode.get_inner())
+                    .tv_sec
+                    .try_into()?,
+            )
+        };
+        self.inode.ctime = time;
+        self.inode.atime = time;
+        self.inode.mtime = time;
+        Ok(Self::new(self))
     }
 }
 
@@ -267,8 +318,9 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
         self,
         sbi: &SbInfo,
         mnt_userns: *mut bindings::user_namespace,
+        inode: &fs::INode,
         mode: u16,
-    ) -> InodeWrapper<'a, Dirty, Alloc, DirInode> {
+    ) -> Result<InodeWrapper<'a, Dirty, Alloc, DirInode>> {
         self.inode.link_count = 2;
         self.inode.ino = self.ino;
         self.inode.blocks = 0;
@@ -276,7 +328,17 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
         self.inode.mode = mode | bindings::S_IFDIR as u16;
         self.inode.uid = unsafe { bindings::cpu_to_le32(bindings::from_kuid(mnt_userns, sbi.uid)) };
         self.inode.gid = unsafe { bindings::cpu_to_le32(bindings::from_kgid(mnt_userns, sbi.gid)) };
-        Self::new(self)
+        let time = unsafe {
+            bindings::cpu_to_le32(
+                bindings::current_time(inode.get_inner())
+                    .tv_sec
+                    .try_into()?,
+            )
+        };
+        self.inode.ctime = time;
+        self.inode.atime = time;
+        self.inode.mtime = time;
+        Ok(Self::new(self))
     }
 }
 

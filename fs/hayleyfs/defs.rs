@@ -44,7 +44,7 @@ pub(crate) const DATA_PAGE_START: PageNum =
 
 /// Sizes of persistent objects
 /// Update these if they get bigger or are permanently smaller
-pub(crate) const INODE_SIZE: u64 = 32;
+pub(crate) const INODE_SIZE: u64 = 64;
 pub(crate) const PAGE_DESCRIPTOR_SIZE: u64 = 32; // TODO: can we reduce this?
 pub(crate) const SB_SIZE: u64 = HAYLEYFS_PAGESIZE;
 

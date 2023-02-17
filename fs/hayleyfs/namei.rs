@@ -37,7 +37,6 @@ impl inode::Operations for InodeOps {
         let result = sbi
             .ino_dentry_map
             .lookup_dentry(&dir.i_ino(), dentry.d_name());
-        pr_info!("result: {:?}\n", result);
         if let Some(dentry_info) = result {
             // the dentry exists in the specified directory
             Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino())?))
@@ -139,6 +138,7 @@ fn hayleyfs_iget(
     sbi: &SbInfo,
     ino: InodeNum,
 ) -> Result<*mut bindings::inode> {
+    pr_info!("hayleyfs iget\n");
     // obtain an inode from VFS
     let inode = unsafe { bindings::iget_locked(sb, ino) };
     if inode.is_null() {
@@ -148,6 +148,7 @@ fn hayleyfs_iget(
     let i_new: u64 = bindings::I_NEW.into();
     unsafe {
         if (*inode).i_state & i_new != 0 {
+            pr_info!("inode already exists\n");
             return Ok(inode);
         }
     }
@@ -155,6 +156,11 @@ fn hayleyfs_iget(
     // set up the new inode
     let pi = sbi.get_inode_by_ino(ino)?;
     unsafe {
+        pr_info!("pi size original: {:?}\n", pi.get_size());
+        pr_info!(
+            "pi size to cpu: {:?}\n",
+            bindings::le64_to_cpu(pi.get_size())
+        );
         (*inode).i_size = bindings::le64_to_cpu(pi.get_size()).try_into()?;
         bindings::set_nlink(inode, bindings::le16_to_cpu(pi.get_link_count()).into());
         (*inode).i_mode = bindings::le16_to_cpu(pi.get_mode());
@@ -164,7 +170,12 @@ fn hayleyfs_iget(
         // TODO: https://elixir.bootlin.com/linux/latest/source/fs/ext2/inode.c#L1395 ?
         bindings::i_uid_write(inode, uid);
         bindings::i_gid_write(inode, gid);
-
+        (*inode).i_atime.tv_sec = bindings::le32_to_cpu(pi.get_atime()).try_into()?;
+        (*inode).i_ctime.tv_sec = bindings::le32_to_cpu(pi.get_ctime()).try_into()?;
+        (*inode).i_mtime.tv_sec = bindings::le32_to_cpu(pi.get_mtime()).try_into()?;
+        (*inode).i_atime.tv_nsec = 0;
+        (*inode).i_ctime.tv_nsec = 0;
+        (*inode).i_mtime.tv_nsec = 0;
         // TODO: set the rest of the fields!
     }
 
@@ -228,10 +239,13 @@ fn new_vfs_inode<'a, Type>(
         InodeType::NONE => panic!("Inode type is none"),
     }
 
-    let current_time = unsafe { bindings::current_time(vfs_inode) };
-    vfs_inode.i_mtime = current_time;
-    vfs_inode.i_ctime = current_time;
-    vfs_inode.i_atime = current_time;
+    // let current_time = unsafe { bindings::current_time(vfs_inode) };
+    vfs_inode.i_mtime.tv_sec = new_inode.get_mtime().try_into()?;
+    vfs_inode.i_ctime.tv_sec = new_inode.get_ctime().try_into()?;
+    vfs_inode.i_atime.tv_sec = new_inode.get_atime().try_into()?;
+    vfs_inode.i_mtime.tv_nsec = 0;
+    vfs_inode.i_atime.tv_nsec = 0;
+    vfs_inode.i_mtime.tv_nsec = 0;
     vfs_inode.i_size = new_inode.get_size().try_into()?;
     vfs_inode.i_blocks = new_inode.get_blocks();
 
@@ -273,7 +287,7 @@ fn hayleyfs_create<'a>(
     // the parent is initialized
     let pd = get_free_dentry(sbi, dir.i_ino())?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
-    let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, mnt_userns, pd, umode)?;
+    let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, mnt_userns, dir, pd, umode)?;
 
     dentry.index(dir.i_ino(), sbi)?;
 
@@ -339,7 +353,7 @@ fn hayleyfs_mkdir<'a>(
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     let (dentry, parent, inode) =
-        init_dentry_with_new_dir_inode(sbi, mnt_userns, pd, parent_inode, mode)?;
+        init_dentry_with_new_dir_inode(sbi, mnt_userns, dir, pd, parent_inode, mode)?;
     dentry.index(dir.i_ino(), sbi)?;
 
     Ok((dentry, parent, inode))
@@ -387,6 +401,7 @@ fn alloc_page_for_dentry<'a>(
 fn init_dentry_with_new_reg_inode<'a>(
     sbi: &'a SbInfo,
     mnt_userns: *mut bindings::user_namespace,
+    dir: &fs::INode,
     dentry: DentryWrapper<'a, Clean, Alloc>,
     mode: u16,
 ) -> Result<(
@@ -397,7 +412,7 @@ fn init_dentry_with_new_reg_inode<'a>(
     let new_ino = sbi.inode_allocator.alloc_ino()?;
     let inode = InodeWrapper::get_free_reg_inode_by_ino(sbi, new_ino)?;
     let inode = inode
-        .allocate_file_inode(sbi, mnt_userns, mode)
+        .allocate_file_inode(sbi, mnt_userns, dir, mode)?
         .flush()
         .fence();
     sbi.inc_inodes_in_use();
@@ -412,6 +427,7 @@ fn init_dentry_with_new_reg_inode<'a>(
 fn init_dentry_with_new_dir_inode<'a>(
     sbi: &'a SbInfo,
     mnt_userns: *mut bindings::user_namespace,
+    inode: &fs::INode,
     dentry: DentryWrapper<'a, Clean, Alloc>,
     parent_inode: InodeWrapper<'a, Clean, IncLink, DirInode>,
     mode: u16,
@@ -424,7 +440,7 @@ fn init_dentry_with_new_dir_inode<'a>(
     let new_ino = sbi.inode_allocator.alloc_ino()?;
     let new_inode = InodeWrapper::get_free_dir_inode_by_ino(sbi, new_ino)?;
     let new_inode = new_inode
-        .allocate_dir_inode(sbi, mnt_userns, mode)
+        .allocate_dir_inode(sbi, mnt_userns, inode, mode)?
         .flush()
         .fence();
 
