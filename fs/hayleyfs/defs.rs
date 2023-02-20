@@ -90,7 +90,7 @@ impl HayleyFsSuperBlock {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct HayleyfsParams {
     pub(crate) init: Option<bool>,
 }
@@ -165,7 +165,7 @@ impl SbInfo {
             size: 0, // total size of the PM device
             uid: unsafe { bindings::current_fsuid() },
             gid: unsafe { bindings::current_fsgid() },
-            mode: 0755,
+            mode: 0o755,
             blocksize: HAYLEYFS_PAGESIZE.try_into().unwrap(),
             num_blocks: 0,
             inodes_in_use: AtomicU64::new(1),

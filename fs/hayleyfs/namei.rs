@@ -42,6 +42,7 @@ impl inode::Operations for InodeOps {
             Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino())?))
         } else {
             // the dentry does not exist in this directory
+            pr_info!("dentry does not exist\n");
             Ok(None)
         }
     }
@@ -67,7 +68,7 @@ impl inode::Operations for InodeOps {
         // TODO: add some functions/methods to the kernel crate so we don't have
         // to call them directly here
 
-        new_vfs_inode(sb, mnt_userns, dir, dentry, new_inode, umode)?;
+        new_vfs_inode(sb, sbi, mnt_userns, dir, dentry, new_inode, umode)?;
 
         Ok(0)
     }
@@ -113,7 +114,7 @@ impl inode::Operations for InodeOps {
 
         dir.inc_nlink();
 
-        new_vfs_inode(sb, mnt_userns, dir, dentry, new_inode, umode)?;
+        new_vfs_inode(sb, sbi, mnt_userns, dir, dentry, new_inode, umode)?;
 
         Ok(0)
     }
@@ -133,7 +134,7 @@ impl inode::Operations for InodeOps {
 }
 
 // TODO: shouldn't really be generic but HayleyFs isn't accessible here
-fn hayleyfs_iget(
+pub(crate) fn hayleyfs_iget(
     sb: *mut bindings::super_block,
     sbi: &SbInfo,
     ino: InodeNum,
@@ -146,9 +147,10 @@ fn hayleyfs_iget(
     }
     // if we don't need to set up the inode, just return it
     let i_new: u64 = bindings::I_NEW.into();
+
     unsafe {
         if (*inode).i_state & i_new != 0 {
-            pr_info!("inode already exists\n");
+            // pr_info!("inode: {:?}\n", *inode);
             return Ok(inode);
         }
     }
@@ -156,11 +158,6 @@ fn hayleyfs_iget(
     // set up the new inode
     let pi = sbi.get_inode_by_ino(ino)?;
     unsafe {
-        pr_info!("pi size original: {:?}\n", pi.get_size());
-        pr_info!(
-            "pi size to cpu: {:?}\n",
-            bindings::le64_to_cpu(pi.get_size())
-        );
         (*inode).i_size = bindings::le64_to_cpu(pi.get_size()).try_into()?;
         bindings::set_nlink(inode, bindings::le16_to_cpu(pi.get_link_count()).into());
         (*inode).i_mode = bindings::le16_to_cpu(pi.get_mode());
@@ -176,6 +173,7 @@ fn hayleyfs_iget(
         (*inode).i_atime.tv_nsec = 0;
         (*inode).i_ctime.tv_nsec = 0;
         (*inode).i_mtime.tv_nsec = 0;
+        (*inode).i_blkbits = bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()?;
         // TODO: set the rest of the fields!
     }
 
@@ -198,6 +196,7 @@ fn hayleyfs_iget(
 // TODO: add type
 fn new_vfs_inode<'a, Type>(
     sb: *mut bindings::super_block,
+    sbi: &SbInfo,
     mnt_userns: *mut bindings::user_namespace,
     dir: &fs::INode,
     dentry: &fs::DEntry,
@@ -248,6 +247,7 @@ fn new_vfs_inode<'a, Type>(
     vfs_inode.i_mtime.tv_nsec = 0;
     vfs_inode.i_size = new_inode.get_size().try_into()?;
     vfs_inode.i_blocks = new_inode.get_blocks();
+    vfs_inode.i_blkbits = unsafe { bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()? };
 
     unsafe {
         let uid = bindings::le32_to_cpu(new_inode.get_uid());
@@ -272,7 +272,7 @@ fn new_vfs_inode<'a, Type>(
 }
 
 fn hayleyfs_create<'a>(
-    sbi: &'a mut SbInfo,
+    sbi: &'a SbInfo,
     mnt_userns: *mut bindings::user_namespace,
     dir: &fs::INode,
     dentry: &fs::DEntry,
@@ -334,7 +334,7 @@ fn hayleyfs_link<'a>(
 }
 
 fn hayleyfs_mkdir<'a>(
-    sbi: &'a mut SbInfo,
+    sbi: &'a SbInfo,
     mnt_userns: *mut bindings::user_namespace,
     dir: &fs::INode,
     dentry: &fs::DEntry,

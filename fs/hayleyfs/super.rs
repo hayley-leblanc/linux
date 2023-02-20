@@ -64,28 +64,78 @@ impl fs::Type for HayleyFs {
         // obtain virtual address and size of PM device
         data.get_pm_info(&sb)?;
 
-        if let Some(true) = data.mount_opts.init {
+        let sb = if let Some(true) = data.mount_opts.init {
             // initialize the file system
             // zero out PM device with non-temporal stores
             pr_info!("initializing file system...\n");
 
-            unsafe { init_fs(&mut data)? };
+            let inode = unsafe { init_fs(&mut data, &sb)? };
+
+            // initialize superblock
+            let sb = sb.init(
+                data,
+                &fs::SuperParams {
+                    magic: SUPER_MAGIC.try_into()?,
+                    ..fs::SuperParams::DEFAULT
+                },
+            )?;
+
+            sb.init_root_from_inode(inode)?
         } else {
             // remount
             pr_info!("mounting existing file system...\n");
             remount_fs(&mut data)?;
-        }
 
-        // initialize superblock
-        let sb = sb.init(
-            data,
-            &fs::SuperParams {
-                magic: SUPER_MAGIC.try_into()?,
-                ..fs::SuperParams::DEFAULT
-            },
-        )?;
+            // grab the persistent root inode up here to avoid ownership problems
 
-        let sb = sb.init_root()?;
+            // initialize superblock
+            let sb = sb.init(
+                data,
+                &fs::SuperParams {
+                    magic: SUPER_MAGIC.try_into()?,
+                    ..fs::SuperParams::DEFAULT
+                },
+            )?;
+
+            let sbi = unsafe { &mut *((*sb.get_inner()).s_fs_info as *mut SbInfo) };
+
+            let pi = sbi.get_inode_by_ino(ROOT_INO)?;
+
+            // TODO: this is so janky. fix the kernel code so that this is cleaner
+            // obtain the root inode we just created and fill it in with correct values
+            // TODO: does this allocate a new inode?
+            let inode = unsafe { bindings::new_inode(sb.get_inner()) };
+            if inode.is_null() {
+                return Err(ENOMEM);
+            }
+
+            // fill in the new raw inode with info from our persistent inode
+            // TODO: safer way of doing this
+            unsafe {
+                (*inode).i_ino = ROOT_INO;
+                (*inode).i_size = bindings::le64_to_cpu(pi.get_size()).try_into()?;
+                bindings::set_nlink(inode, bindings::le16_to_cpu(pi.get_link_count()).into());
+                (*inode).i_mode = bindings::le16_to_cpu(pi.get_mode());
+                (*inode).i_blocks = bindings::le64_to_cpu(pi.get_blocks());
+                let uid = bindings::le32_to_cpu(pi.get_uid());
+                let gid = bindings::le32_to_cpu(pi.get_gid());
+                // TODO: https://elixir.bootlin.com/linux/latest/source/fs/ext2/inode.c#L1395 ?
+                bindings::i_uid_write(inode, uid);
+                bindings::i_gid_write(inode, gid);
+                (*inode).i_atime.tv_sec = bindings::le32_to_cpu(pi.get_atime()).try_into()?;
+                (*inode).i_ctime.tv_sec = bindings::le32_to_cpu(pi.get_ctime()).try_into()?;
+                (*inode).i_mtime.tv_sec = bindings::le32_to_cpu(pi.get_mtime()).try_into()?;
+                (*inode).i_atime.tv_nsec = 0;
+                (*inode).i_ctime.tv_nsec = 0;
+                (*inode).i_mtime.tv_nsec = 0;
+                (*inode).i_blkbits =
+                    bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()?;
+                // TODO: set the rest of the fields!
+            }
+
+            sb.init_root_from_inode(inode)?
+        };
+
         Ok(sb)
     }
 
@@ -115,7 +165,11 @@ impl fs::Type for HayleyFs {
 /// This function is intentionally unsafe. It needs to be modified once the safe persistent object
 /// APIs are in place
 /// TODO: make safe
-unsafe fn init_fs(sbi: &mut SbInfo) -> Result<()> {
+/// TODO: should it be NeedsRoot? ownership needs work if so
+unsafe fn init_fs<T: fs::Type + ?Sized>(
+    sbi: &mut SbInfo,
+    sb: &fs::NewSuperBlock<'_, T, fs::NeedsInit>,
+) -> Result<*mut bindings::inode> {
     pr_info!("init fs\n");
 
     unsafe {
@@ -126,14 +180,43 @@ unsafe fn init_fs(sbi: &mut SbInfo) -> Result<()> {
             true,
         );
 
-        let root_ino = HayleyFsInode::init_root_inode(sbi)?;
+        // TODO: this is so janky. fix the kernel code so that this is cleaner
+        // obtain the root inode we just created and fill it in with correct values
+        // TODO: does this allocate a new inode?
+        let inode = bindings::new_inode(sb.get_inner());
+        if inode.is_null() {
+            return Err(ENOMEM);
+        }
+
+        let pi = HayleyFsInode::init_root_inode(sbi, inode)?;
         let super_block = HayleyFsSuperBlock::init_super_block(sbi.get_virt_addr(), sbi.get_size());
 
-        flush_buffer(root_ino, INODE_SIZE.try_into()?, false);
+        flush_buffer(pi, INODE_SIZE.try_into()?, false);
         flush_buffer(super_block, SB_SIZE.try_into()?, true);
-    }
 
-    Ok(())
+        // fill in the new raw inode with info from our persistent inode
+        // TODO: safer way of doing this
+        (*inode).i_ino = ROOT_INO;
+        (*inode).i_size = bindings::le64_to_cpu(pi.get_size()).try_into()?;
+        bindings::set_nlink(inode, bindings::le16_to_cpu(pi.get_link_count()).into());
+        (*inode).i_mode = bindings::le16_to_cpu(pi.get_mode());
+        (*inode).i_blocks = bindings::le64_to_cpu(pi.get_blocks());
+        let uid = bindings::le32_to_cpu(pi.get_uid());
+        let gid = bindings::le32_to_cpu(pi.get_gid());
+        // TODO: https://elixir.bootlin.com/linux/latest/source/fs/ext2/inode.c#L1395 ?
+        bindings::i_uid_write(inode, uid);
+        bindings::i_gid_write(inode, gid);
+        (*inode).i_atime.tv_sec = bindings::le32_to_cpu(pi.get_atime()).try_into()?;
+        (*inode).i_ctime.tv_sec = bindings::le32_to_cpu(pi.get_ctime()).try_into()?;
+        (*inode).i_mtime.tv_sec = bindings::le32_to_cpu(pi.get_mtime()).try_into()?;
+        (*inode).i_atime.tv_nsec = 0;
+        (*inode).i_ctime.tv_nsec = 0;
+        (*inode).i_mtime.tv_nsec = 0;
+        (*inode).i_blkbits = bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()?;
+        // TODO: set the rest of the fields!
+
+        Ok(inode)
+    }
 }
 
 fn remount_fs(sbi: &mut SbInfo) -> Result<()> {

@@ -56,7 +56,7 @@ pub(crate) struct InodeWrapper<'a, State, Op, Type> {
 impl HayleyFsInode {
     /// Unsafe inode constructor for temporary use with init_fs only
     /// Does not flush the root inode
-    pub(crate) unsafe fn init_root_inode(sbi: &SbInfo) -> Result<&HayleyFsInode> {
+    pub(crate) unsafe fn init_root_inode(sbi: &SbInfo, inode: *mut bindings::inode) -> Result<&HayleyFsInode> {
         let mut root_ino = unsafe { sbi.get_inode_by_ino_mut(ROOT_INO)? };
         root_ino.ino = ROOT_INO;
         root_ino.link_count = 2;
@@ -76,6 +76,12 @@ impl HayleyFsInode {
         };
         root_ino.blocks = 0;
         root_ino.mode = sbi.mode | bindings::S_IFDIR as u16;
+
+        let time = unsafe { bindings::cpu_to_le32(bindings::current_time(inode).tv_sec.try_into()?) };
+        root_ino.ctime = time;
+        root_ino.atime = time;
+        root_ino.mtime = time;
+
         Ok(root_ino)
     }
 
