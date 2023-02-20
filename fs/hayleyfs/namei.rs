@@ -149,8 +149,7 @@ pub(crate) fn hayleyfs_iget(
     let i_new: u64 = bindings::I_NEW.into();
 
     unsafe {
-        if (*inode).i_state & i_new != 0 {
-            // pr_info!("inode: {:?}\n", *inode);
+        if (*inode).i_state & i_new == 0 {
             return Ok(inode);
         }
     }
