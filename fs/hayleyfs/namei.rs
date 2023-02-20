@@ -212,6 +212,7 @@ fn new_vfs_inode<'a, Type>(
     }
 
     vfs_inode.i_ino = new_inode.get_ino();
+    pr_info!("set vfs inode to {:?}\n", vfs_inode.i_ino);
 
     // we don't have access to ZST Type, but inode wrapper constructors check types
     // so we can rely on these being correct
@@ -433,8 +434,8 @@ fn init_dentry_with_new_dir_inode<'a>(
     mode: u16,
 ) -> Result<(
     DentryWrapper<'a, Clean, Complete>,
-    InodeWrapper<'a, Clean, Complete, DirInode>,
-    InodeWrapper<'a, Clean, Complete, DirInode>,
+    InodeWrapper<'a, Clean, Complete, DirInode>, // parent
+    InodeWrapper<'a, Clean, Complete, DirInode>, // new inode
 )> {
     // set up the new inode
     let new_ino = sbi.inode_allocator.alloc_ino()?;
@@ -447,7 +448,7 @@ fn init_dentry_with_new_dir_inode<'a>(
     // set the ino in the dentry
     let (dentry, new_inode, parent_inode) = dentry.set_dir_ino(new_inode, parent_inode);
     let dentry = dentry.flush().fence();
-    Ok((dentry, new_inode, parent_inode))
+    Ok((dentry, parent_inode, new_inode))
 }
 
 // fn init_dentry_hard_link<'a>(

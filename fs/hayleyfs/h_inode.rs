@@ -324,7 +324,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
         self,
         sbi: &SbInfo,
         mnt_userns: *mut bindings::user_namespace,
-        inode: &fs::INode,
+        parent: &fs::INode,
         mode: u16,
     ) -> Result<InodeWrapper<'a, Dirty, Alloc, DirInode>> {
         self.inode.link_count = 2;
@@ -336,7 +336,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
         self.inode.gid = unsafe { bindings::cpu_to_le32(bindings::from_kgid(mnt_userns, sbi.gid)) };
         let time = unsafe {
             bindings::cpu_to_le32(
-                bindings::current_time(inode.get_inner())
+                bindings::current_time(parent.get_inner())
                     .tv_sec
                     .try_into()?,
             )
