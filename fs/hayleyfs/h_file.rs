@@ -89,6 +89,7 @@ fn hayleyfs_write<'a>(
     } else {
         len
     };
+    pr_info!("writing {:?} bytes at offset {:?}\n", len, offset);
     let mut inode = inode.write();
     let ino = inode.i_ino();
     let pi = sbi.get_init_reg_inode_by_ino(ino)?;
@@ -157,8 +158,13 @@ fn hayleyfs_read(
 
     // acquire shared read lock
     let inode = inode.read();
-    let _size = inode.i_size_read();
+    let size: u64 = inode.i_size_read().try_into()?;
     let ino = inode.i_ino();
+
+    count = if count < size { count } else { size };
+    if offset >= size {
+        return Ok(0);
+    }
 
     let mut bytes_read = 0;
     while count > 0 {
