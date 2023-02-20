@@ -682,12 +682,16 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsInit> {
             Err(ENOTBLK)
         }
     }
+
+    /// Returns the inner `struct super_block`
+    pub unsafe fn get_inner(&self) -> *mut bindings::super_block {
+        self.sb
+    }
 }
 
 impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
     /// Initialises the root of the superblock.
     pub fn init_root(self) -> Result<&'a SuperBlock<T>> {
-        // pub fn init_root(self, inode_ops: inode::OperationsVtable<T>) -> Result<&'a SuperBlock<T>> {
         // The following is temporary code to create the root inode and dentry. It will be replaced
         // once we allow inodes and dentries to be created directly from Rust code.
 
@@ -711,6 +715,9 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
             inode.i_mtime = time;
             inode.i_atime = time;
             inode.i_ctime = time;
+            // TODO: set based on the system/device block size
+            inode.i_size = 4096;
+            inode.i_blkbits = unsafe { bindings::blksize_bits(4096).try_into()? };
 
             // SAFETY: `simple_dir_operations` never changes, it's safe to reference it.
             inode.__bindgen_anon_3.i_fop = unsafe { &bindings::simple_dir_operations };
@@ -738,6 +745,40 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
         // SAFETY: The typestate guarantees that `self.sb` is initialised and we just finished
         // setting its root, so it's a fully ready superblock.
         Ok(unsafe { &mut *self.sb.cast() })
+    }
+
+    /// Initializes the root of the superblock from a given inode
+    /// TODO: safer approach that does not require passing in a raw pointer to an inode
+    /// that the caller is supposed to set up
+    pub fn init_root_from_inode(self, inode: *mut bindings::inode) -> Result<&'a SuperBlock<T>> {
+        // SAFETY: `simple_dir_operations` never changes, it's safe to reference it.
+
+        unsafe {
+            (*inode).__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+
+            // TODO: safety
+            (*inode).i_op = inode::OperationsVtable::<T::InodeOps>::build();
+        }
+
+        // TODO: safety
+        //
+        // It takes over the inode, even on failure, so we don't need to clean it up.
+        let dentry = unsafe { bindings::d_make_root(inode) };
+        if dentry.is_null() {
+            return Err(ENOMEM);
+        }
+
+        // SAFETY: The typestate guarantees that `self.sb` is valid.
+        unsafe { (*self.sb).s_root = dentry };
+
+        // SAFETY: The typestate guarantees that `self.sb` is initialised and we just finished
+        // setting its root, so it's a fully ready superblock.
+        Ok(unsafe { &mut *self.sb.cast() })
+    }
+
+    /// Returns the inner `struct super_block`
+    pub unsafe fn get_inner(&self) -> *mut bindings::super_block {
+        self.sb
     }
 }
 
