@@ -19,6 +19,7 @@
  */
 
 #include <linux/amba/bus.h>
+#include <linux/blkdev.h>
 #include <linux/bug.h>
 #include <linux/build_bug.h>
 #include <linux/clk.h>
@@ -738,6 +739,11 @@ void rust_helper_i_gid_write(struct inode *inode, gid_t gid) {
 	i_gid_write(inode, gid);
 }
 EXPORT_SYMBOL_GPL(rust_helper_i_gid_write);
+
+unsigned int rust_helper_blksize_bits(unsigned int size) {
+	return blksize_bits(size);
+}
+EXPORT_SYMBOL_GPL(rust_helper_blksize_bits);
 
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
