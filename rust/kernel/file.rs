@@ -13,7 +13,7 @@ use crate::{
     iov_iter::IovIter,
     mm,
     sync::CondVar,
-    types::PointerWrapper,
+    types::ForeignOwnable,
     user_ptr::{UserSlicePtr, UserSlicePtrReader, UserSlicePtrWriter},
     ARef, AlwaysRefCounted,
 };
@@ -320,7 +320,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             let fileref = unsafe { File::from_ptr(file) };
             // SAFETY: `arg` was previously returned by `A::convert` and must
             // be a valid non-null pointer.
-            let ptr = T::open(unsafe { &*arg }, fileref)?.into_pointer();
+            let ptr = T::open(unsafe { &*arg }, fileref)?.into_foreign();
             // SAFETY: The C contract guarantees that `private_data` is available
             // for implementers of the file operations (no other C code accesses
             // it), so we know that there are no concurrent threads/CPUs accessing
@@ -340,7 +340,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             let mut data =
                 unsafe { UserSlicePtr::new(buf as *mut core::ffi::c_void, len).writer() };
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
@@ -367,7 +367,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             let file = unsafe { (*iocb).ki_filp };
             let offset = unsafe { (*iocb).ki_pos };
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
@@ -393,7 +393,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             let mut data =
                 unsafe { UserSlicePtr::new(buf as *mut core::ffi::c_void, len).reader() };
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
@@ -420,7 +420,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             let file = unsafe { (*iocb).ki_filp };
             let offset = unsafe { (*iocb).ki_pos };
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
@@ -441,7 +441,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         file: *mut bindings::file,
     ) -> core::ffi::c_int {
         let ptr = mem::replace(unsafe { &mut (*file).private_data }, ptr::null_mut());
-        T::release(unsafe { T::Data::from_pointer(ptr as _) }, unsafe {
+        T::release(unsafe { T::Data::from_foreign(ptr as _) }, unsafe {
             File::from_ptr(file)
         });
         0
@@ -460,7 +460,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
                 _ => return Err(EINVAL),
             };
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
@@ -477,7 +477,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
     ) -> core::ffi::c_long {
         from_kernel_result! {
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
@@ -495,7 +495,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
     ) -> core::ffi::c_long {
         from_kernel_result! {
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
@@ -512,7 +512,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
     ) -> core::ffi::c_int {
         from_kernel_result! {
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
@@ -540,7 +540,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             let end = end.try_into()?;
             let datasync = datasync != 0;
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
             // references to `file` have been released, so we know it can't be called while this
             // function is running.
@@ -555,7 +555,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         wait: *mut bindings::poll_table_struct,
     ) -> bindings::__poll_t {
         // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-        // `T::Data::into_pointer`. `T::Data::from_pointer` is only called by the `release`
+        // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the `release`
         // callback, which the C API guarantees that will be called only when all references to
         // `file` have been released, so we know it can't be called while this function is running.
         let f = unsafe { T::Data::borrow((*file).private_data) };
@@ -786,7 +786,7 @@ pub trait OpenAdapter<T: Sync> {
 pub trait Operations {
     /// The type of the context data returned by [`Operations::open`] and made available to
     /// other methods.
-    type Data: PointerWrapper + Send + Sync = ();
+    type Data: ForeignOwnable + Send + Sync = ();
 
     /// The type of the context data passed to [`Operations::open`].
     type OpenData: Sync = ();
@@ -808,7 +808,7 @@ pub trait Operations {
     ///
     /// Corresponds to the `read` and `read_iter` function pointers in `struct file_operations`.
     fn read(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
         _writer: &mut impl IoBufferWriter,
         _offset: u64,
@@ -820,7 +820,7 @@ pub trait Operations {
     ///
     /// Corresponds to the `write` and `write_iter` function pointers in `struct file_operations`.
     fn write(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
         _reader: &mut impl IoBufferReader,
         _offset: u64,
@@ -832,7 +832,7 @@ pub trait Operations {
     ///
     /// Corresponds to the `llseek` function pointer in `struct file_operations`.
     fn seek(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
         _offset: SeekFrom,
     ) -> Result<u64> {
@@ -843,7 +843,7 @@ pub trait Operations {
     ///
     /// Corresponds to the `unlocked_ioctl` function pointer in `struct file_operations`.
     fn ioctl(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
         _cmd: &mut IoctlCommand,
     ) -> Result<i32> {
@@ -854,7 +854,7 @@ pub trait Operations {
     ///
     /// Corresponds to the `compat_ioctl` function pointer in `struct file_operations`.
     fn compat_ioctl(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
         _cmd: &mut IoctlCommand,
     ) -> Result<i32> {
@@ -865,7 +865,7 @@ pub trait Operations {
     ///
     /// Corresponds to the `fsync` function pointer in `struct file_operations`.
     fn fsync(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
         _start: u64,
         _end: u64,
@@ -878,7 +878,7 @@ pub trait Operations {
     ///
     /// Corresponds to the `mmap` function pointer in `struct file_operations`.
     fn mmap(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
         _vma: &mut mm::virt::Area,
     ) -> Result {
@@ -890,7 +890,7 @@ pub trait Operations {
     ///
     /// Corresponds to the `poll` function pointer in `struct file_operations`.
     fn poll(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
         _table: &PollTable,
     ) -> Result<u32> {

@@ -31,7 +31,7 @@ fn main() {
             rust_tests,
             r#"/// Generated `{name}` KUnit test case from a Rust documentation test.
 #[no_mangle]
-pub fn {name}(__kunit_test: *mut kernel::bindings::kunit) {{
+pub extern "C" fn {name}(__kunit_test: *mut kernel::bindings::kunit) {{
     /// Provides mutual exclusion (see `# Implementation` notes).
     static __KUNIT_TEST_MUTEX: kernel::sync::smutex::Mutex<()> =
         kernel::sync::smutex::Mutex::new(());

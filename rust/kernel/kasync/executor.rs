@@ -4,7 +4,7 @@
 
 use crate::{
     sync::{Arc, ArcBorrow, LockClassKey},
-    types::PointerWrapper,
+    types::ForeignOwnable,
     Result,
 };
 use core::{
@@ -76,7 +76,7 @@ pub trait ArcWake: Send + Sync {
 /// Creates a [`Waker`] from a [`Arc<T>`], where `T` implements the [`ArcWake`] trait.
 pub fn ref_waker<T: 'static + ArcWake>(w: Arc<T>) -> Waker {
     fn raw_waker<T: 'static + ArcWake>(w: Arc<T>) -> RawWaker {
-        let data = w.into_pointer();
+        let data = w.into_foreign();
         RawWaker::new(
             data.cast(),
             &RawWakerVTable::new(clone::<T>, wake::<T>, wake_by_ref::<T>, drop::<T>),
@@ -84,26 +84,26 @@ pub fn ref_waker<T: 'static + ArcWake>(w: Arc<T>) -> Waker {
     }
 
     unsafe fn clone<T: 'static + ArcWake>(ptr: *const ()) -> RawWaker {
-        // SAFETY: The data stored in the raw waker is the result of a call to `into_pointer`.
+        // SAFETY: The data stored in the raw waker is the result of a call to `into_foreign`.
         let w = unsafe { Arc::<T>::borrow(ptr.cast()) };
         raw_waker(w.into())
     }
 
     unsafe fn wake<T: 'static + ArcWake>(ptr: *const ()) {
-        // SAFETY: The data stored in the raw waker is the result of a call to `into_pointer`.
-        let w = unsafe { Arc::<T>::from_pointer(ptr.cast()) };
+        // SAFETY: The data stored in the raw waker is the result of a call to `into_foreign`.
+        let w = unsafe { Arc::<T>::from_foreign(ptr.cast()) };
         w.wake();
     }
 
     unsafe fn wake_by_ref<T: 'static + ArcWake>(ptr: *const ()) {
-        // SAFETY: The data stored in the raw waker is the result of a call to `into_pointer`.
+        // SAFETY: The data stored in the raw waker is the result of a call to `into_foreign`.
         let w = unsafe { Arc::<T>::borrow(ptr.cast()) };
         w.wake_by_ref();
     }
 
     unsafe fn drop<T: 'static + ArcWake>(ptr: *const ()) {
-        // SAFETY: The data stored in the raw waker is the result of a call to `into_pointer`.
-        unsafe { Arc::<T>::from_pointer(ptr.cast()) };
+        // SAFETY: The data stored in the raw waker is the result of a call to `into_foreign`.
+        unsafe { Arc::<T>::from_foreign(ptr.cast()) };
     }
 
     let raw = raw_waker(w);

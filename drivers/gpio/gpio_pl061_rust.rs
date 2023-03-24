@@ -282,7 +282,7 @@ impl amba::Driver for PL061Device {
         )?;
 
         // SAFETY: General part of the data is pinned when `data` is.
-        let gen_inner = unsafe { data.as_mut().map_unchecked_mut(|d| &mut (**d).inner) };
+        let gen_inner = unsafe { data.as_mut().map_unchecked_mut(|d| &mut d.inner) };
         kernel::rawspinlock_init!(gen_inner, "PL061Data::inner");
 
         let data = Arc::<DeviceData>::from(data);

@@ -2,8 +2,8 @@
 
 //! Rust printing macros sample.
 
+use kernel::pr_cont;
 use kernel::prelude::*;
-use kernel::{pr_cont, str::CStr, ThisModule};
 
 module! {
     type: RustPrint,

@@ -30,7 +30,7 @@ extern struct acpi_device *acpi_root;
 #define ACPI_BUS_HID			"LNXSYBUS"
 #define ACPI_BUS_DEVICE_NAME		"System Bus"
 
-#define INVALID_ACPI_HANDLE	((acpi_handle)empty_zero_page)
+#define INVALID_ACPI_HANDLE	((acpi_handle)ZERO_PAGE(0))
 
 static const char *dummy_hid = "device";
 
@@ -789,6 +789,7 @@ static bool acpi_info_matches_ids(struct acpi_device_info *info,
 static const char * const acpi_ignore_dep_ids[] = {
 	"PNP0D80", /* Windows-compatible System Power Management Controller */
 	"INT33BD", /* Intel Baytrail Mailbox Device */
+	"LATT2021", /* Lattice FW Update Client Driver */
 	NULL
 };
 
@@ -1369,9 +1370,12 @@ static void acpi_set_pnp_ids(acpi_handle handle, struct acpi_device_pnp *pnp,
 		 * Some devices don't reliably have _HIDs & _CIDs, so add
 		 * synthetic HIDs to make sure drivers can find them.
 		 */
-		if (acpi_is_video_device(handle))
+		if (acpi_is_video_device(handle)) {
 			acpi_add_id(pnp, ACPI_VIDEO_HID);
-		else if (acpi_bay_match(handle))
+			pnp->type.backlight = 1;
+			break;
+		}
+		if (acpi_bay_match(handle))
 			acpi_add_id(pnp, ACPI_BAY_HID);
 		else if (acpi_dock_match(handle))
 			acpi_add_id(pnp, ACPI_DOCK_HID);
@@ -1509,9 +1513,12 @@ int acpi_dma_get_range(struct device *dev, const struct bus_dma_region **map)
 			goto out;
 		}
 
+		*map = r;
+
 		list_for_each_entry(rentry, &list, node) {
 			if (rentry->res->start >= rentry->res->end) {
-				kfree(r);
+				kfree(*map);
+				*map = NULL;
 				ret = -EINVAL;
 				dev_dbg(dma_dev, "Invalid DMA regions configuration\n");
 				goto out;
@@ -1523,8 +1530,6 @@ int acpi_dma_get_range(struct device *dev, const struct bus_dma_region **map)
 			r->offset = rentry->offset;
 			r++;
 		}
-
-		*map = r;
 	}
  out:
 	acpi_dev_free_resource_list(&list);

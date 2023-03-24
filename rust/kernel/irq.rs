@@ -13,7 +13,7 @@ use crate::{
     bindings,
     error::{from_kernel_result, to_result},
     str::CString,
-    types::PointerWrapper,
+    types::ForeignOwnable,
     Error, Result, ScopeGuard,
 };
 use core::{fmt, marker::PhantomData, ops::Deref};
@@ -105,22 +105,22 @@ pub enum ExtraResult {
 #[vtable]
 pub trait Chip: Sized {
     /// The type of the context data stored in the irq chip and made available on each callback.
-    type Data: PointerWrapper;
+    type Data: ForeignOwnable;
 
     /// Called at the start of a new interrupt.
-    fn ack(data: <Self::Data as PointerWrapper>::Borrowed<'_>, irq_data: &IrqData);
+    fn ack(data: <Self::Data as ForeignOwnable>::Borrowed<'_>, irq_data: &IrqData);
 
     /// Masks an interrupt source.
-    fn mask(data: <Self::Data as PointerWrapper>::Borrowed<'_>, irq_data: &IrqData);
+    fn mask(data: <Self::Data as ForeignOwnable>::Borrowed<'_>, irq_data: &IrqData);
 
     /// Unmasks an interrupt source.
-    fn unmask(_data: <Self::Data as PointerWrapper>::Borrowed<'_>, irq_data: &IrqData);
+    fn unmask(_data: <Self::Data as ForeignOwnable>::Borrowed<'_>, irq_data: &IrqData);
 
     /// Sets the flow type of an interrupt.
     ///
     /// The flow type is a combination of the constants in [`Type`].
     fn set_type(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _irq_data: &mut LockedIrqData,
         _flow_type: u32,
     ) -> Result<ExtraResult> {
@@ -129,7 +129,7 @@ pub trait Chip: Sized {
 
     /// Enables or disables power-management wake-on of an interrupt.
     fn set_wake(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _irq_data: &IrqData,
         _on: bool,
     ) -> Result {
@@ -142,7 +142,7 @@ pub trait Chip: Sized {
 /// # Safety
 ///
 /// The caller must ensure that the value stored in the irq chip data is the result of calling
-/// [`PointerWrapper::into_pointer] for the [`T::Data`] type.
+/// [`ForeignOwnable::into_foreign] for the [`T::Data`] type.
 pub(crate) unsafe fn init_chip<T: Chip>(chip: &mut bindings::irq_chip) {
     chip.irq_ack = Some(irq_ack_callback::<T>);
     chip.irq_mask = Some(irq_mask_callback::<T>);
@@ -171,7 +171,7 @@ pub fn set_wake(irq: u32, on: bool) -> Result {
 unsafe extern "C" fn irq_ack_callback<T: Chip>(irq_data: *mut bindings::irq_data) {
     // SAFETY: The safety requirements of `init_chip`, which is the only place that uses this
     // callback, ensure that the value stored as irq chip data comes from a previous call to
-    // `PointerWrapper::into_pointer`.
+    // `ForeignOwnable::into_foreign`.
     let data = unsafe { T::Data::borrow(bindings::irq_data_get_irq_chip_data(irq_data)) };
 
     // SAFETY: The value returned by `IrqData` is only valid until the end of this function, and
@@ -182,7 +182,7 @@ unsafe extern "C" fn irq_ack_callback<T: Chip>(irq_data: *mut bindings::irq_data
 unsafe extern "C" fn irq_mask_callback<T: Chip>(irq_data: *mut bindings::irq_data) {
     // SAFETY: The safety requirements of `init_chip`, which is the only place that uses this
     // callback, ensure that the value stored as irq chip data comes from a previous call to
-    // `PointerWrapper::into_pointer`.
+    // `ForeignOwnable::into_foreign`.
     let data = unsafe { T::Data::borrow(bindings::irq_data_get_irq_chip_data(irq_data)) };
 
     // SAFETY: The value returned by `IrqData` is only valid until the end of this function, and
@@ -193,7 +193,7 @@ unsafe extern "C" fn irq_mask_callback<T: Chip>(irq_data: *mut bindings::irq_dat
 unsafe extern "C" fn irq_unmask_callback<T: Chip>(irq_data: *mut bindings::irq_data) {
     // SAFETY: The safety requirements of `init_chip`, which is the only place that uses this
     // callback, ensure that the value stored as irq chip data comes from a previous call to
-    // `PointerWrapper::into_pointer`.
+    // `ForeignOwnable::into_foreign`.
     let data = unsafe { T::Data::borrow(bindings::irq_data_get_irq_chip_data(irq_data)) };
 
     // SAFETY: The value returned by `IrqData` is only valid until the end of this function, and
@@ -208,7 +208,7 @@ unsafe extern "C" fn irq_set_type_callback<T: Chip>(
     from_kernel_result! {
         // SAFETY: The safety requirements of `init_chip`, which is the only place that uses this
         // callback, ensure that the value stored as irq chip data comes from a previous call to
-        // `PointerWrapper::into_pointer`.
+        // `ForeignOwnable::into_foreign`.
         let data = unsafe { T::Data::borrow(bindings::irq_data_get_irq_chip_data(irq_data)) };
 
         // SAFETY: The value returned by `IrqData` is only valid until the end of this function, and
@@ -229,7 +229,7 @@ unsafe extern "C" fn irq_set_wake_callback<T: Chip>(
     from_kernel_result! {
         // SAFETY: The safety requirements of `init_chip`, which is the only place that uses this
         // callback, ensure that the value stored as irq chip data comes from a previous call to
-        // `PointerWrapper::into_pointer`.
+        // `ForeignOwnable::into_foreign`.
         let data = unsafe { T::Data::borrow(bindings::irq_data_get_irq_chip_data(irq_data)) };
 
         // SAFETY: The value returned by `IrqData` is only valid until the end of this function, and
@@ -303,21 +303,21 @@ impl Descriptor {
     }
 }
 
-struct InternalRegistration<T: PointerWrapper> {
+struct InternalRegistration<T: ForeignOwnable> {
     irq: u32,
     data: *mut core::ffi::c_void,
     name: CString,
     _p: PhantomData<T>,
 }
 
-impl<T: PointerWrapper> InternalRegistration<T> {
+impl<T: ForeignOwnable> InternalRegistration<T> {
     /// Registers a new irq handler.
     ///
     /// # Safety
     ///
     /// Callers must ensure that `handler` and `thread_fn` are compatible with the registration,
     /// that is, that they only use their second argument while the call is happening and that they
-    /// only call [`T::borrow`] on it (e.g., they shouldn't call [`T::from_pointer`] and consume
+    /// only call [`T::borrow`] on it (e.g., they shouldn't call [`T::from_foreign`] and consume
     /// it).
     unsafe fn try_new(
         irq: core::ffi::c_uint,
@@ -327,11 +327,11 @@ impl<T: PointerWrapper> InternalRegistration<T> {
         data: T,
         name: fmt::Arguments<'_>,
     ) -> Result<Self> {
-        let ptr = data.into_pointer() as *mut _;
+        let ptr = data.into_foreign() as *mut _;
         let name = CString::try_from_fmt(name)?;
         let guard = ScopeGuard::new(|| {
-            // SAFETY: `ptr` came from a previous call to `into_pointer`.
-            unsafe { T::from_pointer(ptr) };
+            // SAFETY: `ptr` came from a previous call to `into_foreign`.
+            unsafe { T::from_foreign(ptr) };
         });
         // SAFETY: `name` and `ptr` remain valid as long as the registration is alive.
         to_result(unsafe {
@@ -354,7 +354,7 @@ impl<T: PointerWrapper> InternalRegistration<T> {
     }
 }
 
-impl<T: PointerWrapper> Drop for InternalRegistration<T> {
+impl<T: ForeignOwnable> Drop for InternalRegistration<T> {
     fn drop(&mut self) {
         // Unregister irq handler.
         //
@@ -364,18 +364,18 @@ impl<T: PointerWrapper> Drop for InternalRegistration<T> {
 
         // Free context data.
         //
-        // SAFETY: This matches the call to `into_pointer` from `try_new` in the success case.
-        unsafe { T::from_pointer(self.data) };
+        // SAFETY: This matches the call to `into_foreign` from `try_new` in the success case.
+        unsafe { T::from_foreign(self.data) };
     }
 }
 
 /// An irq handler.
 pub trait Handler {
     /// The context data associated with and made available to the handler.
-    type Data: PointerWrapper;
+    type Data: ForeignOwnable;
 
     /// Called from interrupt context when the irq happens.
-    fn handle_irq(data: <Self::Data as PointerWrapper>::Borrowed<'_>) -> Return;
+    fn handle_irq(data: <Self::Data as ForeignOwnable>::Borrowed<'_>) -> Return;
 }
 
 /// The registration of an interrupt handler.
@@ -424,8 +424,8 @@ impl<H: Handler> Registration<H> {
         _irq: core::ffi::c_int,
         raw_data: *mut core::ffi::c_void,
     ) -> bindings::irqreturn_t {
-        // SAFETY: On registration, `into_pointer` was called, so it is safe to borrow from it here
-        // because `from_pointer` is called only after the irq is unregistered.
+        // SAFETY: On registration, `into_foreign` was called, so it is safe to borrow from it here
+        // because `from_foreign` is called only after the irq is unregistered.
         let data = unsafe { H::Data::borrow(raw_data) };
         H::handle_irq(data) as _
     }
@@ -434,15 +434,15 @@ impl<H: Handler> Registration<H> {
 /// A threaded irq handler.
 pub trait ThreadedHandler {
     /// The context data associated with and made available to the handlers.
-    type Data: PointerWrapper;
+    type Data: ForeignOwnable;
 
     /// Called from interrupt context when the irq first happens.
-    fn handle_primary_irq(_data: <Self::Data as PointerWrapper>::Borrowed<'_>) -> Return {
+    fn handle_primary_irq(_data: <Self::Data as ForeignOwnable>::Borrowed<'_>) -> Return {
         Return::WakeThread
     }
 
     /// Called from the handler thread.
-    fn handle_threaded_irq(data: <Self::Data as PointerWrapper>::Borrowed<'_>) -> Return;
+    fn handle_threaded_irq(data: <Self::Data as ForeignOwnable>::Borrowed<'_>) -> Return;
 }
 
 /// The registration of a threaded interrupt handler.
@@ -502,8 +502,8 @@ impl<H: ThreadedHandler> ThreadedRegistration<H> {
         _irq: core::ffi::c_int,
         raw_data: *mut core::ffi::c_void,
     ) -> bindings::irqreturn_t {
-        // SAFETY: On registration, `into_pointer` was called, so it is safe to borrow from it here
-        // because `from_pointer` is called only after the irq is unregistered.
+        // SAFETY: On registration, `into_foreign` was called, so it is safe to borrow from it here
+        // because `from_foreign` is called only after the irq is unregistered.
         let data = unsafe { H::Data::borrow(raw_data) };
         H::handle_primary_irq(data) as _
     }
@@ -512,8 +512,8 @@ impl<H: ThreadedHandler> ThreadedRegistration<H> {
         _irq: core::ffi::c_int,
         raw_data: *mut core::ffi::c_void,
     ) -> bindings::irqreturn_t {
-        // SAFETY: On registration, `into_pointer` was called, so it is safe to borrow from it here
-        // because `from_pointer` is called only after the irq is unregistered.
+        // SAFETY: On registration, `into_foreign` was called, so it is safe to borrow from it here
+        // because `from_foreign` is called only after the irq is unregistered.
         let data = unsafe { H::Data::borrow(raw_data) };
         H::handle_threaded_irq(data) as _
     }
@@ -652,10 +652,10 @@ impl Domain {
 /// A high-level irq flow handler.
 pub trait FlowHandler {
     /// The data associated with the handler.
-    type Data: PointerWrapper;
+    type Data: ForeignOwnable;
 
     /// Implements the irq flow for the given descriptor.
-    fn handle_irq_flow(data: <Self::Data as PointerWrapper>::Borrowed<'_>, desc: &Descriptor);
+    fn handle_irq_flow(data: <Self::Data as ForeignOwnable>::Borrowed<'_>, desc: &Descriptor);
 }
 
 /// Returns the raw irq flow handler corresponding to the (high-level) one defined in `T`.
@@ -663,7 +663,7 @@ pub trait FlowHandler {
 /// # Safety
 ///
 /// The caller must ensure that the value stored in the irq handler data (as returned by
-/// `irq_desc_get_handler_data`) is the result of calling [`PointerWrapper::into_pointer] for the
+/// `irq_desc_get_handler_data`) is the result of calling [`ForeignOwnable::into_foreign] for the
 /// [`T::Data`] type.
 pub(crate) unsafe fn new_flow_handler<T: FlowHandler>() -> bindings::irq_flow_handler_t {
     Some(irq_flow_handler::<T>)
@@ -671,7 +671,7 @@ pub(crate) unsafe fn new_flow_handler<T: FlowHandler>() -> bindings::irq_flow_ha
 
 unsafe extern "C" fn irq_flow_handler<T: FlowHandler>(desc: *mut bindings::irq_desc) {
     // SAFETY: By the safety requirements of `new_flow_handler`, we know that the value returned by
-    // `irq_desc_get_handler_data` comes from calling `T::Data::into_pointer`. `desc` is valid by
+    // `irq_desc_get_handler_data` comes from calling `T::Data::into_foreign`. `desc` is valid by
     // the C API contract.
     let data = unsafe { T::Data::borrow(bindings::irq_desc_get_handler_data(desc)) };
 

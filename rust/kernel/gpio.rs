@@ -6,7 +6,7 @@
 
 use crate::{
     bindings, device, error::code::*, error::from_kernel_result, sync::LockClassKey,
-    types::PointerWrapper, Error, Result,
+    types::ForeignOwnable, Error, Result,
 };
 use core::{
     cell::UnsafeCell,
@@ -33,11 +33,11 @@ pub trait Chip {
     /// Context data associated with the gpio chip.
     ///
     /// It determines the type of the context data passed to each of the methods of the trait.
-    type Data: PointerWrapper + Sync + Send;
+    type Data: ForeignOwnable + Sync + Send;
 
     /// Returns the direction of the given gpio line.
     fn get_direction(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _offset: u32,
     ) -> Result<LineDirection> {
         Err(ENOTSUPP)
@@ -45,7 +45,7 @@ pub trait Chip {
 
     /// Configures the direction as input of the given gpio line.
     fn direction_input(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _offset: u32,
     ) -> Result {
         Err(EIO)
@@ -55,7 +55,7 @@ pub trait Chip {
     ///
     /// The value that will be initially output is also specified.
     fn direction_output(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _offset: u32,
         _value: bool,
     ) -> Result {
@@ -63,12 +63,12 @@ pub trait Chip {
     }
 
     /// Returns the current value of the given gpio line.
-    fn get(_data: <Self::Data as PointerWrapper>::Borrowed<'_>, _offset: u32) -> Result<bool> {
+    fn get(_data: <Self::Data as ForeignOwnable>::Borrowed<'_>, _offset: u32) -> Result<bool> {
         Err(EIO)
     }
 
     /// Sets the value of the given gpio line.
-    fn set(_data: <Self::Data as PointerWrapper>::Borrowed<'_>, _offset: u32, _value: bool) {}
+    fn set(_data: <Self::Data as ForeignOwnable>::Borrowed<'_>, _offset: u32, _value: bool) {}
 }
 
 /// A registration of a gpio chip.
@@ -120,6 +120,8 @@ impl<T: Chip> Registration<T> {
     ///
     /// Users are encouraged to use the [`gpio_chip_register`] macro because it automatically
     /// defines the lock classes and calls the registration function.
+    ///
+    /// [`gpio_chip_register`]: crate::gpio_chip_register
     pub fn register(
         self: Pin<&mut Self>,
         gpio_count: u16,
@@ -171,7 +173,7 @@ impl<T: Chip> Registration<T> {
             // TODO: Define `gc.owner` as well.
         }
 
-        let data_pointer = <T::Data as PointerWrapper>::into_pointer(data);
+        let data_pointer = <T::Data as ForeignOwnable>::into_foreign(data);
         // SAFETY: `gc` was initilised above, so it is valid.
         let ret = unsafe {
             bindings::gpiochip_add_data_with_key(
@@ -182,8 +184,8 @@ impl<T: Chip> Registration<T> {
             )
         };
         if ret < 0 {
-            // SAFETY: `data_pointer` was returned by `into_pointer` above.
-            unsafe { T::Data::from_pointer(data_pointer) };
+            // SAFETY: `data_pointer` was returned by `into_foreign` above.
+            unsafe { T::Data::from_foreign(data_pointer) };
             return Err(Error::from_kernel_errno(ret));
         }
 
@@ -221,8 +223,8 @@ impl<T: Chip> Drop for Registration<T> {
             unsafe { bindings::gpiochip_remove(self.gc.get()) };
 
             // Free data as well.
-            // SAFETY: `data_pointer` was returned by `into_pointer` during registration.
-            unsafe { <T::Data as PointerWrapper>::from_pointer(data_pointer) };
+            // SAFETY: `data_pointer` was returned by `into_foreign` during registration.
+            unsafe { <T::Data as ForeignOwnable>::from_foreign(data_pointer) };
         }
     }
 }
@@ -251,7 +253,7 @@ unsafe extern "C" fn get_direction_callback<T: Chip>(
     offset: core::ffi::c_uint,
 ) -> core::ffi::c_int {
     from_kernel_result! {
-        // SAFETY: The value stored as chip data was returned by `into_pointer` during registration.
+        // SAFETY: The value stored as chip data was returned by `into_foreign` during registration.
         let data = unsafe { T::Data::borrow(bindings::gpiochip_get_data(gc)) };
         Ok(T::get_direction(data, offset)? as i32)
     }
@@ -262,7 +264,7 @@ unsafe extern "C" fn direction_input_callback<T: Chip>(
     offset: core::ffi::c_uint,
 ) -> core::ffi::c_int {
     from_kernel_result! {
-        // SAFETY: The value stored as chip data was returned by `into_pointer` during registration.
+        // SAFETY: The value stored as chip data was returned by `into_foreign` during registration.
         let data = unsafe { T::Data::borrow(bindings::gpiochip_get_data(gc)) };
         T::direction_input(data, offset)?;
         Ok(0)
@@ -275,7 +277,7 @@ unsafe extern "C" fn direction_output_callback<T: Chip>(
     value: core::ffi::c_int,
 ) -> core::ffi::c_int {
     from_kernel_result! {
-        // SAFETY: The value stored as chip data was returned by `into_pointer` during registration.
+        // SAFETY: The value stored as chip data was returned by `into_foreign` during registration.
         let data = unsafe { T::Data::borrow(bindings::gpiochip_get_data(gc)) };
         T::direction_output(data, offset, value != 0)?;
         Ok(0)
@@ -287,7 +289,7 @@ unsafe extern "C" fn get_callback<T: Chip>(
     offset: core::ffi::c_uint,
 ) -> core::ffi::c_int {
     from_kernel_result! {
-        // SAFETY: The value stored as chip data was returned by `into_pointer` during registration.
+        // SAFETY: The value stored as chip data was returned by `into_foreign` during registration.
         let data = unsafe { T::Data::borrow(bindings::gpiochip_get_data(gc)) };
         let v = T::get(data, offset)?;
         Ok(v as _)
@@ -299,7 +301,7 @@ unsafe extern "C" fn set_callback<T: Chip>(
     offset: core::ffi::c_uint,
     value: core::ffi::c_int,
 ) {
-    // SAFETY: The value stored as chip data was returned by `into_pointer` during registration.
+    // SAFETY: The value stored as chip data was returned by `into_foreign` during registration.
     let data = unsafe { T::Data::borrow(bindings::gpiochip_get_data(gc)) };
     T::set(data, offset, value != 0);
 }
@@ -313,7 +315,7 @@ mod irqchip {
     pub trait ChipWithIrqChip: Chip {
         /// Implements the irq flow for the gpio chip.
         fn handle_irq_flow(
-            _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+            _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
             _desc: &irq::Descriptor,
             _domain: &irq::Domain,
         );
@@ -342,6 +344,8 @@ mod irqchip {
         ///
         /// Users are encouraged to use the [`gpio_irq_chip_register`] macro because it
         /// automatically defines the lock classes and calls the registration function.
+        ///
+        /// [`gpio_irq_chip_register`]: crate::gpio_irq_chip_register
         pub fn register<U: irq::Chip<Data = T::Data>>(
             mut self: Pin<&mut Self>,
             gpio_count: u16,
@@ -415,7 +419,7 @@ mod irqchip {
         fn handle_irq_flow(gc: *mut bindings::gpio_chip, desc: &irq::Descriptor) {
             // SAFETY: `FlowHandler` is only used in gpio chips, and it is removed when the gpio is
             // unregistered, so we know that `gc` must still be valid. We also know that the value
-            // stored as gpio data was returned by `T::Data::into_pointer` again because
+            // stored as gpio data was returned by `T::Data::into_foreign` again because
             // `FlowHandler` is a private structure only used in this way.
             let data = unsafe { T::Data::borrow(bindings::gpiochip_get_data(gc)) };
 

@@ -6,7 +6,7 @@
 
 #![allow(dead_code)]
 
-use crate::{bindings, error::from_kernel_result, types::PointerWrapper, Result};
+use crate::{bindings, error::from_kernel_result, types::ForeignOwnable, Result};
 use core::marker::PhantomData;
 
 /// Corresponds to the kernel's `struct dev_pm_ops`.
@@ -14,25 +14,25 @@ use core::marker::PhantomData;
 /// It is meant to be implemented by drivers that support power-management operations.
 pub trait Operations {
     /// The type of the context data stored by the driver on each device.
-    type Data: PointerWrapper + Sync + Send;
+    type Data: ForeignOwnable + Sync + Send;
 
     /// Called before the system goes into a sleep state.
-    fn suspend(_data: <Self::Data as PointerWrapper>::Borrowed<'_>) -> Result {
+    fn suspend(_data: <Self::Data as ForeignOwnable>::Borrowed<'_>) -> Result {
         Ok(())
     }
 
     /// Called after the system comes back from a sleep state.
-    fn resume(_data: <Self::Data as PointerWrapper>::Borrowed<'_>) -> Result {
+    fn resume(_data: <Self::Data as ForeignOwnable>::Borrowed<'_>) -> Result {
         Ok(())
     }
 
     /// Called before creating a hibernation image.
-    fn freeze(_data: <Self::Data as PointerWrapper>::Borrowed<'_>) -> Result {
+    fn freeze(_data: <Self::Data as ForeignOwnable>::Borrowed<'_>) -> Result {
         Ok(())
     }
 
     /// Called after the system is restored from a hibernation image.
-    fn restore(_data: <Self::Data as PointerWrapper>::Borrowed<'_>) -> Result {
+    fn restore(_data: <Self::Data as ForeignOwnable>::Borrowed<'_>) -> Result {
         Ok(())
     }
 }
@@ -46,7 +46,7 @@ macro_rules! pm_callback {
                 // SAFETY: `dev` is valid as it was passed in by the C portion.
                 let ptr = unsafe { bindings::dev_get_drvdata(dev) };
                 // SAFETY: By the safety requirements of `OpsTable::build`, we know that `ptr` came
-                // from a previous call to `T::Data::into_pointer`.
+                // from a previous call to `T::Data::into_foreign`.
                 let data = unsafe { T::Data::borrow(ptr) };
                 T::$method(data)?;
                 Ok(0)
@@ -94,7 +94,7 @@ impl<T: Operations> OpsTable<T> {
     /// # Safety
     ///
     /// The caller must ensure that `dev_get_drvdata` will result in a value returned by
-    /// [`T::Data::into_pointer`].
+    /// [`T::Data::into_foreign`].
     pub(crate) const unsafe fn build() -> &'static bindings::dev_pm_ops {
         &Self::VTABLE
     }
@@ -104,15 +104,15 @@ impl<T: Operations> OpsTable<T> {
 ///
 /// This is useful when one doesn't want to provide the implementation of any power-manager related
 /// operation.
-pub struct NoOperations<T: PointerWrapper>(PhantomData<T>);
+pub struct NoOperations<T: ForeignOwnable>(PhantomData<T>);
 
-impl<T: PointerWrapper + Send + Sync> Operations for NoOperations<T> {
+impl<T: ForeignOwnable + Send + Sync> Operations for NoOperations<T> {
     type Data = T;
 }
 
 // SAFETY: `NoOperation` provides no functionality, it is safe to send a reference to it to
 // different threads.
-unsafe impl<T: PointerWrapper> Sync for NoOperations<T> {}
+unsafe impl<T: ForeignOwnable> Sync for NoOperations<T> {}
 
 // SAFETY: `NoOperation` provides no functionality, it is safe to send it to different threads.
-unsafe impl<T: PointerWrapper> Send for NoOperations<T> {}
+unsafe impl<T: ForeignOwnable> Send for NoOperations<T> {}

@@ -35,9 +35,12 @@
 /// This is useful when debugging issues that only occur in release
 /// builds or when debugging in release mode is significantly faster.
 ///
-/// Note that the macro is intended as a debugging tool and therefore you
-/// should avoid having uses of it in version control for long periods
-/// (other than in tests and similar).
+/// Note that the macro is intended as a temporary debugging tool to be
+/// used during development. Therefore, avoid committing `dbg!` macro
+/// invocations into the kernel tree.
+///
+/// For debug output that is intended to be kept in the kernel tree,
+/// use [`pr_debug`] and similar facilities instead.
 ///
 /// # Stability
 ///
@@ -98,7 +101,6 @@
 ///
 /// The `dbg!(..)` macro moves the input:
 ///
-// TODO: Could be `compile_fail` when supported.
 /// ```ignore
 /// /// A wrapper around `usize` which importantly is not Copyable.
 /// #[derive(Debug)]
@@ -133,6 +135,8 @@
 /// ```
 ///
 /// [`std::dbg`]: https://doc.rust-lang.org/std/macro.dbg.html
+/// [`pr_info`]: crate::pr_info
+/// [`pr_debug`]: crate::pr_debug
 /// [`eprintln`]: https://doc.rust-lang.org/std/macro.eprintln.html
 /// [`printk`]: https://www.kernel.org/doc/html/latest/core-api/printk-basics.html
 #[macro_export]

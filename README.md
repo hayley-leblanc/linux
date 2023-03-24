@@ -1,6 +1,6 @@
 # Rust for Linux
 
-The goal of this project is to add support for the Rust language to the Linux kernel. This repository contains the work that will be eventually submitted for review to the LKML.
+Rust for Linux is the project adding support for the Rust language to the Linux kernel.
 
 Feel free to [contribute](https://github.com/Rust-for-Linux/linux/contribute)! To start, take a look at [`Documentation/rust`](https://github.com/Rust-for-Linux/linux/tree/rust/Documentation/rust).
 
