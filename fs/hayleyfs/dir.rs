@@ -123,6 +123,33 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
     }
 }
 
+impl<'a> DentryWrapper<'a, Clean, Start> {
+    pub(crate) fn get_init_dentry(info: DentryInfo) -> Result<Self> {
+        // use the virtual address in the DentryInfo to look up the
+        // persistent dentry
+        let dentry: &mut HayleyFsDentry =
+            unsafe { &mut *(info.get_virt_addr() as *mut HayleyFsDentry) };
+        // return an error if the dentry is not initialized
+        if dentry.ino == 0 {
+            return Err(EPERM);
+        };
+        Ok(Self {
+            state: PhantomData,
+            op: PhantomData,
+            dentry,
+        })
+    }
+
+    pub(crate) fn clear_ino(self) -> DentryWrapper<'a, Dirty, ClearIno> {
+        self.dentry.ino = 0;
+        DentryWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            dentry: self.dentry,
+        }
+    }
+}
+
 impl<'a> DentryWrapper<'a, Clean, Complete> {
     // TODO: maybe should take completed inode as well? or ino dentry insert should
     // take the wrappers directly

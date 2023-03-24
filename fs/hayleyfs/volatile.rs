@@ -34,6 +34,10 @@ impl DentryInfo {
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.ino
     }
+
+    pub(crate) fn get_virt_addr(&self) -> *const ffi::c_void {
+        self.virt_addr
+    }
 }
 
 /// maps inodes to info about dentries for inode's children

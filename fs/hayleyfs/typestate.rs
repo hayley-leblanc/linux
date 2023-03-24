@@ -1,3 +1,5 @@
+// TODO: remove debug derivations - they probably make these types non-zero-sized
+
 /// Zero-sized types for persistence state
 #[derive(Debug)]
 pub(crate) struct Dirty {}
@@ -25,6 +27,8 @@ pub(crate) struct Writeable {}
 pub(crate) struct Written {}
 #[derive(Debug)]
 pub(crate) struct IncSize {}
+#[derive(Debug)]
+pub(crate) struct ClearIno {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}

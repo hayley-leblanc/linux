@@ -131,6 +131,20 @@ impl inode::Operations for InodeOps {
 
         // TODO: decrement the inode's link count and delete it if link count == 0
     }
+
+    fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
+        // unimplemented!();
+        let sb = dir.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+
+        hayleyfs_unlink(sbi, dir, dentry)?;
+
+        Err(EINVAL)
+    }
 }
 
 // TODO: shouldn't really be generic but HayleyFs isn't accessible here
@@ -357,6 +371,27 @@ fn hayleyfs_mkdir<'a>(
     dentry.index(dir.i_ino(), sbi)?;
 
     Ok((dentry, parent, inode))
+}
+
+fn hayleyfs_unlink<'a>(sbi: &'a SbInfo, dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
+    pr_info!("hayleyfs unlink\n");
+    let parent_ino = dir.i_ino();
+    let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
+
+    // use volatile index to find the persistent dentry
+    let dentry_info = sbi
+        .ino_dentry_map
+        .lookup_dentry(&parent_ino, dentry.d_name());
+    if let Some(dentry_info) = dentry_info {
+        let pd = DentryWrapper::get_init_dentry(dentry_info)?;
+        // pr_info!("dentry: {:?}\n", pd);
+        let pd = pd.clear_ino().flush().fence();
+        // pr_info!("parent inode: {:?}\n", parent_inode);
+        // pr_info!("dentry: {:?}\n", pd);
+        Ok(())
+    } else {
+        Err(ENOENT)
+    }
 }
 
 fn get_free_dentry<'a>(
