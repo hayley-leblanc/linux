@@ -97,13 +97,26 @@ impl<T: Operations> OperationsVtable<T> {
         flags: ffi::c_uint,
     ) -> ffi::c_int {
         from_kernel_result! {
-        // TODO: safety notes
-        let old_dir = unsafe { &mut *old_dir.cast() };
-        let old_dentry = unsafe { &mut *old_dentry.cast() };
-        let new_dir = unsafe { &mut *new_dir.cast() };
-        let new_dentry = unsafe { &mut *new_dentry.cast() };
-        T::rename(mnt_userns, old_dir, old_dentry, new_dir, new_dentry, flags)?;
-        Ok(0)
+            // TODO: safety notes
+            let old_dir = unsafe { &mut *old_dir.cast() };
+            let old_dentry = unsafe { &mut *old_dentry.cast() };
+            let new_dir = unsafe { &mut *new_dir.cast() };
+            let new_dentry = unsafe { &mut *new_dentry.cast() };
+            T::rename(mnt_userns, old_dir, old_dentry, new_dir, new_dentry, flags)?;
+            Ok(0)
+        }
+    }
+
+    unsafe extern "C" fn unlink_callback(
+        dir: *mut bindings::inode,
+        dentry: *mut bindings::dentry,
+    ) -> ffi::c_int {
+        from_kernel_result! {
+            // TODO: safety notes
+            let dir = unsafe { &mut *dir.cast() };
+            let dentry = unsafe { &mut *dentry.cast() };
+            T::unlink(dir, dentry)?;
+            Ok(0)
         }
     }
 
@@ -115,7 +128,7 @@ impl<T: Operations> OperationsVtable<T> {
         readlink: None,
         create: Some(Self::create_callback),
         link: Some(Self::link_callback),
-        unlink: None,
+        unlink: Some(Self::unlink_callback),
         symlink: None,
         mkdir: Some(Self::mkdir_callback),
         rmdir: None,
@@ -168,9 +181,9 @@ pub trait Operations {
         dentry: &DEntry,
         umode: bindings::umode_t,
     ) -> Result<i32>;
-    /// Corresponds to the ``link` function pointer in `struct inode_operations`.
+    /// Corresponds to the `link` function pointer in `struct inode_operations`.
     fn link(old_dentry: &DEntry, dir: &mut INode, dentry: &DEntry) -> Result<i32>;
-    /// Corresponds to the`rename` function pointer in `struct inode_operations`
+    /// Corresponds to the `rename` function pointer in `struct inode_operations`
     fn rename(
         mnt_userns: *const bindings::user_namespace,
         old_dir: &INode,
@@ -179,4 +192,6 @@ pub trait Operations {
         new_dentry: &DEntry,
         flags: u32,
     ) -> Result<()>;
+    /// Corresponds to the `unlink` function pointer in `struct inode_operations`
+    fn unlink(dir: &INode, dentry: &DEntry) -> Result<()>;
 }
