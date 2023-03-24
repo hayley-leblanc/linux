@@ -10,7 +10,7 @@ use core::ptr::NonNull;
 pub use crate::raw_list::{Cursor, GetLinks, Links};
 use crate::{raw_list, raw_list::RawList, sync::Arc};
 
-// TODO: Use the one from `kernel::file_operations::PointerWrapper` instead.
+// TODO: Use the one from `kernel::file_operations::ForeignOwnable` instead.
 /// Wraps an object to be inserted in a linked list.
 pub trait Wrapper<T: ?Sized> {
     /// Converts the wrapped object into a pointer that represents it.

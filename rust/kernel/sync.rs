@@ -3,7 +3,7 @@
 //! Synchronisation primitives.
 //!
 //! This module contains the kernel APIs related to synchronisation that have been ported or
-//! wrapped for usage by Rust code in the kernel and is shared by all of them.
+//! wrapped for usage by Rust code in the kernel.
 //!
 //! # Examples
 //!

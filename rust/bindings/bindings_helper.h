@@ -22,7 +22,6 @@
 #include <linux/irqdomain.h>
 #include <linux/irq.h>
 #include <linux/miscdevice.h>
-#include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/netfilter_arp.h>
 #include <linux/netfilter.h>
@@ -38,7 +37,6 @@
 #include <linux/sysctl.h>
 #include <linux/uaccess.h>
 #include <linux/uio.h>
-#include <uapi/linux/android/binder.h>
 
 /* `bindgen` gets confused at certain things. */
 const gfp_t BINDINGS_GFP_KERNEL = GFP_KERNEL;

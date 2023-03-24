@@ -6,7 +6,7 @@
 
 use crate::{
     bindings, device, driver, error::from_kernel_result, io_mem::Resource, power, str::CStr,
-    to_result, types::PointerWrapper, Result, ThisModule,
+    to_result, types::ForeignOwnable, Result, ThisModule,
 };
 
 /// A registration of an amba driver.
@@ -43,7 +43,7 @@ unsafe impl const driver::RawDeviceId for DeviceId {
 /// An amba driver.
 pub trait Driver {
     /// Data stored on device by driver.
-    type Data: PointerWrapper + Send + Sync + driver::DeviceRemoval = ();
+    type Data: ForeignOwnable + Send + Sync + driver::DeviceRemoval = ();
 
     /// The type that implements the power-management operations.
     ///
@@ -88,7 +88,7 @@ impl<T: Driver> driver::DriverOps for Adapter<T> {
             amba.id_table = t.as_ref();
         }
         if cfg!(CONFIG_PM) {
-            // SAFETY: `probe_callback` sets the driver data after calling `T::Data::into_pointer`,
+            // SAFETY: `probe_callback` sets the driver data after calling `T::Data::into_foreign`,
             // and we guarantee that `T::Data` is the same as `T::PowerOps::Data` by a constraint
             // in the type declaration.
             amba.drv.pm = unsafe { power::OpsTable::<T::PowerOps>::build() };
@@ -127,10 +127,11 @@ unsafe extern "C" fn probe_callback<T: Driver>(
             };
             // SAFETY: The id table has a static lifetime, so `ptr` is guaranteed to be valid for
             // read.
+            #[allow(clippy::needless_borrow)]
             unsafe { (&*ptr).as_ref() }
         };
         let data = T::probe(&mut dev, info)?;
-        let ptr = T::Data::into_pointer(data);
+        let ptr = T::Data::into_foreign(data);
         // SAFETY: `adev` is valid for write by the contract with the C code.
         unsafe { bindings::amba_set_drvdata(adev, ptr as _) };
         Ok(0)
@@ -142,8 +143,8 @@ unsafe extern "C" fn remove_callback<T: Driver>(adev: *mut bindings::amba_device
     let ptr = unsafe { bindings::amba_get_drvdata(adev) };
     // SAFETY: The value returned by `amba_get_drvdata` was stored by a previous call to
     // `amba_set_drvdata` in `probe_callback` above; the value comes from a call to
-    // `T::Data::into_pointer`.
-    let data = unsafe { T::Data::from_pointer(ptr) };
+    // `T::Data::into_foreign`.
+    let data = unsafe { T::Data::from_foreign(ptr) };
     T::remove(&data);
     <T::Data as driver::DeviceRemoval>::device_remove(&data);
 }

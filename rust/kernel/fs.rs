@@ -6,7 +6,8 @@
 
 use crate::{
     bindings, error::code::*, error::from_kernel_result, inode, str::CStr, sync::RwSemaphore,
-    to_result, types::PointerWrapper, AlwaysRefCounted, Error, Result, ScopeGuard, ThisModule,
+    to_result, types::ForeignOwnable, types::PointerWrapper, AlwaysRefCounted, Error, Result,
+    ScopeGuard, ThisModule,
 };
 use alloc::boxed::Box;
 use core::{
@@ -45,7 +46,7 @@ pub enum Super {
 #[vtable]
 pub trait Context<T: Type + ?Sized> {
     /// Type of the data associated with the context.
-    type Data: PointerWrapper + Send + Sync + 'static;
+    type Data: ForeignOwnable + Send + Sync + 'static;
 
     /// The typed file system parameters.
     ///
@@ -108,17 +109,17 @@ impl<T: Type + ?Sized> Tables<T> {
 
         let ptr = fc.fs_private;
         if !ptr.is_null() {
-            // SAFETY: `fs_private` was initialised with the result of a `to_pointer` call in
-            // `init_fs_context_callback`, so it's ok to call `from_pointer` here.
-            unsafe { <T::Context as Context<T>>::Data::from_pointer(ptr) };
+            // SAFETY: `fs_private` was initialised with the result of a `into_foreign` call in
+            // `init_fs_context_callback`, so it's ok to call `from_foreign` here.
+            unsafe { <T::Context as Context<T>>::Data::from_foreign(ptr) };
         }
 
         let ptr = fc.s_fs_info;
         if !ptr.is_null() {
-            // SAFETY: `s_fs_info` may be initialised with the result of a `to_pointer` call in
+            // SAFETY: `s_fs_info` may be initialised with the result of a `into_foreign` call in
             // `get_tree_callback` when keyed superblocks are used (`get_tree_keyed` sets it), so
-            // it's ok to call `from_pointer` here.
-            unsafe { T::Data::from_pointer(ptr) };
+            // it's ok to call `from_foreign` here.
+            unsafe { T::Data::from_foreign(ptr) };
         }
     }
 
@@ -131,12 +132,12 @@ impl<T: Type + ?Sized> Tables<T> {
             let ptr = unsafe { (*fc).fs_private };
 
             // SAFETY: The value of `ptr` (coming from `fs_private` was initialised in
-            // `init_fs_context_callback` to the result of an `into_pointer` call. Since the
-            // context is valid, `from_pointer` wasn't called yet, so `ptr` is valid. Additionally,
+            // `init_fs_context_callback` to the result of an `into_foreign` call. Since the
+            // context is valid, `from_foreign` wasn't called yet, so `ptr` is valid. Additionally,
             // the callback contract guarantees that callbacks are serialised, so it is ok to
             // mutably reference it.
             let mut data =
-                unsafe { <<T::Context as Context<T>>::Data as PointerWrapper>::borrow_mut(ptr) };
+                unsafe { <<T::Context as Context<T>>::Data as ForeignOwnable>::borrow_mut(ptr) };
             let mut result = bindings::fs_parse_result::default();
             // SAFETY: All parameters are valid at least for the duration of the call.
             let opt =
@@ -186,11 +187,11 @@ impl<T: Type + ?Sized> Tables<T> {
             let ptr = core::mem::replace(&mut fc.fs_private, ptr::null_mut());
 
             // SAFETY: The value of `ptr` (coming from `fs_private` was initialised in
-            // `init_fs_context_callback` to the result of an `into_pointer` call. The context is
+            // `init_fs_context_callback` to the result of an `into_foreign` call. The context is
             // being used to initialise a superblock, so we took over `ptr` (`fs_private` is set to
-            // null now) and call `from_pointer` below.
+            // null now) and call `from_foreign` below.
             let data =
-                unsafe { <<T::Context as Context<T>>::Data as PointerWrapper>::from_pointer(ptr) };
+                unsafe { <<T::Context as Context<T>>::Data as ForeignOwnable>::from_foreign(ptr) };
 
             // SAFETY: The callback contract guarantees that `sb_ptr` is a unique pointer to a
             // newly-created superblock.
@@ -231,15 +232,15 @@ impl<T: Type + ?Sized> Tables<T> {
                     let ptr = ctx.fs_private;
 
                     // SAFETY: The value of `ptr` (coming from `fs_private` was initialised in
-                    // `init_fs_context_callback` to the result of an `into_pointer` call. Since
-                    // the context is valid, `from_pointer` wasn't called yet, so `ptr` is valid.
+                    // `init_fs_context_callback` to the result of an `into_foreign` call. Since
+                    // the context is valid, `from_foreign` wasn't called yet, so `ptr` is valid.
                     // Additionally, the callback contract guarantees that callbacks are
                     // serialised, so it is ok to mutably reference it.
                     let mut data = unsafe {
-                        <<T::Context as Context<T>>::Data as PointerWrapper>::borrow_mut(ptr)
+                        <<T::Context as Context<T>>::Data as ForeignOwnable>::borrow_mut(ptr)
                     };
                     let fs_data = T::Context::tree_key(&mut data)?;
-                    let fs_data_ptr = fs_data.into_pointer();
+                    let fs_data_ptr = fs_data.into_foreign();
 
                     // `get_tree_keyed` reassigns `ctx.s_fs_info`, which should be ok because
                     // nowhere else is it assigned a non-null value. However, we add the assert
@@ -249,7 +250,7 @@ impl<T: Type + ?Sized> Tables<T> {
 
                     // SAFETY: `fc` is valid per the callback contract. `fill_super_callback` also
                     // has the right type and is a valid callback. Lastly, we just called
-                    // `into_pointer` above, so `fs_data_ptr` is also valid.
+                    // `into_foreign` above, so `fs_data_ptr` is also valid.
                     to_result(unsafe {
                         bindings::get_tree_keyed(
                             fc,
@@ -276,12 +277,12 @@ impl<T: Type + ?Sized> Tables<T> {
             let ptr = unsafe { (*fc).fs_private };
 
             // SAFETY: The value of `ptr` (coming from `fs_private` was initialised in
-            // `init_fs_context_callback` to the result of an `into_pointer` call. Since the
-            // context is valid, `from_pointer` wasn't called yet, so `ptr` is valid. Additionally,
+            // `init_fs_context_callback` to the result of an `into_foreign` call. Since the
+            // context is valid, `from_foreign` wasn't called yet, so `ptr` is valid. Additionally,
             // the callback contract guarantees that callbacks are serialised, so it is ok to
             // mutably reference it.
             let mut data =
-                unsafe { <<T::Context as Context<T>>::Data as PointerWrapper>::borrow_mut(ptr) };
+                unsafe { <<T::Context as Context<T>>::Data as ForeignOwnable>::borrow_mut(ptr) };
             let page = if buf.is_null() {
                 None
             } else {
@@ -348,7 +349,7 @@ pub trait Type {
     type Context: Context<Self> + ?Sized;
 
     /// Data associated with each file system instance.
-    type Data: PointerWrapper + Send + Sync = ();
+    type Data: ForeignOwnable + Send + Sync = ();
 
     /// Used to define `struct inode_operations` for this file system.
     type InodeOps: inode::Operations;
@@ -508,7 +509,7 @@ impl Registration {
             // SAFETY: The callback contract guarantees that `fc_ptr` is the only pointer to a
             // newly-allocated fs context, so it is safe to mutably reference it.
             let fc = unsafe { &mut *fc_ptr };
-            fc.fs_private = data.into_pointer() as _;
+            fc.fs_private = data.into_foreign() as _;
             fc.ops = &Tables::<T>::CONTEXT;
             Ok(0)
         }
@@ -537,10 +538,10 @@ impl Registration {
         let ptr = sb.s_fs_info;
         if !ptr.is_null() {
             // SAFETY: The only place where `s_fs_info` is assigned is `NewSuperBlock::init`, where
-            // it's initialised with the result of a `to_pointer` call. We checked above that ptr
+            // it's initialised with the result of a `into_foreign` call. We checked above that ptr
             // is non-null because it would be null if we never reached the point where we init the
             // field.
-            unsafe { T::Data::from_pointer(ptr) };
+            unsafe { T::Data::from_foreign(ptr) };
         }
     }
 }
@@ -638,10 +639,10 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsInit> {
         sb.s_blocksize = 1 << sb.s_blocksize_bits;
 
         // Keyed file systems already have `s_fs_info` initialised.
-        let info = data.into_pointer() as *mut _;
+        let info = data.into_foreign() as *mut _;
         if let Super::Keyed = T::SUPER_TYPE {
-            // SAFETY: We just called `into_pointer` above.
-            unsafe { T::Data::from_pointer(info) };
+            // SAFETY: We just called `into_foreign` above.
+            unsafe { T::Data::from_foreign(info) };
 
             if sb.s_fs_info != info {
                 return Err(EINVAL);

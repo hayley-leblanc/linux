@@ -4,10 +4,7 @@
 //!
 //! C header: [`include/linux/types.h`](../../../../include/linux/types.h)
 
-use crate::{
-    bindings,
-    sync::{Arc, ArcBorrow},
-};
+use crate::bindings;
 use alloc::boxed::Box;
 use core::{
     cell::UnsafeCell,
@@ -37,100 +34,102 @@ impl Mode {
     }
 }
 
-/// Used to convert an object into a raw pointer that represents it.
+/// Used to transfer ownership to and from foreign (non-Rust) languages.
 ///
-/// It can eventually be converted back into the object. This is used to store objects as pointers
-/// in kernel data structures, for example, an implementation of
-/// [`Operations`][crate::file::Operations] in `struct
-/// file::private_data`.
-pub trait PointerWrapper {
-    /// Type of values borrowed between calls to [`PointerWrapper::into_pointer`] and
-    /// [`PointerWrapper::from_pointer`].
+/// Ownership is transferred from Rust to a foreign language by calling [`Self::into_foreign`] and
+/// later may be transferred back to Rust by calling [`Self::from_foreign`].
+///
+/// This trait is meant to be used in cases when Rust objects are stored in C objects and
+/// eventually "freed" back to Rust.
+pub trait ForeignOwnable: Sized {
+    /// Type of values borrowed between calls to [`ForeignOwnable::into_foreign`] and
+    /// [`ForeignOwnable::from_foreign`].
     type Borrowed<'a>;
 
-    /// Returns the raw pointer.
-    fn into_pointer(self) -> *const core::ffi::c_void;
+    /// Converts a Rust-owned object to a foreign-owned one.
+    ///
+    /// The foreign representation is a pointer to void.
+    fn into_foreign(self) -> *const core::ffi::c_void;
 
-    /// Returns a borrowed value.
+    /// Borrows a foreign-owned object.
     ///
     /// # Safety
     ///
-    /// `ptr` must have been returned by a previous call to [`PointerWrapper::into_pointer`].
-    /// Additionally, [`PointerWrapper::from_pointer`] can only be called after *all* values
-    /// returned by [`PointerWrapper::borrow`] have been dropped.
+    /// `ptr` must have been returned by a previous call to [`ForeignOwnable::into_foreign`] for
+    /// which a previous matching [`ForeignOwnable::from_foreign`] hasn't been called yet.
+    /// Additionally, all instances (if any) of values returned by [`ForeignOwnable::borrow_mut`]
+    /// for this object must have been dropped.
     unsafe fn borrow<'a>(ptr: *const core::ffi::c_void) -> Self::Borrowed<'a>;
 
-    /// Returns a mutably borrowed value.
+    /// Mutably borrows a foreign-owned object.
     ///
     /// # Safety
     ///
-    /// The passed pointer must come from a previous to [`PointerWrapper::into_pointer`], and no
-    /// other concurrent users of the pointer (except the ones derived from the returned value) run
-    /// at least until the returned [`ScopeGuard`] is dropped.
-    unsafe fn borrow_mut<T: PointerWrapper>(ptr: *const core::ffi::c_void) -> ScopeGuard<T, fn(T)> {
+    /// `ptr` must have been returned by a previous call to [`ForeignOwnable::into_foreign`] for
+    /// which a previous matching [`ForeignOwnable::from_foreign`] hasn't been called yet.
+    /// Additionally, all instances (if any) of values returned by [`ForeignOwnable::borrow`] and
+    /// [`ForeignOwnable::borrow_mut`] for this object must have been dropped.
+    unsafe fn borrow_mut(ptr: *const core::ffi::c_void) -> ScopeGuard<Self, fn(Self)> {
         // SAFETY: The safety requirements ensure that `ptr` came from a previous call to
-        // `into_pointer`.
-        ScopeGuard::new_with_data(unsafe { T::from_pointer(ptr) }, |d| {
-            d.into_pointer();
+        // `into_foreign`.
+        ScopeGuard::new_with_data(unsafe { Self::from_foreign(ptr) }, |d| {
+            d.into_foreign();
         })
     }
 
-    /// Returns the instance back from the raw pointer.
+    /// Converts a foreign-owned object back to a Rust-owned one.
     ///
     /// # Safety
     ///
-    /// The passed pointer must come from a previous call to [`PointerWrapper::into_pointer()`].
-    unsafe fn from_pointer(ptr: *const core::ffi::c_void) -> Self;
+    /// `ptr` must have been returned by a previous call to [`ForeignOwnable::into_foreign`] for
+    /// which a previous matching [`ForeignOwnable::from_foreign`] hasn't been called yet.
+    /// Additionally, all instances (if any) of values returned by [`ForeignOwnable::borrow`] and
+    /// [`ForeignOwnable::borrow_mut`] for this object must have been dropped.
+    unsafe fn from_foreign(ptr: *const core::ffi::c_void) -> Self;
 }
 
-impl<T: 'static> PointerWrapper for Box<T> {
+impl<T: 'static> ForeignOwnable for Box<T> {
     type Borrowed<'a> = &'a T;
 
-    fn into_pointer(self) -> *const core::ffi::c_void {
+    fn into_foreign(self) -> *const core::ffi::c_void {
         Box::into_raw(self) as _
     }
 
     unsafe fn borrow<'a>(ptr: *const core::ffi::c_void) -> &'a T {
         // SAFETY: The safety requirements for this function ensure that the object is still alive,
         // so it is safe to dereference the raw pointer.
-        // The safety requirements also ensure that the object remains alive for the lifetime of
-        // the returned value.
+        // The safety requirements of `from_foreign` also ensure that the object remains alive for
+        // the lifetime of the returned value.
         unsafe { &*ptr.cast() }
     }
 
-    unsafe fn from_pointer(ptr: *const core::ffi::c_void) -> Self {
-        // SAFETY: The passed pointer comes from a previous call to [`Self::into_pointer()`].
+    unsafe fn from_foreign(ptr: *const core::ffi::c_void) -> Self {
+        // SAFETY: The safety requirements of this function ensure that `ptr` comes from a previous
+        // call to `Self::into_foreign`.
         unsafe { Box::from_raw(ptr as _) }
     }
 }
 
-impl<T: 'static> PointerWrapper for Arc<T> {
-    type Borrowed<'a> = ArcBorrow<'a, T>;
+impl ForeignOwnable for () {
+    type Borrowed<'a> = ();
 
-    fn into_pointer(self) -> *const core::ffi::c_void {
-        Arc::into_usize(self) as _
+    fn into_foreign(self) -> *const core::ffi::c_void {
+        core::ptr::NonNull::dangling().as_ptr()
     }
 
-    unsafe fn borrow<'a>(ptr: *const core::ffi::c_void) -> ArcBorrow<'a, T> {
-        // SAFETY: The safety requirements for this function ensure that the underlying object
-        // remains valid for the lifetime of the returned value.
-        unsafe { Arc::borrow_usize(ptr as _) }
-    }
+    unsafe fn borrow<'a>(_: *const core::ffi::c_void) -> Self::Borrowed<'a> {}
 
-    unsafe fn from_pointer(ptr: *const core::ffi::c_void) -> Self {
-        // SAFETY: The passed pointer comes from a previous call to [`Self::into_pointer()`].
-        unsafe { Arc::from_usize(ptr as _) }
-    }
+    unsafe fn from_foreign(_: *const core::ffi::c_void) -> Self {}
 }
 
-impl<T: PointerWrapper + Deref> PointerWrapper for Pin<T> {
+impl<T: ForeignOwnable + Deref> ForeignOwnable for Pin<T> {
     type Borrowed<'a> = T::Borrowed<'a>;
 
-    fn into_pointer(self) -> *const core::ffi::c_void {
+    fn into_foreign(self) -> *const core::ffi::c_void {
         // SAFETY: We continue to treat the pointer as pinned by returning just a pointer to it to
         // the caller.
         let inner = unsafe { Pin::into_inner_unchecked(self) };
-        inner.into_pointer()
+        inner.into_foreign()
     }
 
     unsafe fn borrow<'a>(ptr: *const core::ffi::c_void) -> Self::Borrowed<'a> {
@@ -139,17 +138,17 @@ impl<T: PointerWrapper + Deref> PointerWrapper for Pin<T> {
         unsafe { T::borrow(ptr) }
     }
 
-    unsafe fn from_pointer(p: *const core::ffi::c_void) -> Self {
+    unsafe fn from_foreign(p: *const core::ffi::c_void) -> Self {
         // SAFETY: The object was originally pinned.
-        // The passed pointer comes from a previous call to `inner::into_pointer()`.
-        unsafe { Pin::new_unchecked(T::from_pointer(p)) }
+        // The passed pointer comes from a previous call to `T::into_foreign`.
+        unsafe { Pin::new_unchecked(T::from_foreign(p)) }
     }
 }
 
-impl<T> PointerWrapper for *mut T {
+impl<T> ForeignOwnable for *mut T {
     type Borrowed<'a> = *mut T;
 
-    fn into_pointer(self) -> *const core::ffi::c_void {
+    fn into_foreign(self) -> *const core::ffi::c_void {
         self as _
     }
 
@@ -157,22 +156,9 @@ impl<T> PointerWrapper for *mut T {
         ptr as _
     }
 
-    unsafe fn from_pointer(ptr: *const core::ffi::c_void) -> Self {
+    unsafe fn from_foreign(ptr: *const core::ffi::c_void) -> Self {
         ptr as _
     }
-}
-
-impl PointerWrapper for () {
-    type Borrowed<'a> = ();
-
-    fn into_pointer(self) -> *const core::ffi::c_void {
-        // We use 1 to be different from a null pointer.
-        1usize as _
-    }
-
-    unsafe fn borrow<'a>(_: *const core::ffi::c_void) -> Self::Borrowed<'a> {}
-
-    unsafe fn from_pointer(_: *const core::ffi::c_void) -> Self {}
 }
 
 /// Runs a cleanup function/closure when dropped.
@@ -263,7 +249,7 @@ impl<T, F: FnOnce(T)> ScopeGuard<T, F> {
     }
 }
 
-impl ScopeGuard<(), Box<dyn FnOnce(())>> {
+impl ScopeGuard<(), fn(())> {
     /// Creates a new guarded object with the given cleanup function.
     pub fn new(cleanup: impl FnOnce()) -> ScopeGuard<(), impl FnOnce(())> {
         ScopeGuard::new_with_data((), move |_| cleanup())
@@ -597,8 +583,8 @@ unsafe impl Bool for False {}
 /// [`ARef<T>`].
 ///
 /// This is usually implemented by wrappers to existing structures on the C side of the code. For
-/// Rust code, the recommendation is to use [`Arc`] to create reference-counted instances of a
-/// type.
+/// Rust code, the recommendation is to use [`Arc`](crate::sync::Arc) to create reference-counted
+/// instances of a type.
 ///
 /// # Safety
 ///

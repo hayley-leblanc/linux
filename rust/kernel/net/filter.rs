@@ -8,7 +8,7 @@ use crate::{
     bindings,
     error::{code::*, to_result},
     net,
-    types::PointerWrapper,
+    types::ForeignOwnable,
     ARef, AlwaysRefCounted, Result, ScopeGuard,
 };
 use alloc::boxed::Box;
@@ -21,13 +21,13 @@ use core::{
 pub trait Filter {
     /// The type of the context data stored on registration and made available to the
     /// [`Filter::filter`] function.
-    type Data: PointerWrapper + Sync = ();
+    type Data: ForeignOwnable + Sync = ();
 
     /// Filters the packet stored in the given buffer.
     ///
     /// It dictates to the netfilter core what the fate of the packet should be.
     fn filter(
-        _data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _skb: &net::SkBuff,
     ) -> Disposition;
 }
@@ -169,11 +169,11 @@ impl<T: Filter> Registration<T> {
             return Err(EINVAL);
         }
 
-        let data_pointer = data.into_pointer();
+        let data_pointer = data.into_foreign();
 
-        // SAFETY: `data_pointer` comes from the call to `data.into_pointer()` above.
+        // SAFETY: `data_pointer` comes from the call to `data.into_foreign()` above.
         let guard = ScopeGuard::new(|| unsafe {
-            T::Data::from_pointer(data_pointer);
+            T::Data::from_foreign(data_pointer);
         });
 
         let mut pri_base = 0i32;
@@ -227,7 +227,7 @@ impl<T: Filter> Registration<T> {
         _state: *const bindings::nf_hook_state,
     ) -> core::ffi::c_uint {
         // SAFETY: `priv_` was initialised on registration by a value returned from
-        // `T::Data::into_pointer`, and it remains valid until the hook is unregistered.
+        // `T::Data::into_foreign`, and it remains valid until the hook is unregistered.
         let data = unsafe { T::Data::borrow(priv_) };
 
         // SAFETY: The C contract guarantees that `skb` remains valid for the duration of this
@@ -265,8 +265,8 @@ impl<T: Filter> Drop for Registration<T> {
             unsafe { bindings::nf_unregister_net_hook(ns.0.get(), &self.hook) };
 
             // `self.hook.priv_` was initialised during registration to a value returned from
-            // `T::Data::into_pointer`, so it is ok to convert back here.
-            unsafe { T::Data::from_pointer(self.hook.priv_) };
+            // `T::Data::into_foreign`, so it is ok to convert back here.
+            unsafe { T::Data::from_foreign(self.hook.priv_) };
         }
     }
 }

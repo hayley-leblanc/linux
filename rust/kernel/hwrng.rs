@@ -8,7 +8,7 @@ use alloc::{boxed::Box, slice::from_raw_parts_mut};
 
 use crate::{
     bindings, error::code::*, error::from_kernel_result, str::CString, to_result,
-    types::PointerWrapper, Result, ScopeGuard,
+    types::ForeignOwnable, Result, ScopeGuard,
 };
 use macros::vtable;
 
@@ -18,10 +18,10 @@ use core::{cell::UnsafeCell, fmt, marker::PhantomData, pin::Pin};
 #[vtable]
 pub trait Operations {
     /// The pointer type that will be used to hold user-defined data type.
-    type Data: PointerWrapper + Send + Sync = ();
+    type Data: ForeignOwnable + Send + Sync = ();
 
     /// Initialization callback, can be left undefined.
-    fn init(_data: <Self::Data as PointerWrapper>::Borrowed<'_>) -> Result {
+    fn init(_data: <Self::Data as ForeignOwnable>::Borrowed<'_>) -> Result {
         Err(EINVAL)
     }
 
@@ -32,7 +32,7 @@ pub trait Operations {
     /// Drivers can fill up to max bytes of data into the buffer.
     /// The buffer is aligned for any type and its size is a multiple of 4 and >= 32 bytes.
     fn read(
-        data: <Self::Data as PointerWrapper>::Borrowed<'_>,
+        data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         buffer: &mut [u8],
         wait: bool,
     ) -> Result<u32>;
@@ -87,11 +87,11 @@ impl<T: Operations> Registration<T> {
             return Err(EINVAL);
         }
 
-        let data_pointer = data.into_pointer();
+        let data_pointer = data.into_foreign();
 
-        // SAFETY: `data_pointer` comes from the call to `data.into_pointer()` above.
+        // SAFETY: `data_pointer` comes from the call to `data.into_foreign()` above.
         let guard = ScopeGuard::new(|| unsafe {
-            T::Data::from_pointer(data_pointer);
+            T::Data::from_foreign(data_pointer);
         });
 
         let name = CString::try_from_fmt(name)?;
@@ -159,7 +159,7 @@ impl<T: Operations> Registration<T> {
         // SAFETY: `priv` private data field was initialized during creation of
         // the `bindings::hwrng` in `Self::init_hwrng` method. This callback is only
         // called once the driver is registered.
-        let data = unsafe { T::Data::from_pointer((*rng).priv_ as *const _) };
+        let data = unsafe { T::Data::from_foreign((*rng).priv_ as *const _) };
         T::cleanup(data);
     }
 

@@ -27,79 +27,42 @@ pub mod code {
     }
 
     declare_err!(EPERM, "Operation not permitted.");
-
     declare_err!(ENOENT, "No such file or directory.");
-
     declare_err!(ESRCH, "No such process.");
-
     declare_err!(EINTR, "Interrupted system call.");
-
     declare_err!(EIO, "I/O error.");
-
     declare_err!(ENXIO, "No such device or address.");
-
     declare_err!(E2BIG, "Argument list too long.");
-
     declare_err!(ENOEXEC, "Exec format error.");
-
     declare_err!(EBADF, "Bad file number.");
-
     declare_err!(ECHILD, "Exec format error.");
-
     declare_err!(EAGAIN, "Try again.");
-
     declare_err!(ENOMEM, "Out of memory.");
-
     declare_err!(EACCES, "Permission denied.");
-
     declare_err!(EFAULT, "Bad address.");
-
     declare_err!(ENOTBLK, "Block device required.");
-
     declare_err!(EBUSY, "Device or resource busy.");
-
     declare_err!(EEXIST, "File exists.");
-
     declare_err!(EXDEV, "Cross-device link.");
-
     declare_err!(ENODEV, "No such device.");
-
     declare_err!(ENOTDIR, "Not a directory.");
-
     declare_err!(EISDIR, "Is a directory.");
-
     declare_err!(EINVAL, "Invalid argument.");
-
     declare_err!(ENFILE, "File table overflow.");
-
     declare_err!(EMFILE, "Too many open files.");
-
     declare_err!(ENOTTY, "Not a typewriter.");
-
     declare_err!(ETXTBSY, "Text file busy.");
-
     declare_err!(EFBIG, "File too large.");
-
     declare_err!(ENOSPC, "No space left on device.");
-
     declare_err!(ESPIPE, "Illegal seek.");
-
     declare_err!(EROFS, "Read-only file system.");
-
     declare_err!(EMLINK, "Too many links.");
-
     declare_err!(EPIPE, "Broken pipe.");
-
     declare_err!(EDOM, "Math argument out of domain of func.");
-
     declare_err!(ERANGE, "Math result not representable.");
-
     declare_err!(EDEADLK, "Resource deadlock would occur");
-
     declare_err!(ENAMETOOLONG, "File name too long");
-
     declare_err!(ENOLCK, "No record locks available");
-
     declare_err!(
         ENOSYS,
         "Invalid system call number.",
@@ -110,201 +73,103 @@ pub mod code {
         "failures due to attempts to use a nonexistent syscall, syscall",
         "implementations should refrain from returning [`ENOSYS`]."
     );
-
     declare_err!(ENOTEMPTY, "Directory not empty.");
-
     declare_err!(ELOOP, "Too many symbolic links encountered.");
-
     declare_err!(EWOULDBLOCK, "Operation would block.");
-
     declare_err!(ENOMSG, "No message of desired type.");
-
     declare_err!(EIDRM, "Identifier removed.");
-
     declare_err!(ECHRNG, "Channel number out of range.");
-
     declare_err!(EL2NSYNC, "Level 2 not synchronized.");
-
     declare_err!(EL3HLT, "Level 3 halted.");
-
     declare_err!(EL3RST, "Level 3 reset.");
-
     declare_err!(ELNRNG, "Link number out of range.");
-
     declare_err!(EUNATCH, "Protocol driver not attached.");
-
     declare_err!(ENOCSI, "No CSI structure available.");
-
     declare_err!(EL2HLT, "Level 2 halted.");
-
     declare_err!(EBADE, "Invalid exchange.");
-
     declare_err!(EBADR, "Invalid request descriptor.");
-
     declare_err!(EXFULL, "Exchange full.");
-
     declare_err!(ENOANO, "No anode.");
-
     declare_err!(EBADRQC, "Invalid request code.");
-
     declare_err!(EBADSLT, "Invalid slot.");
-
     declare_err!(EDEADLOCK, "Resource deadlock would occur.");
-
     declare_err!(EBFONT, "Bad font file format.");
-
     declare_err!(ENOSTR, "Device not a stream.");
-
     declare_err!(ENODATA, "No data available.");
-
     declare_err!(ETIME, "Timer expired.");
-
     declare_err!(ENOSR, "Out of streams resources.");
-
     declare_err!(ENONET, "Machine is not on the network.");
-
     declare_err!(ENOPKG, "Package not installed.");
-
     declare_err!(EREMOTE, "Object is remote.");
-
     declare_err!(ENOLINK, "Link has been severed.");
-
     declare_err!(EADV, "Advertise error.");
-
     declare_err!(ESRMNT, "Srmount error.");
-
     declare_err!(ECOMM, "Communication error on send.");
-
     declare_err!(EPROTO, "Protocol error.");
-
     declare_err!(EMULTIHOP, "Multihop attempted.");
-
     declare_err!(EDOTDOT, "RFS specific error.");
-
     declare_err!(EBADMSG, "Not a data message.");
-
     declare_err!(EOVERFLOW, "Value too large for defined data type.");
-
     declare_err!(ENOTUNIQ, "Name not unique on network.");
-
     declare_err!(EBADFD, "File descriptor in bad state.");
-
     declare_err!(EREMCHG, "Remote address changed.");
-
     declare_err!(ELIBACC, "Can not access a needed shared library.");
-
     declare_err!(ELIBBAD, "Accessing a corrupted shared library.");
-
     declare_err!(ELIBSCN, ".lib section in a.out corrupted.");
-
     declare_err!(ELIBMAX, "Attempting to link in too many shared libraries.");
-
     declare_err!(ELIBEXEC, "Cannot exec a shared library directly.");
-
     declare_err!(EILSEQ, "Illegal byte sequence.");
-
     declare_err!(ERESTART, "Interrupted system call should be restarted.");
-
     declare_err!(ESTRPIPE, "Streams pipe error.");
-
     declare_err!(EUSERS, "Too many users.");
-
     declare_err!(ENOTSOCK, "Socket operation on non-socket.");
-
     declare_err!(EDESTADDRREQ, "Destination address required.");
-
     declare_err!(EMSGSIZE, "Message too long.");
-
     declare_err!(EPROTOTYPE, "Protocol wrong type for socket.");
-
     declare_err!(ENOPROTOOPT, "Protocol not available.");
-
     declare_err!(EPROTONOSUPPORT, "Protocol not supported.");
-
     declare_err!(ESOCKTNOSUPPORT, "Socket type not supported.");
-
     declare_err!(EOPNOTSUPP, "Operation not supported on transport endpoint.");
-
     declare_err!(EPFNOSUPPORT, "Protocol family not supported.");
-
     declare_err!(EAFNOSUPPORT, "Address family not supported by protocol.");
-
     declare_err!(EADDRINUSE, "Address already in use.");
-
     declare_err!(EADDRNOTAVAIL, "Cannot assign requested address.");
-
     declare_err!(ENETDOWN, "Network is down.");
-
     declare_err!(ENETUNREACH, "Network is unreachable.");
-
     declare_err!(ENETRESET, "Network dropped connection because of reset.");
-
     declare_err!(ECONNABORTED, "Software caused connection abort.");
-
     declare_err!(ECONNRESET, "Connection reset by peer.");
-
     declare_err!(ENOBUFS, "No buffer space available.");
-
     declare_err!(EISCONN, "Transport endpoint is already connected.");
-
     declare_err!(ENOTCONN, "Transport endpoint is not connected.");
-
     declare_err!(ESHUTDOWN, "Cannot send after transport endpoint shutdown.");
-
     declare_err!(ETOOMANYREFS, "Too many references: cannot splice.");
-
     declare_err!(ETIMEDOUT, "Connection timed out.");
-
     declare_err!(ECONNREFUSED, "Connection refused.");
-
     declare_err!(EHOSTDOWN, "Host is down.");
-
     declare_err!(EHOSTUNREACH, "No route to host.");
-
     declare_err!(EALREADY, "Operation already in progress.");
-
     declare_err!(EINPROGRESS, "Operation now in progress.");
-
     declare_err!(ESTALE, "Stale file handle.");
-
     declare_err!(EUCLEAN, "Structure needs cleaning.");
-
     declare_err!(ENOTNAM, "Not a XENIX named type file.");
-
     declare_err!(ENAVAIL, "No XENIX semaphores available.");
-
     declare_err!(EISNAM, "Is a named type file.");
-
     declare_err!(EREMOTEIO, "Remote I/O error.");
-
     declare_err!(EDQUOT, "Quota exceeded.");
-
     declare_err!(ENOMEDIUM, "No medium found.");
-
     declare_err!(EMEDIUMTYPE, "Wrong medium type.");
-
     declare_err!(ECANCELED, "Operation Canceled.");
-
     declare_err!(ENOKEY, "Required key not available.");
-
     declare_err!(EKEYEXPIRED, "Key has expired.");
-
     declare_err!(EKEYREVOKED, "Key has been revoked.");
-
     declare_err!(EKEYREJECTED, "Key was rejected by service.");
-
     declare_err!(EOWNERDEAD, "Owner died.", "", "For robust mutexes.");
-
     declare_err!(ENOTRECOVERABLE, "State not recoverable.");
-
     declare_err!(ERFKILL, "Operation not possible due to RF-kill.");
-
     declare_err!(EHWPOISON, "Memory page has hardware error.");
-
     declare_err!(ERESTARTSYS, "Restart the system call.");
-
     declare_err!(ENOTSUPP, "Operation is not supported.");
-
     declare_err!(ENOPARAM, "Parameter not supported.");
 }
 
@@ -392,6 +257,12 @@ impl fmt::Debug for Error {
     }
 }
 
+impl From<AllocError> for Error {
+    fn from(_: AllocError) -> Error {
+        code::ENOMEM
+    }
+}
+
 impl From<TryFromIntError> for Error {
     fn from(_: TryFromIntError) -> Error {
         code::EINVAL
@@ -449,12 +320,6 @@ impl From<core::convert::Infallible> for Error {
 /// it should still be modeled as returning a `Result` rather than
 /// just an [`Error`].
 pub type Result<T = ()> = core::result::Result<T, Error>;
-
-impl From<AllocError> for Error {
-    fn from(_: AllocError) -> Error {
-        code::ENOMEM
-    }
-}
 
 // # Invariant: `-bindings::MAX_ERRNO` fits in an `i16`.
 crate::static_assert!(bindings::MAX_ERRNO <= -(i16::MIN as i32) as u32);
@@ -548,6 +413,7 @@ pub(crate) fn from_kernel_err_ptr<T>(ptr: *mut T) -> Result<*mut T> {
         //
         // SAFETY: `IS_ERR()` ensures `err` is a
         // negative value greater-or-equal to `-bindings::MAX_ERRNO`.
+        #[cfg_attr(CONFIG_ARM, allow(clippy::unnecessary_cast))]
         return Err(unsafe { Error::from_kernel_errno_unchecked(err as i32) });
     }
     Ok(ptr)

@@ -7,7 +7,7 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-20.04
-    container: ghcr.io/rust-for-linux/ci:Rust-1.62.0-2
+    container: ghcr.io/rust-for-linux/ci:Rust-1.66.0
     timeout-minutes: 25
 
     strategy:
@@ -95,13 +95,13 @@ jobs:
 
     steps:
       # Setup: checkout
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       # Setup: Store matrix name
       - run: echo 'MATRIX_NAME=${{ matrix.arch }}-${{ matrix.toolchain }}-${{ matrix.config }}' >> $GITHUB_ENV
 
       # Setup: Github cache
-      - uses: actions/cache@v2
+      - uses: actions/cache@v3
         with:
           path: /root/.ccache
           key: ${{ env.MATRIX_NAME }}-ccache-${{ github.run_id }}
@@ -267,7 +267,7 @@ jobs:
 
       # Check
       - run: |
-          grep '] ok 1 - rust_kernel_doctests$' qemu-stdout.log
+          grep '] ok 1 rust_kernel_doctests$' qemu-stdout.log
 
       - run: |
           grep '] rust_minimal: Rust minimal sample (init)$'     qemu-stdout.log
@@ -375,7 +375,6 @@ jobs:
           ls -l \
             ${{ env.BUILD_DIR }}samples/rust/*.o \
             ${{ env.BUILD_DIR }}samples/rust/*.ko \
-            ${{ env.BUILD_DIR }}drivers/android/rust_binder.o \
             ${{ env.BUILD_DIR }}rust/*.o \
             ${{ env.BUILD_DIR }}vmlinux \
             ${{ env.BUILD_DIR }}${{ env.IMAGE_PATH }}
@@ -383,7 +382,6 @@ jobs:
           .github/workflows/size.sh \
             ${{ env.BUILD_DIR }}samples/rust/*.o \
             ${{ env.BUILD_DIR }}samples/rust/*.ko \
-            ${{ env.BUILD_DIR }}drivers/android/rust_binder.o \
             ${{ env.BUILD_DIR }}rust/*.o \
             ${{ env.BUILD_DIR }}vmlinux
 

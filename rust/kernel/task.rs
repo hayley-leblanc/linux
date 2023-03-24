@@ -5,7 +5,7 @@
 //! C header: [`include/linux/sched.h`](../../../../include/linux/sched.h).
 
 use crate::{
-    bindings, c_str, error::from_kernel_err_ptr, types::PointerWrapper, ARef, AlwaysRefCounted,
+    bindings, c_str, error::from_kernel_err_ptr, types::ForeignOwnable, ARef, AlwaysRefCounted,
     Result, ScopeGuard,
 };
 use alloc::boxed::Box;
@@ -152,16 +152,16 @@ impl Task {
         ) -> core::ffi::c_int {
             // SAFETY: The thread argument is always a `Box<T>` because it is only called via the
             // thread creation below.
-            let bfunc = unsafe { Box::<T>::from_pointer(arg) };
+            let bfunc = unsafe { Box::<T>::from_foreign(arg) };
             bfunc();
             0
         }
 
-        let arg = Box::try_new(func)?.into_pointer();
+        let arg = Box::try_new(func)?.into_foreign();
 
-        // SAFETY: `arg` was just created with a call to `into_pointer` above.
+        // SAFETY: `arg` was just created with a call to `into_foreign` above.
         let guard = ScopeGuard::new(|| unsafe {
-            Box::<T>::from_pointer(arg);
+            Box::<T>::from_foreign(arg);
         });
 
         // SAFETY: The function pointer is always valid (as long as the module remains loaded).

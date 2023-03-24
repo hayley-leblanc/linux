@@ -15,7 +15,7 @@
 //!
 //! [`Arc`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
 
-use crate::{bindings, error::code::*, Error, Opaque, Result};
+use crate::{bindings, error::code::*, types::ForeignOwnable, Error, Opaque, Result};
 use alloc::{
     alloc::{alloc, dealloc},
     vec::Vec,
@@ -39,6 +39,89 @@ use core::{
 ///
 /// The reference count on an instance of [`Arc`] is always non-zero.
 /// The object pointed to by [`Arc`] is always pinned.
+///
+/// # Examples
+///
+/// ```
+/// use kernel::sync::Arc;
+///
+/// struct Example {
+///     a: u32,
+///     b: u32,
+/// }
+///
+/// // Create a ref-counted instance of `Example`.
+/// let obj = Arc::try_new(Example { a: 10, b: 20 })?;
+///
+/// // Get a new pointer to `obj` and increment the refcount.
+/// let cloned = obj.clone();
+///
+/// // Assert that both `obj` and `cloned` point to the same underlying object.
+/// assert!(core::ptr::eq(&*obj, &*cloned));
+///
+/// // Destroy `obj` and decrement its refcount.
+/// drop(obj);
+///
+/// // Check that the values are still accessible through `cloned`.
+/// assert_eq!(cloned.a, 10);
+/// assert_eq!(cloned.b, 20);
+///
+/// // The refcount drops to zero when `cloned` goes out of scope, and the memory is freed.
+///
+/// # Ok::<(), Error>(())
+/// ```
+///
+/// Using `Arc<T>` as the type of `self`:
+///
+/// ```
+/// use kernel::sync::Arc;
+///
+/// struct Example {
+///     a: u32,
+///     b: u32,
+/// }
+///
+/// impl Example {
+///     fn take_over(self: Arc<Self>) {
+///         // ...
+///     }
+///
+///     fn use_reference(self: &Arc<Self>) {
+///         // ...
+///     }
+/// }
+///
+/// let obj = Arc::try_new(Example { a: 10, b: 20 })?;
+/// obj.use_reference();
+/// obj.take_over();
+///
+/// # Ok::<(), Error>(())
+/// ```
+///
+/// Coercion from `Arc<Example>` to `Arc<dyn MyTrait>`:
+///
+/// ```
+/// use kernel::sync::{Arc, ArcBorrow};
+///
+/// trait MyTrait {
+///     // Trait has a function whose `self` type is `Arc<Self>`.
+///     fn example1(self: Arc<Self>) {}
+///
+///     // Trait has a function whose `self` type is `ArcBorrow<'_, Self>`.
+///     fn example2(self: ArcBorrow<'_, Self>) {}
+/// }
+///
+/// struct Example;
+/// impl MyTrait for Example {}
+///
+/// // `obj` has type `Arc<Example>`.
+/// let obj: Arc<Example> = Arc::try_new(Example)?;
+///
+/// // `coerced` has type `Arc<dyn MyTrait>`.
+/// let coerced: Arc<dyn MyTrait> = obj;
+///
+/// # Ok::<(), Error>(())
+/// ```
 pub struct Arc<T: ?Sized> {
     ptr: NonNull<ArcInner<T>>,
     _p: PhantomData<ArcInner<T>>,
@@ -53,9 +136,6 @@ struct ArcInner<T: ?Sized> {
 // This is to allow [`Arc`] (and variants) to be used as the type of `self`.
 impl<T: ?Sized> core::ops::Receiver for Arc<T> {}
 
-// This is to allow [`ArcBorrow`] (and variants) to be used as the type of `self`.
-impl<T: ?Sized> core::ops::Receiver for ArcBorrow<'_, T> {}
-
 // This is to allow coercion from `Arc<T>` to `Arc<U>` if `T` can be converted to the
 // dynamically-sized type (DST) `U`.
 impl<T: ?Sized + Unsize<U>, U: ?Sized> core::ops::CoerceUnsized<Arc<U>> for Arc<T> {}
@@ -65,13 +145,13 @@ impl<T: ?Sized + Unsize<U>, U: ?Sized> core::ops::DispatchFromDyn<Arc<U>> for Ar
 
 // SAFETY: It is safe to send `Arc<T>` to another thread when the underlying `T` is `Sync` because
 // it effectively means sharing `&T` (which is safe because `T` is `Sync`); additionally, it needs
-// `T` to be `Send` because any thread that has a `Arc<T>` may ultimately access `T` directly, for
+// `T` to be `Send` because any thread that has an `Arc<T>` may ultimately access `T` directly, for
 // example, when the reference count reaches zero and `T` is dropped.
 unsafe impl<T: ?Sized + Sync + Send> Send for Arc<T> {}
 
-// SAFETY: It is safe to send `&Arc<T>` to another thread when the underlying `T` is `Sync` for
-// the same reason as above. `T` needs to be `Send` as well because a thread can clone a `&Arc<T>`
-// into a `Arc<T>`, which may lead to `T` being accessed by the same reasoning as above.
+// SAFETY: It is safe to send `&Arc<T>` to another thread when the underlying `T` is `Sync` for the
+// same reason as above. `T` needs to be `Send` as well because a thread can clone an `&Arc<T>`
+// into an `Arc<T>`, which may lead to `T` being accessed by the same reasoning as above.
 unsafe impl<T: ?Sized + Sync + Send> Sync for Arc<T> {}
 
 impl<T> Arc<T> {
@@ -95,42 +175,6 @@ impl<T> Arc<T> {
         // SAFETY: We just created `inner` with a reference count of 1, which is owned by the new
         // `Arc` object.
         Ok(unsafe { Self::from_inner(inner) })
-    }
-
-    /// Deconstructs a [`Arc`] object into a `usize`.
-    ///
-    /// It can be reconstructed once via [`Arc::from_usize`].
-    pub fn into_usize(obj: Self) -> usize {
-        ManuallyDrop::new(obj).ptr.as_ptr() as _
-    }
-
-    /// Borrows a [`Arc`] instance previously deconstructed via [`Arc::into_usize`].
-    ///
-    /// # Safety
-    ///
-    /// `encoded` must have been returned by a previous call to [`Arc::into_usize`]. Additionally,
-    /// [`Arc::from_usize`] can only be called after *all* instances of [`ArcBorrow`] have been
-    /// dropped.
-    pub unsafe fn borrow_usize<'a>(encoded: usize) -> ArcBorrow<'a, T> {
-        // SAFETY: By the safety requirement of this function, we know that `encoded` came from
-        // a previous call to `Arc::into_usize`.
-        let inner = NonNull::new(encoded as *mut ArcInner<T>).unwrap();
-
-        // SAFETY: The safety requirements ensure that the object remains alive for the lifetime of
-        // the returned value. There is no way to create mutable references to the object.
-        unsafe { ArcBorrow::new(inner) }
-    }
-
-    /// Recreates a [`Arc`] instance previously deconstructed via [`Arc::into_usize`].
-    ///
-    /// # Safety
-    ///
-    /// `encoded` must have been returned by a previous call to [`Arc::into_usize`]. Additionally,
-    /// it can only be called once for each previous call to [`Arc::into_usize`].
-    pub unsafe fn from_usize(encoded: usize) -> Self {
-        // SAFETY: By the safety invariants we know that `encoded` came from `Arc::into_usize`, so
-        // the reference count held then will be owned by the new `Arc` object.
-        unsafe { Self::from_inner(NonNull::new(encoded as _).unwrap()) }
     }
 }
 
@@ -196,9 +240,36 @@ impl<T: ?Sized> Arc<T> {
     /// receiver), but we have a [`Arc`] instead. Getting a [`ArcBorrow`] is free when optimised.
     #[inline]
     pub fn as_arc_borrow(&self) -> ArcBorrow<'_, T> {
-        // SAFETY: The constraint that lifetime of the shared reference must outlive that of
-        // the returned `ArcBorrow` ensures that the object remains alive.
+        // SAFETY: The constraint that the lifetime of the shared reference must outlive that of
+        // the returned `ArcBorrow` ensures that the object remains alive and that no mutable
+        // reference can be created.
         unsafe { ArcBorrow::new(self.ptr) }
+    }
+}
+
+impl<T: 'static> ForeignOwnable for Arc<T> {
+    type Borrowed<'a> = ArcBorrow<'a, T>;
+
+    fn into_foreign(self) -> *const core::ffi::c_void {
+        ManuallyDrop::new(self).ptr.as_ptr() as _
+    }
+
+    unsafe fn borrow<'a>(ptr: *const core::ffi::c_void) -> ArcBorrow<'a, T> {
+        // SAFETY: By the safety requirement of this function, we know that `ptr` came from
+        // a previous call to `Arc::into_foreign`.
+        let inner = NonNull::new(ptr as *mut ArcInner<T>).unwrap();
+
+        // SAFETY: The safety requirements of `from_foreign` ensure that the object remains alive
+        // for the lifetime of the returned value. Additionally, the safety requirements of
+        // `ForeignOwnable::borrow_mut` ensure that no new mutable references are created.
+        unsafe { ArcBorrow::new(inner) }
+    }
+
+    unsafe fn from_foreign(ptr: *const core::ffi::c_void) -> Self {
+        // SAFETY: By the safety requirement of this function, we know that `ptr` came from
+        // a previous call to `Arc::into_foreign`, which guarantees that `ptr` is valid and
+        // holds a reference count increment that is transferrable to us.
+        unsafe { Self::from_inner(NonNull::new(ptr as _).unwrap()) }
     }
 }
 
@@ -303,14 +374,6 @@ impl<T: ?Sized> From<UniqueArc<T>> for Arc<T> {
     }
 }
 
-impl<T: ?Sized> From<UniqueArc<T>> for Pin<UniqueArc<T>> {
-    fn from(obj: UniqueArc<T>) -> Self {
-        // SAFETY: It is not possible to move/replace `T` inside a `Pin<UniqueArc<T>>` (unless `T`
-        // is `Unpin`), so it is ok to convert it to `Pin<UniqueArc<T>>`.
-        unsafe { Pin::new_unchecked(obj) }
-    }
-}
-
 impl<T: ?Sized> From<Pin<UniqueArc<T>>> for Arc<T> {
     fn from(item: Pin<UniqueArc<T>>) -> Self {
         // SAFETY: The type invariants of `Arc` guarantee that the data is pinned.
@@ -318,15 +381,76 @@ impl<T: ?Sized> From<Pin<UniqueArc<T>>> for Arc<T> {
     }
 }
 
-/// A borrowed [`Arc`] with manually-managed lifetime.
+/// A borrowed reference to an [`Arc`] instance.
+///
+/// For cases when one doesn't ever need to increment the refcount on the allocation, it is simpler
+/// to use just `&T`, which we can trivially get from an `Arc<T>` instance.
+///
+/// However, when one may need to increment the refcount, it is preferable to use an `ArcBorrow<T>`
+/// over `&Arc<T>` because the latter results in a double-indirection: a pointer (shared reference)
+/// to a pointer (`Arc<T>`) to the object (`T`). An [`ArcBorrow`] eliminates this double
+/// indirection while still allowing one to increment the refcount and getting an `Arc<T>` when/if
+/// needed.
 ///
 /// # Invariants
 ///
-/// There are no mutable references to the underlying [`Arc`], and it remains valid for the lifetime
-/// of the [`ArcBorrow`] instance.
+/// There are no mutable references to the underlying [`Arc`], and it remains valid for the
+/// lifetime of the [`ArcBorrow`] instance.
+///
+/// # Example
+///
+/// ```
+/// use kernel::sync::{Arc, ArcBorrow};
+///
+/// struct Example;
+///
+/// fn do_something(e: ArcBorrow<'_, Example>) -> Arc<Example> {
+///     e.into()
+/// }
+///
+/// let obj = Arc::try_new(Example)?;
+/// let cloned = do_something(obj.as_arc_borrow());
+///
+/// // Assert that both `obj` and `cloned` point to the same underlying object.
+/// assert!(core::ptr::eq(&*obj, &*cloned));
+///
+/// # Ok::<(), Error>(())
+/// ```
+///
+/// Using `ArcBorrow<T>` as the type of `self`:
+///
+/// ```
+/// use kernel::sync::{Arc, ArcBorrow};
+///
+/// struct Example {
+///     a: u32,
+///     b: u32,
+/// }
+///
+/// impl Example {
+///     fn use_reference(self: ArcBorrow<'_, Self>) {
+///         // ...
+///     }
+/// }
+///
+/// let obj = Arc::try_new(Example { a: 10, b: 20 })?;
+/// obj.as_arc_borrow().use_reference();
+///
+/// # Ok::<(), Error>(())
+/// ```
 pub struct ArcBorrow<'a, T: ?Sized + 'a> {
     inner: NonNull<ArcInner<T>>,
     _p: PhantomData<&'a ()>,
+}
+
+// This is to allow [`ArcBorrow`] (and variants) to be used as the type of `self`.
+impl<T: ?Sized> core::ops::Receiver for ArcBorrow<'_, T> {}
+
+// This is to allow `ArcBorrow<U>` to be dispatched on when `ArcBorrow<T>` can be coerced into
+// `ArcBorrow<U>`.
+impl<T: ?Sized + Unsize<U>, U: ?Sized> core::ops::DispatchFromDyn<ArcBorrow<'_, U>>
+    for ArcBorrow<'_, T>
+{
 }
 
 impl<T: ?Sized> Clone for ArcBorrow<'_, T> {
@@ -343,8 +467,8 @@ impl<T: ?Sized> ArcBorrow<'_, T> {
     /// # Safety
     ///
     /// Callers must ensure the following for the lifetime of the returned [`ArcBorrow`] instance:
-    /// 1. That `obj` remains valid;
-    /// 2. That no mutable references to `obj` are created.
+    /// 1. That `inner` remains valid;
+    /// 2. That no mutable references to `inner` are created.
     unsafe fn new(inner: NonNull<ArcInner<T>>) -> Self {
         // INVARIANT: The safety requirements guarantee the invariants.
         Self {
@@ -377,7 +501,7 @@ impl<T: ?Sized> Deref for ArcBorrow<'_, T> {
 
 /// A refcounted object that is known to have a refcount of 1.
 ///
-/// It is mutable and can be converted to a [`Arc`] so that it can be shared.
+/// It is mutable and can be converted to an [`Arc`] so that it can be shared.
 ///
 /// # Invariants
 ///
@@ -385,7 +509,7 @@ impl<T: ?Sized> Deref for ArcBorrow<'_, T> {
 ///
 /// # Examples
 ///
-/// In the following example, we make changes to the inner object before turning it into a
+/// In the following example, we make changes to the inner object before turning it into an
 /// `Arc<Test>` object (after which point, it cannot be mutated directly). Note that `x.into()`
 /// cannot fail.
 ///
@@ -404,7 +528,7 @@ impl<T: ?Sized> Deref for ArcBorrow<'_, T> {
 ///     Ok(x.into())
 /// }
 ///
-/// # test();
+/// # test().unwrap();
 /// ```
 ///
 /// In the following example we first allocate memory for a ref-counted `Example` but we don't
@@ -425,7 +549,7 @@ impl<T: ?Sized> Deref for ArcBorrow<'_, T> {
 ///     Ok(x.write(Example { a: 10, b: 20 }).into())
 /// }
 ///
-/// # test();
+/// # test().unwrap();
 /// ```
 ///
 /// In the last example below, the caller gets a pinned instance of `Example` while converting to
@@ -447,7 +571,7 @@ impl<T: ?Sized> Deref for ArcBorrow<'_, T> {
 ///     Ok(pinned.into())
 /// }
 ///
-/// # test();
+/// # test().unwrap();
 /// ```
 pub struct UniqueArc<T: ?Sized> {
     inner: Arc<T>,
@@ -481,6 +605,14 @@ impl<T> UniqueArc<MaybeUninit<T>> {
             // dropped). The types are compatible because `MaybeUninit<T>` is compatible with `T`.
             inner: unsafe { Arc::from_inner(inner.cast()) },
         }
+    }
+}
+
+impl<T: ?Sized> From<UniqueArc<T>> for Pin<UniqueArc<T>> {
+    fn from(obj: UniqueArc<T>) -> Self {
+        // SAFETY: It is not possible to move/replace `T` inside a `Pin<UniqueArc<T>>` (unless `T`
+        // is `Unpin`), so it is ok to convert it to `Pin<UniqueArc<T>>`.
+        unsafe { Pin::new_unchecked(obj) }
     }
 }
 

@@ -16,15 +16,12 @@
 #![feature(associated_type_defaults)]
 #![feature(coerce_unsized)]
 #![feature(const_mut_refs)]
-#![feature(const_ptr_offset_from)]
 #![feature(const_refs_to_cell)]
 #![feature(const_trait_impl)]
-#![feature(core_ffi_c)]
 #![feature(c_size_t)]
 #![feature(dispatch_from_dyn)]
 #![feature(doc_cfg)]
 #![feature(duration_constants)]
-#![feature(generic_associated_types)]
 #![feature(ptr_metadata)]
 #![feature(receiver_trait)]
 #![feature(unsize)]
@@ -37,10 +34,19 @@ compile_error!("Missing kernel configuration for conditional compilation");
 #[cfg(not(test))]
 #[cfg(not(testlib))]
 mod allocator;
+mod build_assert;
+pub mod error;
+pub mod prelude;
+pub mod print;
+mod static_assert;
+#[doc(hidden)]
+pub mod std_vendor;
+pub mod str;
+pub mod sync;
+pub mod types;
 
 #[doc(hidden)]
 pub use bindings;
-
 pub use macros;
 
 #[cfg(CONFIG_ARM_AMBA)]
@@ -52,7 +58,6 @@ pub mod cred;
 pub mod delay;
 pub mod device;
 pub mod driver;
-pub mod error;
 pub mod file;
 pub mod fs;
 pub mod gpio;
@@ -68,7 +73,6 @@ pub mod pages;
 pub mod power;
 pub mod revocable;
 pub mod security;
-pub mod str;
 pub mod task;
 pub mod workqueue;
 
@@ -80,14 +84,7 @@ pub mod unsafe_list;
 #[doc(hidden)]
 pub mod module_param;
 
-mod build_assert;
-pub mod prelude;
-pub mod print;
 pub mod random;
-mod static_assert;
-#[doc(hidden)]
-pub mod std_vendor;
-pub mod sync;
 
 #[cfg(any(CONFIG_SYSCTL, doc))]
 #[doc(cfg(CONFIG_SYSCTL))]
@@ -99,7 +96,6 @@ pub mod io_mem;
 pub mod iov_iter;
 pub mod of;
 pub mod platform;
-mod types;
 pub mod user_ptr;
 
 #[cfg(CONFIG_KUNIT)]
@@ -111,7 +107,7 @@ pub use build_error::build_error;
 pub use crate::error::{to_result, Error, Result};
 pub use crate::types::{
     bit, bits_iter, ARef, AlwaysRefCounted, Bit, Bool, Either, Either::Left, Either::Right, False,
-    Mode, Opaque, PointerWrapper, ScopeGuard, True,
+    ForeignOwnable, Mode, Opaque, ScopeGuard, True,
 };
 
 use core::marker::PhantomData;
@@ -121,7 +117,7 @@ use core::marker::PhantomData;
 /// [`PAGE_SHIFT`]: ../../../include/asm-generic/page.h
 pub const PAGE_SIZE: usize = 1 << bindings::PAGE_SHIFT;
 
-/// Prefix to appear before log messages printed from within the kernel crate.
+/// Prefix to appear before log messages printed from within the `kernel` crate.
 const __LOG_PREFIX: &[u8] = b"rust_kernel\0";
 
 /// The top level entrypoint to implementing a kernel module.
