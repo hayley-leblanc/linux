@@ -76,6 +76,8 @@ impl inode::Operations for InodeOps {
     }
 
     fn link(old_dentry: &fs::DEntry, dir: &mut fs::INode, dentry: &fs::DEntry) -> Result<i32> {
+        let inode = dentry.d_inode();
+        unsafe { bindings::ihold(inode) };
         let sb = dir.i_sb();
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
@@ -85,19 +87,21 @@ impl inode::Operations for InodeOps {
 
         hayleyfs_link(sbi, old_dentry, dir, dentry)?;
 
-        // TODO: need to increment VFS inode's link count, update its ctime
-        // and d_instantiate the inode with the dentry
-
-        dir.update_ctime();
-        dir.inc_nlink();
-        // TODO: safe wrapper for d_instantiate
+        // TODO: safe wrappers
         unsafe {
+            let ctime = bindings::current_time(inode);
+            (*inode).i_ctime = ctime;
+            bindings::inc_nlink(inode);
             bindings::d_instantiate(dentry.get_inner(), old_dentry.d_inode());
         }
+
+        // TODO: call even if hayleyfs_link fails
+        unsafe { bindings::iput(inode) };
 
         Ok(0)
     }
 
+    // TODO: ihold?
     fn mkdir(
         mnt_userns: *mut bindings::user_namespace,
         dir: &mut fs::INode,
@@ -136,6 +140,7 @@ impl inode::Operations for InodeOps {
 
     // TODO: if this unlink results in its dir page being emptied, we should
     // deallocate the dir page (at some point)
+    // TODO: ihold?
     fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
         let sb = dir.i_sb();
         // TODO: safety
