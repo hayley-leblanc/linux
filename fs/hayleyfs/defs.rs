@@ -66,6 +66,12 @@ pub(crate) enum InodeType {
     DIR,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum DropType {
+    Ok,
+    Panic,
+}
+
 pub(crate) trait PmObjWrapper {}
 
 /// Persistent super block

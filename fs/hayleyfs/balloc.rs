@@ -301,6 +301,7 @@ impl<'a, Op> DirPageWrapper<'a, InFlight, Op> {
 
 #[allow(dead_code)]
 #[repr(C)]
+#[derive(Debug)]
 pub(crate) struct DataPageHeader {
     page_type: PageType,
     ino: InodeNum,
@@ -352,12 +353,16 @@ impl DataPageHeader {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) struct DataPageWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
+    drop_type: DropType,
     page_no: PageNum,
-    page: &'a mut DataPageHeader,
+    page: Option<&'a mut DataPageHeader>,
 }
+
+impl<'a, State, Op> PmObjWrapper for DataPageWrapper<'a, State, Op> {}
 
 // TODO: we may be able to combine some DataPageWrapper methods with DirPageWrapper methods
 // by making them implement some shared trait - but need to be careful of dynamic dispatch.
@@ -369,11 +374,27 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
     }
 
     pub(crate) fn get_offset(&self) -> u64 {
-        self.page.offset
+        match &self.page {
+            Some(page) => page.offset,
+            None => panic!("ERROR: wrapper does not have a page"),
+        }
     }
 
     pub(crate) fn get_ino(&self) -> InodeNum {
-        self.page.ino
+        match &self.page {
+            Some(page) => page.ino,
+            None => panic!("ERROR: wrapper does not have a page"),
+        }
+    }
+
+    // TODO: should this be unsafe?
+    fn take(&mut self) -> Option<&'a mut DataPageHeader> {
+        self.page.take()
+    }
+
+    fn take_and_make_drop_safe(&mut self) -> Option<&'a mut DataPageHeader> {
+        self.drop_type = DropType::Ok;
+        self.page.take()
     }
 }
 
@@ -400,8 +421,9 @@ impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
         Ok(DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
+            drop_type: DropType::Ok,
             page_no,
-            page: ph,
+            page: Some(ph),
         })
     }
 }
@@ -420,8 +442,9 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
             Ok(Self {
                 state: PhantomData,
                 op: PhantomData,
+                drop_type: DropType::Ok,
                 page_no,
-                page: ph,
+                page: Some(ph),
             })
         }
     }
@@ -452,7 +475,7 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     }
 
     pub(crate) fn write_to_page(
-        self,
+        mut self,
         sbi: &SbInfo,
         reader: &mut impl IoBufferReader,
         offset: u64,
@@ -468,14 +491,15 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         // the read does succeed though
         unsafe { reader.read_raw_nt(ptr, len.try_into()?) }?;
         unsafe { flush_edge_cachelines(ptr as *mut ffi::c_void, len) }?;
-
+        let page = self.take();
         Ok((
             len,
             DataPageWrapper {
                 state: PhantomData,
                 op: PhantomData,
+                drop_type: self.drop_type,
                 page_no: self.page_no,
-                page: self.page,
+                page,
             },
         ))
     }
@@ -486,44 +510,164 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     }
 }
 
+impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
+    /// Safety: ph must be a valid DataPageHeader reference
+    unsafe fn wrap_page_to_unmap(ph: &'a mut DataPageHeader, page_no: PageNum) -> Result<Self> {
+        if !ph.is_initialized() {
+            Err(EPERM)
+        } else {
+            Ok(Self {
+                state: PhantomData,
+                op: PhantomData,
+                drop_type: DropType::Panic,
+                page_no,
+                page: Some(ph),
+            })
+        }
+    }
+
+    pub(crate) fn mark_to_unmap(sbi: &'a SbInfo, info: DataPageInfo) -> Result<Self> {
+        let page_no = info.get_page_no();
+        let ph = page_no_to_data_header(sbi, page_no)?;
+        unsafe { Self::wrap_page_to_unmap(ph, page_no) }
+    }
+
+    pub(crate) fn unmap(mut self) -> DataPageWrapper<'a, Dirty, ClearIno> {
+        match &mut self.page {
+            Some(page) => page.ino = 0,
+            None => panic!("ERROR: Wrapper has no page"),
+        };
+
+        let page = self.take_and_make_drop_safe();
+        // not ok to drop yet since we want to deallocate all of the
+        // pages before dropping them
+        DataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            drop_type: DropType::Panic,
+            page_no: self.page_no,
+            page,
+        }
+    }
+}
+
+impl<'a> DataPageWrapper<'a, Clean, ClearIno> {
+    /// Returns in Dealloc state, not Free state, because it's still not safe
+    /// to drop the pages until they are all persisted
+    /// TODO: return deallocated pages to the page allocator
+    pub(crate) fn dealloc(mut self) -> DataPageWrapper<'a, Dirty, Dealloc> {
+        match &mut self.page {
+            Some(page) => {
+                page.page_type = PageType::NONE;
+                page.ino = 0;
+                page.offset = 0;
+            }
+            None => panic!("ERROR: Wrapper has no page"),
+        }
+        let page = self.take_and_make_drop_safe();
+        DataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            drop_type: DropType::Panic,
+            page_no: self.page_no,
+            page,
+        }
+    }
+}
+
+impl<'a> DataPageWrapper<'a, Clean, Free> {
+    pub(crate) fn mark_pages_free(
+        mut pages: Vec<DataPageWrapper<'a, Clean, Dealloc>>,
+    ) -> Result<Vec<Self>> {
+        let mut free_vec = Vec::new();
+        for mut page in pages.drain(..) {
+            let inner = page.take_and_make_drop_safe();
+            free_vec.try_push(DataPageWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                drop_type: DropType::Ok,
+                page_no: page.page_no,
+                page: inner,
+            })?;
+        }
+        Ok(free_vec)
+    }
+}
+
 impl<'a> DataPageWrapper<'a, Clean, Alloc> {
     /// NOTE: this method returns a clean backpointer, since some pages
     /// will not actually need to be modified here. when they do, this method
     /// flushes and fences
     pub(crate) fn set_data_page_backpointer(
-        self,
+        mut self,
         inode: &InodeWrapper<'a, Clean, Start, RegInode>,
     ) -> DataPageWrapper<'a, Dirty, Writeable> {
-        self.page.ino = inode.get_ino();
+        match &mut self.page {
+            Some(page) => page.ino = inode.get_ino(),
+            None => panic!("ERROR: Wrapper does not have a page"),
+        };
+        let page = self.take();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
+            drop_type: self.drop_type,
             page_no: self.page_no,
-            page: self.page,
+            page,
         }
     }
 }
 
 impl<'a, Op> DataPageWrapper<'a, Dirty, Op> {
-    pub(crate) fn flush(self) -> DataPageWrapper<'a, InFlight, Op> {
-        flush_buffer(self.page, mem::size_of::<DataPageHeader>(), false);
+    pub(crate) fn flush(mut self) -> DataPageWrapper<'a, InFlight, Op> {
+        match &self.page {
+            Some(page) => flush_buffer(page, mem::size_of::<DataPageHeader>(), false),
+            None => panic!("ERROR: Wrapper does not have a page"),
+        };
+
+        let page = self.take();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
+            drop_type: self.drop_type,
             page_no: self.page_no,
-            page: self.page,
+            page,
         }
     }
 }
 
 impl<'a, Op> DataPageWrapper<'a, InFlight, Op> {
-    pub(crate) fn fence(self) -> DataPageWrapper<'a, Clean, Op> {
+    pub(crate) fn fence(mut self) -> DataPageWrapper<'a, Clean, Op> {
         sfence();
+        let page = self.take();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
+            drop_type: self.drop_type,
             page_no: self.page_no,
-            page: self.page,
+            page,
         }
+    }
+
+    /// Safety: this is only safe to use if it is immediately preceded or
+    /// followed by an sfence call. The ONLY place it should be used is in the
+    /// macros to fence all objects in a vector.
+    pub(crate) unsafe fn fence_unsafe(mut self) -> DataPageWrapper<'a, Clean, Op> {
+        let page = self.take();
+        DataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            drop_type: self.drop_type,
+            page_no: self.page_no,
+            page,
+        }
+    }
+}
+
+impl<'a, State, Op> Drop for DataPageWrapper<'a, State, Op> {
+    fn drop(&mut self) {
+        match self.drop_type {
+            DropType::Ok => {}
+            DropType::Panic => panic!("ERROR: attempted to drop an undroppable object"),
+        };
     }
 }

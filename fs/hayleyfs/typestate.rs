@@ -35,6 +35,8 @@ pub(crate) struct ClearIno {}
 pub(crate) struct DecLink {}
 #[derive(Debug)]
 pub(crate) struct Dealloc {}
+#[derive(Debug)]
+pub(crate) struct ToUnmap {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}

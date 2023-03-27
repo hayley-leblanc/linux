@@ -90,9 +90,14 @@ impl InoDentryMap for BasicInoDentryMap {
         None
     }
 
-    fn delete(&self, _ino: InodeNum, _dentry: DentryInfo) -> Result<()> {
-        // TODO
-        unimplemented!();
+    fn delete(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()> {
+        let map = Arc::clone(&self.map);
+        let mut map = map.lock();
+        let dentry_vec = map.get_mut(&ino);
+        if let Some(dentry_vec) = dentry_vec {
+            dentry_vec.retain(|x| x.virt_addr != dentry.virt_addr);
+        }
+        Ok(())
     }
 }
 
@@ -221,6 +226,7 @@ pub(crate) trait InoDataPageMap {
         page: &DataPageWrapper<'a, Clean, State>,
     ) -> Result<()>;
     fn find(&self, ino: &InodeNum, offset: u64) -> Option<DataPageInfo>;
+    fn get_all_pages(&self, ino: &InodeNum) -> Result<Vec<DataPageInfo>>;
     fn delete(&self, ino: &InodeNum, offset: u64) -> Result<()>;
 }
 
@@ -275,7 +281,27 @@ impl InoDataPageMap for BasicInoDataPageMap {
         None
     }
 
-    fn delete(&self, _ino: &InodeNum, _offset: u64) -> Result<()> {
-        unimplemented!();
+    fn get_all_pages(&self, ino: &InodeNum) -> Result<Vec<DataPageInfo>> {
+        let map = Arc::clone(&self.map);
+        let map = map.lock();
+        let pages = map.get(&ino);
+        let mut vec = Vec::new();
+        if let Some(pages) = pages {
+            // FIXME: do this without cloning all of the pages in the vector
+            for page in pages {
+                vec.try_push(page.clone())?;
+            }
+        }
+        Ok(vec)
+    }
+
+    fn delete(&self, ino: &InodeNum, offset: u64) -> Result<()> {
+        let map = Arc::clone(&self.map);
+        let mut map = map.lock();
+        let pages = map.get_mut(&ino);
+        if let Some(pages) = pages {
+            pages.retain(|x| x.offset != offset);
+        }
+        Ok(())
     }
 }

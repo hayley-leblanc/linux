@@ -205,6 +205,20 @@ where
     }
 }
 
+// vectors need to be flattenable to work with the macros
+// TODO: just remove the ability to fence multiple vectors at once
+// and then we can remove this too
+impl<A> Flatten for Vec<A>
+where
+    A: PmObjWrapper,
+{
+    type Output = Vec<A>;
+
+    fn flatten_tuple(self) -> Self::Output {
+        self
+    }
+}
+
 /// uses a single store fence to persist all arguments and
 /// returns their Clean versions in the same order as they were
 /// passed in
@@ -227,4 +241,31 @@ macro_rules! fence_obj {
     ($p_obj0:ident, $($p_obj1:ident),+) => {
         (fence_obj!{$p_obj0}, fence_obj!{$($p_obj1),+})
     };
+}
+
+/// uses a single fence call to mark all objects in one or more vectors clean
+#[macro_export]
+macro_rules! fence_all_vecs {
+    ($($args:tt),+) => { {
+        sfence();
+        fence_vec!($($args),+).flatten_tuple()
+    }
+    }
+}
+
+/// helper macro for fence_all_vecs
+#[macro_export]
+macro_rules! fence_vec {
+    ($p_vec:ident) => {{
+        let mut fence_vec = Vec::new();
+        for p in $p_vec {
+            let p = unsafe { p.fence_unsafe() };
+            fence_vec.try_push(p)?;
+        }
+        fence_vec
+    }};
+
+    ($p_vec0:ident, $($p_vec1:ident),+) => {
+        (fence_vec!{$p_vec0}, fence_vec!{$($p_vec1),+})
+    }
 }

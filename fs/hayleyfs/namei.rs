@@ -6,7 +6,7 @@ use crate::h_inode::*;
 use crate::pm::*;
 use crate::typestate::*;
 use crate::volatile::*;
-use crate::{fence_all, fence_obj};
+use crate::{fence_all, fence_all_vecs, fence_obj, fence_vec};
 // use core::ffi;
 use kernel::prelude::*;
 use kernel::{bindings, error, file, fs, inode};
@@ -134,8 +134,9 @@ impl inode::Operations for InodeOps {
         // TODO: decrement the inode's link count and delete it if link count == 0
     }
 
+    // TODO: if this unlink results in its dir page being emptied, we should
+    // deallocate the dir page (at some point)
     fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
-        // unimplemented!();
         let sb = dir.i_sb();
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
@@ -145,7 +146,7 @@ impl inode::Operations for InodeOps {
 
         hayleyfs_unlink(sbi, dir, dentry)?;
 
-        Err(EINVAL)
+        Ok(())
     }
 }
 
@@ -379,7 +380,10 @@ fn hayleyfs_unlink<'a>(
     sbi: &'a SbInfo,
     dir: &fs::INode,
     dentry: &fs::DEntry,
-) -> Result<InodeWrapper<'a, Clean, Complete, RegInode>> {
+) -> Result<(
+    InodeWrapper<'a, Clean, Complete, RegInode>,
+    DentryWrapper<'a, Clean, Free>,
+)> {
     pr_info!("hayleyfs unlink\n");
     let parent_ino = dir.i_ino();
     let _parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
@@ -398,6 +402,8 @@ fn hayleyfs_unlink<'a>(
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
         let ino = pd.get_ino();
+        sbi.ino_dentry_map.delete(ino, dentry_info)?;
+
         let pi = sbi.get_init_reg_inode_by_ino(ino)?;
         let pd = pd.clear_ino().flush().fence();
 
@@ -410,14 +416,37 @@ fn hayleyfs_unlink<'a>(
 
         let (pi, pd) = fence_all!(pi, pd);
 
-        let result = pi.try_complete_unlink();
-        if result.is_err() {
-            let pi = pi.start_dealloc_inode()?; // if this also fails pass the error out to the user
-        } else {
-            result
-        }
+        let result = pi.try_complete_unlink(sbi)?;
+        if let Ok(result) = result {
+            Ok((result, pd))
+        } else if let Err((pi, mut pages)) = result {
+            // go through each page and deallocate it
+            // we can drain the vector since missing a page will result in
+            // a runtime panic
+            let mut to_dealloc = Vec::new();
+            for page in pages.drain(..) {
+                sbi.ino_data_page_map.delete(&ino, page.get_offset())?;
+                let page = page.unmap().flush();
+                to_dealloc.try_push(page)?;
+            }
+            let mut to_dealloc = fence_all_vecs!(to_dealloc);
+            let mut deallocated = Vec::new();
+            for page in to_dealloc.drain(..) {
+                let page = page.dealloc().flush();
+                deallocated.try_push(page)?;
+            }
+            let deallocated = fence_all_vecs!(deallocated);
+            let freed_pages = DataPageWrapper::mark_pages_free(deallocated)?;
+            // pages are now deallocated and we can use the freed pages vector
+            // to deallocate the inode.
+            // TODO: make sure this works when there are no pages associated with
+            // the inode
+            let pi = pi.dealloc(freed_pages).flush().fence();
 
-        // Ok(())
+            Ok((pi, pd))
+        } else {
+            Err(EINVAL)
+        }
     } else {
         Err(ENOENT)
     }
