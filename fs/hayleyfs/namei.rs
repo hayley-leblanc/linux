@@ -3,8 +3,10 @@ use crate::defs::*;
 use crate::dir::*;
 use crate::h_file::*;
 use crate::h_inode::*;
+use crate::pm::*;
 use crate::typestate::*;
 use crate::volatile::*;
+use crate::{fence_all, fence_obj};
 // use core::ffi;
 use kernel::prelude::*;
 use kernel::{bindings, error, file, fs, inode};
@@ -373,22 +375,49 @@ fn hayleyfs_mkdir<'a>(
     Ok((dentry, parent, inode))
 }
 
-fn hayleyfs_unlink<'a>(sbi: &'a SbInfo, dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
+fn hayleyfs_unlink<'a>(
+    sbi: &'a SbInfo,
+    dir: &fs::INode,
+    dentry: &fs::DEntry,
+) -> Result<InodeWrapper<'a, Clean, Complete, RegInode>> {
     pr_info!("hayleyfs unlink\n");
     let parent_ino = dir.i_ino();
-    let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
+    let _parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
 
     // use volatile index to find the persistent dentry
     let dentry_info = sbi
         .ino_dentry_map
         .lookup_dentry(&parent_ino, dentry.d_name());
     if let Some(dentry_info) = dentry_info {
+        // FIXME?: right now we don't enforce that the dentry has to have pointed
+        // to the inode - theoretically an unrelated directory entry being
+        // deallocated could be used to decrement an inode's link count
+
+        // TODO: UPDATE THE INDEXES!!!!!!
+
+        // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
-        // pr_info!("dentry: {:?}\n", pd);
+        let ino = pd.get_ino();
+        let pi = sbi.get_init_reg_inode_by_ino(ino)?;
         let pd = pd.clear_ino().flush().fence();
-        // pr_info!("parent inode: {:?}\n", parent_inode);
-        // pr_info!("dentry: {:?}\n", pd);
-        Ok(())
+
+        // decrement the inode's link count
+        // according to Alloy we can share the fence with dentry deallocation
+        let pi = pi.dec_link_count(&pd)?.flush();
+
+        // deallocate the dentry
+        let pd = pd.dealloc_dentry().flush();
+
+        let (pi, pd) = fence_all!(pi, pd);
+
+        let result = pi.try_complete_unlink();
+        if result.is_err() {
+            let pi = pi.start_dealloc_inode()?; // if this also fails pass the error out to the user
+        } else {
+            result
+        }
+
+        // Ok(())
     } else {
         Err(ENOENT)
     }

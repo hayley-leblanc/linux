@@ -1,3 +1,4 @@
+use crate::defs::*;
 use core::{arch::asm, ffi::c_void};
 use kernel::bindings;
 use kernel::prelude::*;
@@ -155,4 +156,75 @@ pub(crate) unsafe fn memset_nt(dst: *mut c_void, dword: u32, size: usize, fence:
     if fence {
         sfence();
     }
+}
+
+pub(crate) trait Flatten {
+    type Output;
+
+    fn flatten_tuple(self) -> Self::Output;
+}
+
+impl<A, B> Flatten for (A, B)
+where
+    A: PmObjWrapper,
+    B: PmObjWrapper,
+{
+    type Output = (A, B);
+
+    fn flatten_tuple(self) -> Self::Output {
+        self
+    }
+}
+
+impl<A, B, C> Flatten for (A, (B, C))
+where
+    A: PmObjWrapper,
+    B: PmObjWrapper,
+    C: PmObjWrapper,
+{
+    type Output = (A, B, C);
+
+    fn flatten_tuple(self) -> Self::Output {
+        let (a, (b, c)) = self;
+        (a, b, c)
+    }
+}
+
+impl<A, B, C, D> Flatten for (A, (B, (C, D)))
+where
+    A: PmObjWrapper,
+    B: PmObjWrapper,
+    C: PmObjWrapper,
+    D: PmObjWrapper,
+{
+    type Output = (A, B, C, D);
+
+    fn flatten_tuple(self) -> Self::Output {
+        let (a, (b, (c, d))) = self;
+        (a, b, c, d)
+    }
+}
+
+/// uses a single store fence to persist all arguments and
+/// returns their Clean versions in the same order as they were
+/// passed in
+#[macro_export]
+macro_rules! fence_all {
+    ($($args:tt),+) => { {
+        sfence();
+        fence_obj!($($args),+).flatten_tuple()
+    }
+    }
+}
+
+/// helper macro for fence_all
+#[macro_export]
+macro_rules! fence_obj {
+    ($p_obj:ident) => {
+        $p_obj.fence()
+    };
+
+    ($p_obj0:ident, $($p_obj1:ident),+) => {
+        (fence_obj!{$p_obj0}, fence_obj!{$($p_obj1),+})
+    };
 }

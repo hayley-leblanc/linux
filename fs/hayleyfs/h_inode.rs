@@ -1,6 +1,7 @@
 use crate::balloc::*;
 use crate::defs::*;
 use crate::pm::*;
+use crate::dir::*;
 use crate::typestate::*;
 use core::{
     marker::PhantomData,
@@ -52,6 +53,8 @@ pub(crate) struct InodeWrapper<'a, State, Op, Type> {
     ino: InodeNum,
     inode: &'a mut HayleyFsInode,
 }
+
+impl<'a, State, Op, Type> PmObjWrapper for InodeWrapper<'a, State, Op, Type> {}
 
 impl HayleyFsInode {
     /// Unsafe inode constructor for temporary use with init_fs only
@@ -131,6 +134,10 @@ impl HayleyFsInode {
 
     pub(crate) unsafe fn inc_link_count(&mut self) {
         self.link_count += 1
+    }
+
+    pub(crate) unsafe fn dec_link_count(&mut self) {
+        self.link_count -= 1
     }
 
     // TODO: update as fields are added
@@ -236,6 +243,15 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         }
     }
 
+    pub(crate) fn dec_link_count(self, _dentry: &DentryWrapper<'a, Clean, ClearIno>) -> Result<InodeWrapper<'a, Dirty, DecLink, Type>> {
+        if self.inode.get_link_count() == 0 {
+            Err(ENOENT)
+        } else {
+            unsafe { self.inode.dec_link_count() };
+            Ok(Self::new(self))
+        }
+    }
+
     // TODO: get the number of bytes written from the page itself, somehow?
     pub(crate) fn inc_size(
         self,
@@ -259,6 +275,38 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         )
     }
 }
+
+impl<'a, Type> InodeWrapper<'a, Clean, DecLink, Type> {
+    pub(crate) fn try_complete_unlink(self) -> Result<InodeWrapper<'a, Clean, Complete, Type>> {
+        if self.inode.get_ino() > 0 {
+            Ok(InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                ino: self.ino,
+                inode: self.inode,
+            })
+        } else {
+            Err(EPERM)
+        }
+    } 
+
+    pub(crate) fn start_dealloc_inode(self) -> Result<InodeWrapper<'a, Clean, Dealloc, Type>> {
+        if self.inode.get_ino() == 0 {
+            Ok(InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                ino: self.ino,
+                inode: self.inode,
+            })
+        } else {
+            Err(EPERM)
+        }
+    }
+}
+
+// impl<'a, Type> 
 
 impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
     pub(crate) fn get_free_reg_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {

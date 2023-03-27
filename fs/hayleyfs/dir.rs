@@ -46,6 +46,8 @@ pub(crate) struct DentryWrapper<'a, State, Op> {
     dentry: &'a mut HayleyFsDentry,
 }
 
+impl<'a, State, Op> PmObjWrapper for DentryWrapper<'a, State, Op> {}
+
 impl<'a> DentryWrapper<'a, Clean, Free> {
     /// Safety
     /// The provided dentry must be free (completely zeroed out).
@@ -123,6 +125,12 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
     }
 }
 
+impl<'a, Op> DentryWrapper<'a, Clean, Op> {
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.dentry.get_ino()
+    }
+}
+
 impl<'a> DentryWrapper<'a, Clean, Start> {
     pub(crate) fn get_init_dentry(info: DentryInfo) -> Result<Self> {
         // use the virtual address in the DentryInfo to look up the
@@ -142,6 +150,17 @@ impl<'a> DentryWrapper<'a, Clean, Start> {
 
     pub(crate) fn clear_ino(self) -> DentryWrapper<'a, Dirty, ClearIno> {
         self.dentry.ino = 0;
+        DentryWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            dentry: self.dentry,
+        }
+    }
+}
+
+impl<'a> DentryWrapper<'a, Clean, ClearIno> {
+    pub(crate) fn dealloc_dentry(self) -> DentryWrapper<'a, Dirty, Free> {
+        self.dentry.name.iter_mut().for_each(|c| *c = 0);
         DentryWrapper {
             state: PhantomData,
             op: PhantomData,

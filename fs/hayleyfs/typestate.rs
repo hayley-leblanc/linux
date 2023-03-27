@@ -8,6 +8,8 @@ pub(crate) struct InFlight {}
 #[derive(Debug)]
 pub(crate) struct Clean {}
 
+// TODO: maybe have op-specific complete states?
+
 /// Zero-sized types for operation state
 #[derive(Debug)]
 pub(crate) struct Start {}
@@ -29,6 +31,10 @@ pub(crate) struct Written {}
 pub(crate) struct IncSize {}
 #[derive(Debug)]
 pub(crate) struct ClearIno {}
+#[derive(Debug)]
+pub(crate) struct DecLink {}
+#[derive(Debug)]
+pub(crate) struct Dealloc {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}

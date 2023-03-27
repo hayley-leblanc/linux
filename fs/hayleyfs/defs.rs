@@ -65,6 +65,9 @@ pub(crate) enum InodeType {
     REG,
     DIR,
 }
+
+pub(crate) trait PmObjWrapper {}
+
 /// Persistent super block
 /// TODO: add stuff
 #[repr(C)]
