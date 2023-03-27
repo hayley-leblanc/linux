@@ -74,6 +74,21 @@ impl file::Operations for FileOps {
         let result = hayleyfs_read(sbi, inode, writer, offset)?;
         Ok(result.try_into()?)
     }
+
+    fn seek(_data: (), f: &file::File, offset: file::SeekFrom) -> Result<u64> {
+        let (offset, whence) = match offset {
+            file::SeekFrom::Start(off) => (off.try_into()?, bindings::SEEK_SET),
+            file::SeekFrom::End(off) => (off, bindings::SEEK_END),
+            file::SeekFrom::Current(off) => (off, bindings::SEEK_CUR),
+        };
+        let result =
+            unsafe { bindings::generic_file_llseek(f.get_inner(), offset, whence.try_into()?) };
+        if result < 0 {
+            Err(error::Error::from_kernel_errno(result.try_into()?))
+        } else {
+            Ok(result.try_into()?)
+        }
+    }
 }
 
 fn hayleyfs_write<'a>(
