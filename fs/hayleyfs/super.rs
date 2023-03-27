@@ -230,7 +230,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     // keeps track of maximum inode/page number in use to recreate the allocator
     // TODO: this will have to change when inodes/pages can be reused
     let mut max_inode = 0;
-    let mut max_page = 0;
+    let mut max_page = DATA_PAGE_START;
 
     live_inode_vec.try_push(1)?;
 
@@ -254,7 +254,9 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let page_desc_table = sbi.get_page_desc_table()?;
     for (i, desc) in page_desc_table.iter().enumerate() {
         if !desc.is_free() {
-            max_page = i;
+            if i > max_page.try_into()? {
+                max_page = i.try_into()?;
+            }
             sbi.inc_blocks_in_use();
             let index: u64 = i.try_into()?;
             // add pages to maps that associate inodes with the pages they own
