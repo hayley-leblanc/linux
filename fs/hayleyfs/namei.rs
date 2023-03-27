@@ -456,12 +456,17 @@ fn get_free_dentry<'a>(
     sbi: &'a SbInfo,
     parent_ino: InodeNum,
 ) -> Result<DentryWrapper<'a, Clean, Free>> {
-    let result = sbi.ino_dir_page_map.find_page_with_free_dentry(&parent_ino);
+    pr_info!("getting free dentry\n");
+    let result = sbi
+        .ino_dir_page_map
+        .find_page_with_free_dentry(sbi, &parent_ino)?;
     if let Some(page_info) = result {
+        pr_info!("page {:?} has a free dentry\n", page_info.get_page_no());
         let dir_page = DirPageWrapper::from_dir_page_info(sbi, &page_info)?;
         dir_page.get_free_dentry(sbi)
     } else {
         // no pages have any free dentries
+        pr_info!("allocating dir page\n");
         alloc_page_for_dentry(sbi, parent_ino)
     }
 }
@@ -480,7 +485,7 @@ fn alloc_page_for_dentry<'a>(
             .set_dir_page_backpointer(parent_inode)
             .flush()
             .fence();
-        sbi.ino_dir_page_map.insert(parent_ino, &dir_page, false)?;
+        sbi.ino_dir_page_map.insert(parent_ino, &dir_page)?;
         // TODO: get_free_dentry() should never return an error since all dentries
         // in the newly-allocated page should be free - but check on that and confirm
         let pd = dir_page.get_free_dentry(sbi)?;

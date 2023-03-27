@@ -121,7 +121,7 @@ fn str_equals(str1: &CStr, str2: &CStr) -> bool {
 pub(crate) struct DirPageInfo {
     owner: InodeNum,
     page_no: PageNum,
-    full: bool,
+    // full: bool,
     // virt_addr: *mut ffi::c_void,
 }
 
@@ -140,9 +140,12 @@ pub(crate) trait InoDirPageMap {
         &self,
         ino: InodeNum,
         page: &DirPageWrapper<'a, Clean, State>,
-        full: bool,
     ) -> Result<()>;
-    fn find_page_with_free_dentry(&self, ino: &InodeNum) -> Option<DirPageInfo>;
+    fn find_page_with_free_dentry(
+        &self,
+        sbi: &SbInfo,
+        ino: &InodeNum,
+    ) -> Result<Option<DirPageInfo>>;
     fn delete(&self, ino: InodeNum, page: DirPageInfo) -> Result<()>;
 }
 
@@ -161,7 +164,6 @@ impl InoDirPageMap for BasicInoDirPageMap {
         &self,
         ino: InodeNum,
         page: &DirPageWrapper<'a, Clean, State>,
-        full: bool,
     ) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
@@ -169,7 +171,6 @@ impl InoDirPageMap for BasicInoDirPageMap {
         let page_info = DirPageInfo {
             owner: ino,
             page_no,
-            full,
         };
         if let Some(node) = map.get_mut(&ino) {
             node.try_push(page_info)?;
@@ -181,19 +182,30 @@ impl InoDirPageMap for BasicInoDirPageMap {
         Ok(())
     }
 
-    fn find_page_with_free_dentry<'a>(&self, ino: &InodeNum) -> Option<DirPageInfo> {
+    fn find_page_with_free_dentry<'a>(
+        &self,
+        sbi: &SbInfo,
+        ino: &InodeNum,
+    ) -> Result<Option<DirPageInfo>> {
         let map = Arc::clone(&self.map);
         let map = map.lock();
         let pages = map.get(&ino);
         if let Some(pages) = pages {
             for page in pages {
-                // TODO: we never actually set page.full to true
-                if !page.full {
-                    return Some(page.clone());
+                let p = DirPageWrapper::from_page_no(sbi, page.get_page_no())?;
+                if p.has_free_space(sbi)? {
+                    return Ok(Some(page.clone()));
                 }
+                // let dir_page = unsafe { p.get_dir_page(sbi)? };
+                // for dentry in dir_page.dentries.iter() {
+                //     if dentry.is_free() {
+                //         return Some(page.clone());
+                //     }
+                // }
             }
         }
-        None
+        // Err(ENOSPC)
+        Ok(None)
     }
 
     fn delete(&self, _ino: InodeNum, _page: DirPageInfo) -> Result<()> {

@@ -36,6 +36,10 @@ impl HayleyFsDentry {
     pub(crate) fn get_name(&self) -> [u8; MAX_FILENAME_LEN] {
         self.name
     }
+
+    pub(crate) fn is_free(&self) -> bool {
+        self.ino == 0 && self.is_rename_ptr_null() && !self.has_name()
+    }
 }
 
 #[allow(dead_code)]

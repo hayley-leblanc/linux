@@ -38,6 +38,7 @@ impl PageAllocator for BasicPageAllocator {
 
     fn alloc_page(&self) -> Result<PageNum> {
         if self.next_page.load(Ordering::SeqCst) == MAX_PAGES {
+            pr_info!("ERROR: ran out of pages in basic page allocator\n");
             Err(ENOSPC)
         } else {
             Ok(self.next_page.fetch_add(1, Ordering::SeqCst).try_into()?)
@@ -197,6 +198,11 @@ fn page_no_to_dir_header<'a>(sbi: &'a SbInfo, page_no: PageNum) -> Result<&'a mu
 // TODO: safety
 unsafe fn page_no_to_page(sbi: &SbInfo, page_no: PageNum) -> Result<*mut u8> {
     if page_no > MAX_PAGES {
+        pr_info!(
+            "ERROR: page no {:?} is higher than max pages {:?}\n",
+            page_no,
+            MAX_PAGES
+        );
         Err(ENOSPC)
     } else {
         let virt_addr: *mut u8 = sbi.get_virt_addr();
@@ -252,6 +258,17 @@ impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
         Ok(DirPage { dentries })
     }
 
+    pub(crate) fn has_free_space(&self, sbi: &SbInfo) -> Result<bool> {
+        let page = self.get_dir_page(&sbi)?;
+
+        for dentry in page.dentries.iter_mut() {
+            if dentry.is_free() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Obtains a wrapped pointer to a free dentry.
     /// This does NOT allocate the dentry - just obtains a pointer to a free dentry
     /// This requires a mutable reference to self because we need to acquire a
@@ -266,11 +283,12 @@ impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
         for dentry in page.dentries.iter_mut() {
             // if any part of a dentry is NOT zeroed out, that dentry is allocated; we need
             // an unallocated dentry
-            if dentry.get_ino() == 0 && dentry.is_rename_ptr_null() && !dentry.has_name() {
+            if dentry.is_free() {
                 return Ok(unsafe { DentryWrapper::wrap_free_dentry(dentry) });
             }
         }
         // if we can't find a free dentry in this page, return an error
+        pr_info!("could not find a free dentry in this page\n");
         Err(ENOSPC)
     }
 }
@@ -398,6 +416,7 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
     }
 }
 
+// TODO: should check page type?
 #[allow(dead_code)]
 fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;

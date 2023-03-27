@@ -467,6 +467,7 @@ impl InodeAllocator for BasicInodeAllocator {
 
     fn alloc_ino(&self) -> Result<InodeNum> {
         if self.next_inode.load(Ordering::SeqCst) == NUM_INODES {
+            pr_info!("ERROR: ran out of inodes in basic inode allocator\n");
             Err(ENOSPC)
         } else {
             Ok(self.next_inode.fetch_add(1, Ordering::SeqCst))

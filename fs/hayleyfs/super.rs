@@ -313,18 +313,12 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                 let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
                 let live_dentries = dir_page_wrapper.get_live_dentry_info(sbi)?;
                 pr_info!("live dentries: {:?}\n", live_dentries);
-                let full = if live_dentries.len() == DENTRIES_PER_PAGE {
-                    true
-                } else {
-                    false
-                };
                 // add these live dentries to the index
                 for dentry in live_dentries {
                     sbi.ino_dentry_map.insert(live_inode, dentry)?;
                 }
 
-                sbi.ino_dir_page_map
-                    .insert(live_inode, &dir_page_wrapper, full)?;
+                sbi.ino_dir_page_map.insert(live_inode, &dir_page_wrapper)?;
             }
         }
 
