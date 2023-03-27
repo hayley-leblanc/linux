@@ -397,8 +397,6 @@ fn hayleyfs_unlink<'a>(
         // to the inode - theoretically an unrelated directory entry being
         // deallocated could be used to decrement an inode's link count
 
-        // TODO: UPDATE THE INDEXES!!!!!!
-
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
         let ino = pd.get_ino();
@@ -456,17 +454,14 @@ fn get_free_dentry<'a>(
     sbi: &'a SbInfo,
     parent_ino: InodeNum,
 ) -> Result<DentryWrapper<'a, Clean, Free>> {
-    pr_info!("getting free dentry\n");
     let result = sbi
         .ino_dir_page_map
         .find_page_with_free_dentry(sbi, &parent_ino)?;
     if let Some(page_info) = result {
-        pr_info!("page {:?} has a free dentry\n", page_info.get_page_no());
         let dir_page = DirPageWrapper::from_dir_page_info(sbi, &page_info)?;
         dir_page.get_free_dentry(sbi)
     } else {
         // no pages have any free dentries
-        pr_info!("allocating dir page\n");
         alloc_page_for_dentry(sbi, parent_ino)
     }
 }
@@ -475,7 +470,6 @@ fn alloc_page_for_dentry<'a>(
     sbi: &'a SbInfo,
     parent_ino: InodeNum,
 ) -> Result<DentryWrapper<'a, Clean, Free>> {
-    pr_info!("allocating new dir page for inode {:?}\n", parent_ino);
     // allocate a page
     let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
     sbi.inc_blocks_in_use();

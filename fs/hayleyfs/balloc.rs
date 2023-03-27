@@ -643,7 +643,7 @@ impl<'a, Op> DataPageWrapper<'a, Dirty, Op> {
             None => panic!("ERROR: Wrapper does not have a page"),
         };
 
-        let page = self.take();
+        let page = self.take_and_make_drop_safe();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
@@ -657,7 +657,7 @@ impl<'a, Op> DataPageWrapper<'a, Dirty, Op> {
 impl<'a, Op> DataPageWrapper<'a, InFlight, Op> {
     pub(crate) fn fence(mut self) -> DataPageWrapper<'a, Clean, Op> {
         sfence();
-        let page = self.take();
+        let page = self.take_and_make_drop_safe();
         DataPageWrapper {
             state: PhantomData,
             op: PhantomData,
