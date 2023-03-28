@@ -21,7 +21,9 @@ impl inode::Operations for InodeOps {
     ) -> Result<Option<*mut bindings::inode>> {
         // TODO: handle flags
         // TODO: reorganize so that system call logic is separate from
-        // conversion from raw pointers\
+        // conversion from raw pointers
+
+        pr_info!("lookup\n");
 
         let sb = dir.i_sb();
         // TODO: safety
@@ -76,7 +78,7 @@ impl inode::Operations for InodeOps {
     }
 
     fn link(old_dentry: &fs::DEntry, dir: &mut fs::INode, dentry: &fs::DEntry) -> Result<i32> {
-        let inode = dentry.d_inode();
+        let inode = old_dentry.d_inode();
         unsafe { bindings::ihold(inode) };
         let sb = dir.i_sb();
         // TODO: safety
@@ -325,8 +327,11 @@ fn hayleyfs_link<'a>(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
+    pr_info!("hayleyfs link\n");
     let pd = get_free_dentry(sbi, dir.i_ino())?;
+    pr_info!("got free dentry\n");
     let _pd = pd.set_name(dentry.d_name())?.flush().fence();
+    pr_info!("set dentry name\n");
 
     // old dentry is the dentry for the target name,
     // dir is the PARENT inode,
