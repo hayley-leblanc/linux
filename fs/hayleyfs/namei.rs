@@ -157,7 +157,10 @@ impl inode::Operations for InodeOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        hayleyfs_unlink(sbi, dir, dentry)?;
+        let result = hayleyfs_unlink(sbi, dir, dentry);
+        if let Err(e) = result {
+            return Err(e);
+        }
 
         unsafe {
             // TODO: is there a function we should use to read the link count?
@@ -420,7 +423,7 @@ fn hayleyfs_unlink<'a>(
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
         let ino = pd.get_ino();
-        sbi.ino_dentry_map.delete(ino, dentry_info)?;
+        sbi.ino_dentry_map.delete(parent_ino, dentry_info)?;
 
         let pi = sbi.get_init_reg_inode_by_ino(ino)?;
         let pd = pd.clear_ino().flush().fence();

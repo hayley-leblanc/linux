@@ -143,6 +143,7 @@ impl<'a> DentryWrapper<'a, Clean, Start> {
             unsafe { &mut *(info.get_virt_addr() as *mut HayleyFsDentry) };
         // return an error if the dentry is not initialized
         if dentry.ino == 0 {
+            pr_info!("ERROR: dentry is invalid\n");
             return Err(EPERM);
         };
         Ok(Self {

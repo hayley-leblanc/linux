@@ -351,6 +351,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
                 inode: raw_inode,
             })
         } else {
+            pr_info!("ERROR: inode {:?} is not free\n", ino);
             Err(EPERM)
         }
     }
@@ -395,6 +396,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
                 inode: raw_inode,
             })
         } else {
+            pr_info!("ERROR: inode {:?} is not free\n", ino);
             Err(EPERM)
         }
     }

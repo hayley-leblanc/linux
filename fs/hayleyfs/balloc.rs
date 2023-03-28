@@ -170,6 +170,7 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
     pub(crate) fn from_page_no(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
         let ph = page_no_to_dir_header(&sbi, page_no)?;
         if !ph.is_initialized() {
+            pr_info!("ERROR: page {:?} is uninitialized\n", page_no);
             Err(EPERM)
         } else {
             // Safety: it's safe to wrap the page header since we check that it is
@@ -456,6 +457,7 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     // TODO: this doesn't need to be unsafe I think
     unsafe fn wrap_data_page_header(ph: &'a mut DataPageHeader, page_no: PageNum) -> Result<Self> {
         if !ph.is_initialized() {
+            pr_info!("ERROR: page {:?} is uninitialized\n", page_no);
             Err(EPERM)
         } else {
             Ok(Self {
@@ -533,6 +535,7 @@ impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
     /// Safety: ph must be a valid DataPageHeader reference
     unsafe fn wrap_page_to_unmap(ph: &'a mut DataPageHeader, page_no: PageNum) -> Result<Self> {
         if !ph.is_initialized() {
+            pr_info!("ERROR: page {:?} is uninitialized\n", page_no);
             Err(EPERM)
         } else {
             Ok(Self {

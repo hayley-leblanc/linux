@@ -328,6 +328,7 @@ impl SbInfo {
         let inode = unsafe { self.get_inode_by_ino_mut(ino)? };
 
         if inode.get_type() != InodeType::DIR {
+            pr_info!("ERROR: inode {:?} is not a directory\n", ino);
             return Err(EPERM);
         }
         if inode.is_initialized() {

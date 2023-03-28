@@ -65,7 +65,7 @@ impl InoDentryMap for BasicInoDentryMap {
     fn insert(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
-        if let Some(node) = map.get_mut(&ino) {
+        if let Some(ref mut node) = map.get_mut(&ino) {
             node.try_push(dentry)?;
         } else {
             let mut vec = Vec::new();
@@ -93,8 +93,8 @@ impl InoDentryMap for BasicInoDentryMap {
     fn delete(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
-        let dentry_vec = map.get_mut(&ino);
-        if let Some(dentry_vec) = dentry_vec {
+        let mut dentry_vec = map.get_mut(&ino);
+        if let Some(ref mut dentry_vec) = dentry_vec {
             dentry_vec.retain(|x| x.virt_addr != dentry.virt_addr);
         }
         Ok(())
@@ -196,15 +196,8 @@ impl InoDirPageMap for BasicInoDirPageMap {
                 if p.has_free_space(sbi)? {
                     return Ok(Some(page.clone()));
                 }
-                // let dir_page = unsafe { p.get_dir_page(sbi)? };
-                // for dentry in dir_page.dentries.iter() {
-                //     if dentry.is_free() {
-                //         return Some(page.clone());
-                //     }
-                // }
             }
         }
-        // Err(ENOSPC)
         Ok(None)
     }
 
