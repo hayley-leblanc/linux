@@ -79,7 +79,6 @@ impl inode::Operations for InodeOps {
 
     fn link(old_dentry: &fs::DEntry, dir: &mut fs::INode, dentry: &fs::DEntry) -> Result<i32> {
         let inode = old_dentry.d_inode();
-        unsafe { bindings::ihold(inode) };
         let sb = dir.i_sb();
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
@@ -87,20 +86,26 @@ impl inode::Operations for InodeOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        hayleyfs_link(sbi, old_dentry, dir, dentry)?;
+        let result = hayleyfs_link(sbi, old_dentry, dir, dentry);
 
-        // TODO: safe wrappers
-        unsafe {
-            let ctime = bindings::current_time(inode);
-            (*inode).i_ctime = ctime;
-            bindings::inc_nlink(inode);
-            bindings::d_instantiate(dentry.get_inner(), old_dentry.d_inode());
+        unsafe { bindings::ihold(inode) };
+
+        if result.is_ok() {
+            // TODO: safe wrappers
+            unsafe {
+                let ctime = bindings::current_time(inode);
+                (*inode).i_ctime = ctime;
+                bindings::inc_nlink(inode);
+                bindings::d_instantiate(dentry.get_inner(), old_dentry.d_inode());
+            }
         }
 
-        // TODO: call even if hayleyfs_link fails
-        unsafe { bindings::iput(inode) };
-
-        Ok(0)
+        if let Err(e) = result {
+            unsafe { bindings::iput(inode) };
+            Err(e)
+        } else {
+            Ok(0)
+        }
     }
 
     // TODO: ihold?
@@ -144,6 +149,7 @@ impl inode::Operations for InodeOps {
     // deallocate the dir page (at some point)
     // TODO: ihold?
     fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
+        let inode = dentry.d_inode();
         let sb = dir.i_sb();
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
@@ -152,6 +158,13 @@ impl inode::Operations for InodeOps {
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
         hayleyfs_unlink(sbi, dir, dentry)?;
+
+        unsafe {
+            // TODO: is there a function we should use to read the link count?
+            if (*inode).__bindgen_anon_1.i_nlink > 0 {
+                bindings::drop_nlink(inode);
+            }
+        }
 
         Ok(())
     }
@@ -327,11 +340,8 @@ fn hayleyfs_link<'a>(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
-    pr_info!("hayleyfs link\n");
     let pd = get_free_dentry(sbi, dir.i_ino())?;
-    pr_info!("got free dentry\n");
     let _pd = pd.set_name(dentry.d_name())?.flush().fence();
-    pr_info!("set dentry name\n");
 
     // old dentry is the dentry for the target name,
     // dir is the PARENT inode,
@@ -425,6 +435,7 @@ fn hayleyfs_unlink<'a>(
         let (pi, pd) = fence_all!(pi, pd);
 
         let result = pi.try_complete_unlink(sbi)?;
+
         if let Ok(result) = result {
             Ok((result, pd))
         } else if let Err((pi, mut pages)) = result {
