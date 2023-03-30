@@ -23,20 +23,12 @@ impl inode::Operations for InodeOps {
         // TODO: reorganize so that system call logic is separate from
         // conversion from raw pointers
 
-        pr_info!("lookup\n");
-
         let sb = dir.i_sb();
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
         // TODO: it's probably not safe to just grab s_fs_info and
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
-
-        pr_info!(
-            "looking up name {:?} in inode {:?}\n",
-            dentry.d_name(),
-            dir.i_ino()
-        );
 
         let result = sbi
             .ino_dentry_map
@@ -46,7 +38,6 @@ impl inode::Operations for InodeOps {
             Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino())?))
         } else {
             // the dentry does not exist in this directory
-            pr_info!("dentry does not exist\n");
             Ok(None)
         }
     }
@@ -58,8 +49,6 @@ impl inode::Operations for InodeOps {
         umode: bindings::umode_t,
         excl: bool,
     ) -> Result<i32> {
-        pr_info!("creating {:?} in {:?}\n", dentry.d_name(), dir.i_ino());
-
         let sb = dir.i_sb();
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
@@ -179,7 +168,6 @@ pub(crate) fn hayleyfs_iget(
     sbi: &SbInfo,
     ino: InodeNum,
 ) -> Result<*mut bindings::inode> {
-    pr_info!("hayleyfs iget\n");
     // obtain an inode from VFS
     let inode = unsafe { bindings::iget_locked(sb, ino) };
     if inode.is_null() {
@@ -251,7 +239,6 @@ fn new_vfs_inode<'a, Type>(
     }
 
     vfs_inode.i_ino = new_inode.get_ino();
-    pr_info!("set vfs inode to {:?}\n", vfs_inode.i_ino);
 
     // we don't have access to ZST Type, but inode wrapper constructors check types
     // so we can rely on these being correct
@@ -322,7 +309,6 @@ fn hayleyfs_create<'a>(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
-    pr_info!("hayleyfs_create\n");
     // TODO: should perhaps take inode wrapper to the parent so that we know
     // the parent is initialized
     let pd = get_free_dentry(sbi, dir.i_ino())?;
@@ -349,13 +335,6 @@ fn hayleyfs_link<'a>(
     // old dentry is the dentry for the target name,
     // dir is the PARENT inode,
     // dentry is the dentry for the new name
-
-    pr_info!(
-        "old dentry: {:?}, inode number {:?}, new dentry: {:?}\n",
-        old_dentry.d_name(),
-        dir.i_ino(),
-        dentry.d_name()
-    );
 
     // first, obtain the inode that's getting the link from old_dentry
     let target_ino = old_dentry.d_ino();
@@ -384,7 +363,6 @@ fn hayleyfs_mkdir<'a>(
     InodeWrapper<'a, Clean, Complete, DirInode>, // parent
     InodeWrapper<'a, Clean, Complete, DirInode>, // new inode
 )> {
-    pr_info!("hayleyfs mkdir\n");
     let parent_ino = dir.i_ino();
     let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
     let parent_inode = parent_inode.inc_link_count()?.flush().fence();
@@ -407,7 +385,6 @@ fn hayleyfs_unlink<'a>(
     InodeWrapper<'a, Clean, Complete, RegInode>,
     DentryWrapper<'a, Clean, Free>,
 )> {
-    pr_info!("hayleyfs unlink\n");
     let parent_ino = dir.i_ino();
     let _parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
 

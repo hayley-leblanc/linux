@@ -140,16 +140,12 @@ impl fs::Type for HayleyFs {
     }
 
     fn statfs(sb: &fs::SuperBlock<Self>, buf: *mut bindings::kstatfs) -> Result<()> {
-        pr_info!("statfs\n");
         // TODO: better support in rust/ so we don't have to do this all via raw pointers
         let sbi = unsafe { &*(sb.s_fs_info() as *const SbInfo) };
         unsafe {
             (*buf).f_type = SUPER_MAGIC;
             (*buf).f_bsize = sbi.blocksize.try_into()?;
             (*buf).f_blocks = sbi.num_blocks;
-            pr_info!("num blocks: {:?}\n", sbi.num_blocks);
-            pr_info!("fs size: {:?}\n", sbi.size);
-            pr_info!("block size {:?}\n", sbi.blocksize);
             (*buf).f_bfree = sbi.num_blocks - sbi.get_pages_in_use();
             (*buf).f_bavail = sbi.num_blocks - sbi.get_pages_in_use();
             (*buf).f_files = NUM_INODES;

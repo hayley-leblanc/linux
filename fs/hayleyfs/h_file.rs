@@ -104,7 +104,6 @@ fn hayleyfs_write<'a>(
     } else {
         len
     };
-    pr_info!("writing {:?} bytes at offset {:?}\n", len, offset);
     let mut inode = inode.write();
     let ino = inode.i_ino();
     let pi = sbi.get_init_reg_inode_by_ino(ino)?;
@@ -168,7 +167,6 @@ fn hayleyfs_read(
     mut offset: u64,
 ) -> Result<u64> {
     let mut count: u64 = writer.len().try_into()?;
-    pr_info!("reading {:?} bytes at offset {:?}\n", count, offset);
     // TODO: update timestamp
 
     // acquire shared read lock

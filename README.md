@@ -91,3 +91,7 @@ You do *not* need to rebuild the entire kernel every time you make a change to t
 
 Currently, the file system cannot be remounted - it reinitializes and zeroes out all old data on each mount. 
 Currently, the file system supports creating and removing files. Otherwise, segmentation fault occurs.
+
+## Using filebench
+
+You MUST run `echo 0 | sudo tee /proc/sys/kernel/randomize_va_space` on the VM prior to running fileserver (maybe others?) or filebench will segfault.
