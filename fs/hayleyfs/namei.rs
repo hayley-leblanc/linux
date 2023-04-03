@@ -136,26 +136,26 @@ impl inode::Operations for InodeOps {
     // TODO: if this unlink results in its dir page being emptied, we should
     // deallocate the dir page (at some point)
     // TODO: ihold?
-    fn unlink(_dir: &fs::INode, _dentry: &fs::DEntry) -> Result<()> {
-        // let inode = dentry.d_inode();
-        // let sb = dir.i_sb();
-        // // TODO: safety
-        // let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // // TODO: it's probably not safe to just grab s_fs_info and
-        // // get a mutable reference to one of the dram indexes
-        // let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+    fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
+        let inode = dentry.d_inode();
+        let sb = dir.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        // let result = hayleyfs_unlink(sbi, dir, dentry);
-        // if let Err(e) = result {
-        //     return Err(e);
-        // }
+        let result = hayleyfs_unlink(sbi, dir, dentry);
+        if let Err(e) = result {
+            return Err(e);
+        }
 
-        // unsafe {
-        //     // TODO: is there a function we should use to read the link count?
-        //     if (*inode).__bindgen_anon_1.i_nlink > 0 {
-        //         bindings::drop_nlink(inode);
-        //     }
-        // }
+        unsafe {
+            // TODO: is there a function we should use to read the link count?
+            if (*inode).__bindgen_anon_1.i_nlink > 0 {
+                bindings::drop_nlink(inode);
+            }
+        }
 
         Ok(())
     }

@@ -441,9 +441,21 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
 fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
     let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
-    let ph: &mut PageDescriptor = &mut page_desc_table[page_index];
-    let ph: &mut DataPageHeader = ph.try_into()?;
-    Ok(ph)
+    // let ph: &mut PageDescriptor = &mut page_desc_table[page_index];
+    // let ph: &mut PageDescriptor = page_desc_table.get_mut(page_index).ok_or(ENOSPC);
+    let ph = page_desc_table.get_mut(page_index);
+    if ph.is_none() {
+        pr_info!(
+            "No space left in page descriptor table - index {:?} out of bounds\n",
+            page_index
+        );
+        Err(ENOSPC)
+    } else if let Some(ph) = ph {
+        let ph: &mut DataPageHeader = ph.try_into()?;
+        Ok(ph)
+    } else {
+        unreachable!()
+    }
 }
 
 #[allow(dead_code)]

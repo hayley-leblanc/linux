@@ -49,7 +49,6 @@ impl file::Operations for FileOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
         let inode = unsafe { RwSemaphore::new_with_sem(inode, sem) };
-        // let bytes_written = hayleyfs_write(sbi, inode, reader, offset)?;
         let (bytes_written, _) = hayleyfs_write(sbi, inode, reader, offset)?;
 
         Ok(bytes_written.try_into()?)
@@ -141,8 +140,6 @@ fn hayleyfs_write<'a>(
 
     let (bytes_written, data_page) =
         data_page.write_to_page(sbi, reader, offset_in_page, to_write)?;
-    // let bytes_written = to_write;
-    // let data_page = unsafe { data_page.temp_make_written() };
 
     let data_page = data_page.fence();
 
@@ -188,7 +185,8 @@ fn hayleyfs_read(
     while count > 0 {
         let page_offset = page_offset(offset)?;
 
-        let offset_in_page = page_offset - offset;
+        // let offset_in_page = page_offset - offset;
+        let offset_in_page = offset - page_offset;
         let bytes_after_offset = HAYLEYFS_PAGESIZE - offset_in_page;
         // either read the rest of the count or write to the end of the page
         let to_read = if count < bytes_after_offset {
