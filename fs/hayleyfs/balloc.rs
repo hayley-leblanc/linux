@@ -14,9 +14,10 @@ use kernel::io_buffer::{IoBufferReader, IoBufferWriter};
 use kernel::prelude::*;
 
 pub(crate) trait PageAllocator {
-    fn new(val: u64) -> Self;
+    fn new(val: u64, dev_pages: u64) -> Self;
     fn alloc_page(&self) -> Result<PageNum>;
     fn dealloc_page(&self, page: PageNum) -> Result<()>;
+    fn update_max_pages(&mut self, dev_pages: u64);
 }
 
 /// Allocates by keeping a counter and returning the next number in the counter.
@@ -27,18 +28,25 @@ pub(crate) trait PageAllocator {
 /// across threads.
 pub(crate) struct BasicPageAllocator {
     next_page: AtomicU64,
+    max_pages: u64,
 }
 
 impl PageAllocator for BasicPageAllocator {
-    fn new(val: u64) -> Self {
+    fn new(val: u64, dev_pages: u64) -> Self {
         BasicPageAllocator {
             next_page: AtomicU64::new(val),
+            max_pages: dev_pages,
         }
     }
 
     fn alloc_page(&self) -> Result<PageNum> {
-        if self.next_page.load(Ordering::SeqCst) == MAX_PAGES {
-            pr_info!("ERROR: ran out of pages in basic page allocator\n");
+        if self.next_page.load(Ordering::SeqCst) == MAX_PAGES
+            || self.next_page.load(Ordering::SeqCst) == self.max_pages
+        {
+            pr_info!(
+                "ERROR: ran out of pages in basic page allocator at page {:?}\n",
+                self.next_page.load(Ordering::SeqCst)
+            );
             Err(ENOSPC)
         } else {
             Ok(self.next_page.fetch_add(1, Ordering::SeqCst).try_into()?)
@@ -47,6 +55,10 @@ impl PageAllocator for BasicPageAllocator {
 
     fn dealloc_page(&self, _: PageNum) -> Result<()> {
         unimplemented!();
+    }
+
+    fn update_max_pages(&mut self, dev_pages: u64) {
+        self.max_pages = dev_pages;
     }
 }
 
@@ -108,8 +120,10 @@ impl TryFrom<&PageDescriptor> for &DirPageHeader {
 
 // be careful here... slice should have size DENTRIES_PER_PAGE
 // i can't figure out how to just make this be an array
+#[derive(Debug)]
 struct DirPage<'a> {
     dentries: &'a mut [HayleyFsDentry],
+    // dentries: &'a mut [HayleyFsDentry; DENTRIES_PER_PAGE],
 }
 
 impl DirPage<'_> {
@@ -256,6 +270,11 @@ impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
     fn get_dir_page(&self, sbi: &SbInfo) -> Result<DirPage<'a>> {
         let page_addr = unsafe { page_no_to_page(sbi, self.get_page_no())? as *mut HayleyFsDentry };
         let dentries = unsafe { slice::from_raw_parts_mut(page_addr, DENTRIES_PER_PAGE) };
+        // let dentries = dentries.try_into();
+        // let dentries: &'a mut [HayleyFsDentry; DENTRIES_PER_PAGE] = match dentries {
+        //     Err(_) => return Err(EINVAL),
+        //     Ok(dentries) => dentries,
+        // };
         Ok(DirPage { dentries })
     }
 
@@ -281,7 +300,7 @@ impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
         // this racing with another operation trying to create in the same directory
         // TODO: confirm that
         // TODO: safety notes based on VFS locking.
-        for dentry in page.dentries.iter_mut() {
+        for (_i, dentry) in page.dentries.iter_mut().enumerate() {
             // if any part of a dentry is NOT zeroed out, that dentry is allocated; we need
             // an unallocated dentry
             if dentry.is_free() {
@@ -495,6 +514,7 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         Ok(len)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn write_to_page(
         mut self,
         sbi: &SbInfo,
@@ -525,6 +545,18 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         ))
     }
 
+    #[allow(dead_code)]
+    pub(crate) unsafe fn temp_make_written(mut self) -> DataPageWrapper<'a, InFlight, Written> {
+        let page = self.take();
+        DataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            drop_type: self.drop_type,
+            page_no: self.page_no,
+            page,
+        }
+    }
+
     fn get_page_addr(&self, sbi: &SbInfo) -> Result<*mut u8> {
         let page_addr = unsafe { page_no_to_page(sbi, self.get_page_no())? };
         Ok(page_addr)
@@ -533,6 +565,7 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
 
 impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
     /// Safety: ph must be a valid DataPageHeader reference
+    #[allow(dead_code)]
     unsafe fn wrap_page_to_unmap(ph: &'a mut DataPageHeader, page_no: PageNum) -> Result<Self> {
         if !ph.is_initialized() {
             pr_info!("ERROR: page {:?} is uninitialized\n", page_no);
@@ -548,12 +581,14 @@ impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn mark_to_unmap(sbi: &'a SbInfo, info: DataPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
         let ph = page_no_to_data_header(sbi, page_no)?;
         unsafe { Self::wrap_page_to_unmap(ph, page_no) }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn unmap(mut self) -> DataPageWrapper<'a, Dirty, ClearIno> {
         match &mut self.page {
             Some(page) => page.ino = 0,
@@ -620,6 +655,7 @@ impl<'a> DataPageWrapper<'a, Clean, Alloc> {
     /// NOTE: this method returns a clean backpointer, since some pages
     /// will not actually need to be modified here. when they do, this method
     /// flushes and fences
+    #[allow(dead_code)]
     pub(crate) fn set_data_page_backpointer(
         mut self,
         inode: &InodeWrapper<'a, Clean, Start, RegInode>,
@@ -658,6 +694,7 @@ impl<'a, Op> DataPageWrapper<'a, Dirty, Op> {
 }
 
 impl<'a, Op> DataPageWrapper<'a, InFlight, Op> {
+    #[allow(dead_code)]
     pub(crate) fn fence(mut self) -> DataPageWrapper<'a, Clean, Op> {
         sfence();
         let page = self.take_and_make_drop_safe();

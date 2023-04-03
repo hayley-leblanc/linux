@@ -25,8 +25,8 @@ pub(crate) const MAX_FILENAME_LEN: usize = 64; // TODO: increase
 pub(crate) const NUM_INODES: u64 = INODE_TABLE_SIZE / INODE_SIZE; // max inodes in the FS
 pub(crate) const MAX_PAGES: u64 = u64::MAX;
 pub(crate) const MAX_LINKS: u16 = u16::MAX;
-pub(crate) const DENTRIES_PER_PAGE: usize = 16; // TODO: update with true dentry size
-pub(crate) const INODE_TABLE_SIZE: u64 = 1024 * 1024 * 16; // 2MB
+pub(crate) const DENTRIES_PER_PAGE: usize = 32; // TODO: update with true dentry size
+pub(crate) const INODE_TABLE_SIZE: u64 = 1024 * 1024 * 64; // 2MB
 pub(crate) const NUM_INODE_PAGES: u64 = INODE_TABLE_SIZE / HAYLEYFS_PAGESIZE;
 pub(crate) const DESCRIPTOR_TABLE_SIZE: u64 = 1024 * 1024 * 64; // 2MB
 pub(crate) const NUM_DESCRIPTOR_TABLE_PAGES: u64 = DESCRIPTOR_TABLE_SIZE / HAYLEYFS_PAGESIZE;
@@ -182,7 +182,7 @@ impl SbInfo {
             ino_dentry_map: InoDentryMap::new().unwrap(), // TODO: handle possible panic
             ino_dir_page_map: InoDirPageMap::new().unwrap(), // TODO: handle possible panic
             ino_data_page_map: InoDataPageMap::new().unwrap(), // TODO: handle possible panic
-            page_allocator: PageAllocator::new(DATA_PAGE_START),
+            page_allocator: PageAllocator::new(DATA_PAGE_START, MAX_PAGES), // we don't know the max # of pages yet and will have to update it later
             inode_allocator: InodeAllocator::new(ROOT_INO + 1),
             mount_opts: HayleyfsParams::default(),
         }

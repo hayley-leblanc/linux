@@ -244,6 +244,7 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn dec_link_count(self, _dentry: &DentryWrapper<'a, Clean, ClearIno>) -> Result<InodeWrapper<'a, Dirty, DecLink, Type>> {
         if self.inode.get_link_count() == 0 {
             Err(ENOENT)
@@ -254,6 +255,7 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
     }
 
     // TODO: get the number of bytes written from the page itself, somehow?
+    #[allow(dead_code)]
     pub(crate) fn inc_size(
         self,
         bytes_written: u64,

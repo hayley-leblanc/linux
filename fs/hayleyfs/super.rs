@@ -331,7 +331,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     }
 
     // TODO: update when allocators change
-    sbi.page_allocator = BasicPageAllocator::new((max_page + 1).try_into()?);
+    sbi.page_allocator = BasicPageAllocator::new((max_page + 1).try_into()?, sbi.num_blocks);
     sbi.inode_allocator = BasicInodeAllocator::new(max_inode + 1);
 
     Ok(())
@@ -370,7 +370,9 @@ impl PmDevice for SbInfo {
         }
         let pgsize_i64: i64 = HAYLEYFS_PAGESIZE.try_into()?;
         self.size = num_blocks * pgsize_i64;
+        pr_info!("setting self.size to {:x}\n", self.size);
         self.num_blocks = num_blocks.try_into()?;
+        self.page_allocator.update_max_pages(self.num_blocks);
 
         Ok(())
     }

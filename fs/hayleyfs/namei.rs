@@ -117,7 +117,6 @@ impl inode::Operations for InodeOps {
         dir.inc_nlink();
 
         new_vfs_inode(sb, sbi, mnt_userns, dir, dentry, new_inode, umode)?;
-
         Ok(0)
     }
 
@@ -137,26 +136,26 @@ impl inode::Operations for InodeOps {
     // TODO: if this unlink results in its dir page being emptied, we should
     // deallocate the dir page (at some point)
     // TODO: ihold?
-    fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
-        let inode = dentry.d_inode();
-        let sb = dir.i_sb();
-        // TODO: safety
-        let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // TODO: it's probably not safe to just grab s_fs_info and
-        // get a mutable reference to one of the dram indexes
-        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+    fn unlink(_dir: &fs::INode, _dentry: &fs::DEntry) -> Result<()> {
+        // let inode = dentry.d_inode();
+        // let sb = dir.i_sb();
+        // // TODO: safety
+        // let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // // TODO: it's probably not safe to just grab s_fs_info and
+        // // get a mutable reference to one of the dram indexes
+        // let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        let result = hayleyfs_unlink(sbi, dir, dentry);
-        if let Err(e) = result {
-            return Err(e);
-        }
+        // let result = hayleyfs_unlink(sbi, dir, dentry);
+        // if let Err(e) = result {
+        //     return Err(e);
+        // }
 
-        unsafe {
-            // TODO: is there a function we should use to read the link count?
-            if (*inode).__bindgen_anon_1.i_nlink > 0 {
-                bindings::drop_nlink(inode);
-            }
-        }
+        // unsafe {
+        //     // TODO: is there a function we should use to read the link count?
+        //     if (*inode).__bindgen_anon_1.i_nlink > 0 {
+        //         bindings::drop_nlink(inode);
+        //     }
+        // }
 
         Ok(())
     }
@@ -314,7 +313,6 @@ fn hayleyfs_create<'a>(
     let pd = get_free_dentry(sbi, dir.i_ino())?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
     let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, mnt_userns, dir, pd, umode)?;
-
     dentry.index(dir.i_ino(), sbi)?;
 
     Ok((dentry, inode))
@@ -377,6 +375,7 @@ fn hayleyfs_mkdir<'a>(
     Ok((dentry, parent, inode))
 }
 
+#[allow(dead_code)]
 fn hayleyfs_unlink<'a>(
     sbi: &'a SbInfo,
     dir: &fs::INode,
@@ -458,13 +457,14 @@ fn get_free_dentry<'a>(
     let result = sbi
         .ino_dir_page_map
         .find_page_with_free_dentry(sbi, &parent_ino)?;
-    if let Some(page_info) = result {
+    let result = if let Some(page_info) = result {
         let dir_page = DirPageWrapper::from_dir_page_info(sbi, &page_info)?;
         dir_page.get_free_dentry(sbi)
     } else {
         // no pages have any free dentries
         alloc_page_for_dentry(sbi, parent_ino)
-    }
+    };
+    result
 }
 
 fn alloc_page_for_dentry<'a>(
