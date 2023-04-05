@@ -338,7 +338,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         DATA_PAGE_START,
         sbi.num_blocks,
     )?;
-    sbi.inode_allocator = BasicInodeAllocator::new(max_inode + 1);
+    sbi.inode_allocator = RBInodeAllocator::new_from_alloc_vec(alloc_inode_vec, ROOT_INO)?;
 
     Ok(())
 }

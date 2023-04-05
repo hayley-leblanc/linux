@@ -151,7 +151,7 @@ pub(crate) struct SbInfo {
     // TODO: fix this.
     // optional because we can't set it up until we know how big the fs is
     pub(crate) page_allocator: Option<RBPageAllocator>,
-    pub(crate) inode_allocator: BasicInodeAllocator,
+    pub(crate) inode_allocator: RBInodeAllocator,
 
     pub(crate) mount_opts: HayleyfsParams,
 }
@@ -184,7 +184,7 @@ impl SbInfo {
             ino_dir_page_map: InoDirPageMap::new().unwrap(), // TODO: handle possible panic
             ino_data_page_map: InoDataPageMap::new().unwrap(), // TODO: handle possible panic
             page_allocator: None,
-            inode_allocator: InodeAllocator::new(ROOT_INO + 1),
+            inode_allocator: InodeAllocator::new(ROOT_INO + 1).unwrap(),
             mount_opts: HayleyfsParams::default(),
         }
     }

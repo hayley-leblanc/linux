@@ -7,10 +7,9 @@ use crate::volatile::*;
 use core::{
     marker::PhantomData,
     mem,
-    sync::atomic::{AtomicU64, Ordering},
 };
 use kernel::prelude::*;
-use kernel::{bindings, fs};
+use kernel::{bindings, fs, sync::{Arc, smutex::Mutex}, rbtree::RBTree};
 
 // ZSTs for representing inode types
 // These are not typestate since they don't change, but they are a generic
@@ -447,38 +446,80 @@ impl<'a, Op, Type> InodeWrapper<'a, InFlight, Op, Type> {
 
 /// Interface for volatile inode allocator structures
 pub(crate) trait InodeAllocator {
-    fn new(val: u64) -> Self;
+    fn new(val: u64) -> Result<Self> where Self: Sized;
+    fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64) -> Result<Self> where Self: Sized;
     fn alloc_ino(&self) -> Result<InodeNum>;
     fn dealloc_ino(&self, ino: InodeNum) -> Result<()>;
 }
 
-/// Allocates inodes by keeping a counter and returning the next number in the
-/// counter. Does not support inode deallocation.
-///
-/// # Safety
-/// BasicInodeAllocator is implemented with AtomicU64 so it is safe to share
-/// across threads.
-pub(crate) struct BasicInodeAllocator {
-    next_inode: AtomicU64,
+pub(crate) struct RBInodeAllocator {
+    map: Arc<Mutex<RBTree<InodeNum, ()>>>,
 }
 
-impl InodeAllocator for BasicInodeAllocator {
-    fn new(val: u64) -> Self {
-        BasicInodeAllocator {
-            next_inode: AtomicU64::new(val),
+impl InodeAllocator for RBInodeAllocator {
+    fn new(val: u64) -> Result<Self> {
+        let mut rb = RBTree::new();
+        for i in val..NUM_INODES {
+            rb.try_insert(i, ())?;
         }
+        Ok(Self {
+            map: Arc::try_new(Mutex::new(rb))?
+        })
+    }
+
+    fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64) -> Result<Self> {
+        let mut rb = RBTree::new();
+        let mut cur_ino = start;
+        let mut i = 0;
+        while cur_ino < NUM_INODES && i < alloc_inodes.len() {
+            if cur_ino < alloc_inodes[i] {
+                rb.try_insert(cur_ino, ())?;
+                cur_ino += 1;
+            } else if cur_ino == alloc_inodes[i] {
+                cur_ino += 1;
+                i += 1;
+            } else {
+                // cur_ino > alloc_pages[i]
+                // shouldn't ever happen
+                pr_info!("ERROR: cur_ino {:?}, i {:?}, alloc_inodes[i] {:?}\n", cur_ino, i, alloc_inodes[i]);
+                return Err(EINVAL);
+            }
+        }
+        // add all remaining inodes to the allocator
+        if i < NUM_INODES.try_into()? {
+            for j in i..NUM_INODES.try_into()? {
+                rb.try_insert(j.try_into()?, ())?;
+            }
+        }
+        Ok(Self {
+            map: Arc::try_new(Mutex::new(rb))?
+        })
     }
 
     fn alloc_ino(&self) -> Result<InodeNum> {
-        if self.next_inode.load(Ordering::SeqCst) == NUM_INODES {
-            pr_info!("ERROR: ran out of inodes in basic inode allocator\n");
-            Err(ENOSPC)
-        } else {
-            Ok(self.next_inode.fetch_add(1, Ordering::SeqCst))
-        }
+        let map = Arc::clone(&self.map);
+        let mut map = map.lock();
+        let iter = map.iter().next();
+        let ino = match iter {
+            None => {
+                pr_info!("ERROR: ran out of inodes in RB inode allocator\n");
+                return Err(ENOSPC);
+            } 
+            Some(ino) => *ino.0
+        };
+        map.remove(&ino);
+        Ok(ino)
     }
 
-    fn dealloc_ino(&self, _: InodeNum) -> Result<()> {
-        unimplemented!();
+    fn dealloc_ino(&self, ino: InodeNum) -> Result<()> {
+        let map = Arc::clone(&self.map);
+        let mut map = map.lock();
+        let res = map.try_insert(ino, ())?;
+        if res.is_some() {
+            pr_info!("ERROR: inode {:?} was deallocated but is already in allocator\n", ino);
+            Err(EINVAL)
+        } else {
+            Ok(())
+        }
     }
 }
