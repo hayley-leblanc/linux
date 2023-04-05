@@ -62,7 +62,6 @@ impl inode::Operations for InodeOps {
         // to call them directly here
 
         new_vfs_inode(sb, sbi, mnt_userns, dir, dentry, new_inode, umode)?;
-
         Ok(0)
     }
 
@@ -371,7 +370,6 @@ fn hayleyfs_mkdir<'a>(
     let (dentry, parent, inode) =
         init_dentry_with_new_dir_inode(sbi, mnt_userns, dir, pd, parent_inode, mode)?;
     dentry.index(dir.i_ino(), sbi)?;
-
     Ok((dentry, parent, inode))
 }
 
@@ -434,13 +432,16 @@ fn hayleyfs_unlink<'a>(
                 deallocated.try_push(page)?;
             }
             let deallocated = fence_all_vecs!(deallocated);
+            for page in &deallocated {
+                sbi.page_allocator.dealloc_data_page(page)?;
+            }
             let freed_pages = DataPageWrapper::mark_pages_free(deallocated)?;
             // pages are now deallocated and we can use the freed pages vector
             // to deallocate the inode.
             // TODO: make sure this works when there are no pages associated with
             // the inode
             let pi = pi.dealloc(freed_pages).flush().fence();
-
+            sbi.inode_allocator.dealloc_ino(&pi)?;
             Ok((pi, pd))
         } else {
             Err(EINVAL)

@@ -169,7 +169,7 @@ impl HayleyFsInode {
 
 impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
     pub(crate) fn get_ino(&self) -> InodeNum {
-        self.inode.get_ino()
+        self.ino
     }
 
     pub(crate) fn get_size(&self) -> u64 {
@@ -293,11 +293,19 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
             // get the list of pages associated with this inode and convert them into 
             // ToUnmap wrappers
             let pages = sbi.ino_data_page_map.get_all_pages(&self.get_ino())?;
+            // pr_info!("pages associated with this inode:\n");
+            // for page in &pages {
+            //     pr_info!("{:?}\n", page.get_page_no());
+            // }
             let mut unmap_vec = Vec::new();
             for page in pages {
                 let p = DataPageWrapper::mark_to_unmap(sbi, page)?;
                 unmap_vec.try_push(p)?;
             }
+            // pr_info!("page nos to unmap:\n");
+            // for page in &unmap_vec {
+            //     pr_info!("{:?}\n", page.get_page_no());
+            // }
             Ok(
                 Err(
                     (InodeWrapper {
@@ -449,7 +457,7 @@ pub(crate) trait InodeAllocator {
     fn new(val: u64) -> Result<Self> where Self: Sized;
     fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64) -> Result<Self> where Self: Sized;
     fn alloc_ino(&self) -> Result<InodeNum>;
-    fn dealloc_ino(&self, ino: InodeNum) -> Result<()>;
+    fn dealloc_ino<'a, InodeType>(&self, inode: &InodeWrapper<'a, Clean, Complete, InodeType>) -> Result<()>;
 }
 
 pub(crate) struct RBInodeAllocator {
@@ -511,12 +519,12 @@ impl InodeAllocator for RBInodeAllocator {
         Ok(ino)
     }
 
-    fn dealloc_ino(&self, ino: InodeNum) -> Result<()> {
+    fn dealloc_ino<'a, InodeType>(&self, inode: &InodeWrapper<'a, Clean, Complete, InodeType>) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
-        let res = map.try_insert(ino, ())?;
+        let res = map.try_insert(inode.get_ino(), ())?;
         if res.is_some() {
-            pr_info!("ERROR: inode {:?} was deallocated but is already in allocator\n", ino);
+            pr_info!("ERROR: inode {:?} was deallocated but is already in allocator\n", inode.get_ino());
             Err(EINVAL)
         } else {
             Ok(())

@@ -97,7 +97,6 @@ fn hayleyfs_write<'a>(
     reader: &mut impl IoBufferReader,
     offset: u64,
 ) -> Result<(u64, InodeWrapper<'a, Clean, IncSize, RegInode>)> {
-    // ) -> Result<u64> {
     // TODO: give a way out if reader.len() is 0
     let len: u64 = reader.len().try_into()?;
     let count = if HAYLEYFS_PAGESIZE < len {
@@ -127,6 +126,9 @@ fn hayleyfs_write<'a>(
             .fence();
         sbi.inc_blocks_in_use();
         let page = page.set_data_page_backpointer(&pi).flush().fence();
+        // add page to the index
+        // this is safe to do here because we hold a lock on this inode
+        sbi.ino_data_page_map.insert(ino, &page)?;
         page
     };
     let offset_in_page = offset - page_offset;
@@ -142,9 +144,6 @@ fn hayleyfs_write<'a>(
         data_page.write_to_page(sbi, reader, offset_in_page, to_write)?;
 
     let data_page = data_page.fence();
-
-    // add page to the index
-    sbi.ino_data_page_map.insert(ino, &data_page)?;
 
     if bytes_written < to_write {
         pr_info!(
@@ -180,6 +179,7 @@ fn hayleyfs_read(
     if offset >= size {
         return Ok(0);
     }
+    let bytes_left_in_file = size - count; // # of bytes that can be read
 
     let mut bytes_read = 0;
     while count > 0 {
@@ -187,13 +187,21 @@ fn hayleyfs_read(
 
         // let offset_in_page = page_offset - offset;
         let offset_in_page = offset - page_offset;
-        let bytes_after_offset = HAYLEYFS_PAGESIZE - offset_in_page;
+        // let bytes_after_offset = HAYLEYFS_PAGESIZE - offset_in_page;
+        let bytes_after_offset = if bytes_left_in_file < HAYLEYFS_PAGESIZE {
+            bytes_left_in_file - offset_in_page
+        } else {
+            HAYLEYFS_PAGESIZE - offset_in_page
+        };
         // either read the rest of the count or write to the end of the page
         let to_read = if count < bytes_after_offset {
             count
         } else {
             bytes_after_offset
         };
+        if to_read == 0 {
+            break;
+        }
 
         // if the page exists, read from it. Otherwise, return zeroes
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
@@ -210,6 +218,5 @@ fn hayleyfs_read(
             count -= to_read;
         }
     }
-
     Ok(bytes_read)
 }

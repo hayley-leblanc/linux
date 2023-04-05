@@ -26,7 +26,8 @@ pub(crate) trait PageAllocator {
     where
         Self: Sized;
     fn alloc_page(&self) -> Result<PageNum>;
-    fn dealloc_page(&self, page: PageNum) -> Result<()>;
+    fn dealloc_data_page<'a>(&self, page: &DataPageWrapper<'a, Clean, Dealloc>) -> Result<()>;
+    fn dealloc_dir_page<'a>(&self, page: &DirPageWrapper<'a, Clean, Dealloc>) -> Result<()>;
 }
 
 pub(crate) struct RBPageAllocator {
@@ -104,16 +105,48 @@ impl PageAllocator for Option<RBPageAllocator> {
         }
     }
 
-    fn dealloc_page(&self, page: PageNum) -> Result<()> {
+    fn dealloc_data_page<'a>(&self, page: &DataPageWrapper<'a, Clean, Dealloc>) -> Result<()> {
         if let Some(allocator) = self {
             let map = Arc::clone(&allocator.map);
             let mut map = map.lock();
-            let res = map.try_insert(page, ())?;
+            let res = map.try_insert(page.get_page_no(), ());
+            let res = match res {
+                Ok(res) => res,
+                Err(e) => {
+                    pr_info!(
+                        "ERROR: failed to insert {:?} into the page allocator, error {:?}\n",
+                        page.get_page_no(),
+                        e
+                    );
+                    return Err(e);
+                }
+            };
             // sanity check - the page was not already present in the tree
             if res.is_some() {
                 pr_info!(
                     "ERROR: page {:?} was deallocated but was already in allocator\n",
-                    page
+                    page.get_page_no()
+                );
+                Err(EINVAL)
+            } else {
+                Ok(())
+            }
+        } else {
+            pr_info!("ERROR: page allocator is uninitialized\n");
+            Err(EINVAL)
+        }
+    }
+
+    fn dealloc_dir_page<'a>(&self, page: &DirPageWrapper<'a, Clean, Dealloc>) -> Result<()> {
+        if let Some(allocator) = self {
+            let map = Arc::clone(&allocator.map);
+            let mut map = map.lock();
+            let res = map.try_insert(page.get_page_no(), ())?;
+            // sanity check - the page was not already present in the tree
+            if res.is_some() {
+                pr_info!(
+                    "ERROR: page {:?} was deallocated but was already in allocator\n",
+                    page.get_page_no()
                 );
                 Err(EINVAL)
             } else {
