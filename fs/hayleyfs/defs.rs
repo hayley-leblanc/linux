@@ -149,7 +149,8 @@ pub(crate) struct SbInfo {
     // again, these should really be trait objects, but the system won't compile
     // if they are.
     // TODO: fix this.
-    pub(crate) page_allocator: BasicPageAllocator,
+    // optional because we can't set it up until we know how big the fs is
+    pub(crate) page_allocator: Option<RBPageAllocator>,
     pub(crate) inode_allocator: BasicInodeAllocator,
 
     pub(crate) mount_opts: HayleyfsParams,
@@ -182,7 +183,7 @@ impl SbInfo {
             ino_dentry_map: InoDentryMap::new().unwrap(), // TODO: handle possible panic
             ino_dir_page_map: InoDirPageMap::new().unwrap(), // TODO: handle possible panic
             ino_data_page_map: InoDataPageMap::new().unwrap(), // TODO: handle possible panic
-            page_allocator: PageAllocator::new(DATA_PAGE_START, MAX_PAGES), // we don't know the max # of pages yet and will have to update it later
+            page_allocator: None,
             inode_allocator: InodeAllocator::new(ROOT_INO + 1),
             mount_opts: HayleyfsParams::default(),
         }

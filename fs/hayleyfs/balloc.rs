@@ -7,58 +7,122 @@ use crate::volatile::*;
 use core::{
     ffi,
     marker::PhantomData,
-    mem, slice,
-    sync::atomic::{AtomicU64, Ordering},
+    mem,
+    slice,
+    // sync::atomic::{AtomicU64, Ordering},
 };
-use kernel::io_buffer::{IoBufferReader, IoBufferWriter};
 use kernel::prelude::*;
+use kernel::{
+    io_buffer::{IoBufferReader, IoBufferWriter},
+    rbtree::RBTree,
+    sync::{smutex::Mutex, Arc},
+};
 
 pub(crate) trait PageAllocator {
-    fn new(val: u64, dev_pages: u64) -> Self;
+    fn new_from_range(val: u64, dev_pages: u64) -> Result<Self>
+    where
+        Self: Sized;
+    fn new_from_alloc_vec(alloc_pages: Vec<PageNum>, start: u64, dev_pages: u64) -> Result<Self>
+    where
+        Self: Sized;
     fn alloc_page(&self) -> Result<PageNum>;
     fn dealloc_page(&self, page: PageNum) -> Result<()>;
-    fn update_max_pages(&mut self, dev_pages: u64);
 }
 
-/// Allocates by keeping a counter and returning the next number in the counter.
-/// Does not support page deallocation.
-///
-/// # Safety
-/// BasicPageAllocator is implemented with AtomicU64 so it is safe to share
-/// across threads.
-pub(crate) struct BasicPageAllocator {
-    next_page: AtomicU64,
-    max_pages: u64,
+pub(crate) struct RBPageAllocator {
+    map: Arc<Mutex<RBTree<PageNum, ()>>>,
 }
 
-impl PageAllocator for BasicPageAllocator {
-    fn new(val: u64, dev_pages: u64) -> Self {
-        BasicPageAllocator {
-            next_page: AtomicU64::new(val),
-            max_pages: dev_pages,
+impl PageAllocator for Option<RBPageAllocator> {
+    // TODO: will need two constructors - one from a range of pages (to use at init) and
+    // one to use at remount for disjoint sets of pages
+    fn new_from_range(val: u64, dev_pages: u64) -> Result<Self> {
+        let mut rb = RBTree::new();
+        for i in val..dev_pages {
+            rb.try_insert(i, ())?;
         }
+        Ok(Some(RBPageAllocator {
+            map: Arc::try_new(Mutex::new(rb))?,
+        }))
+    }
+
+    // alloc_pages must be in sorted order. only pages between start and dev_pages
+    // will be added to the allocator tree
+    fn new_from_alloc_vec(alloc_pages: Vec<PageNum>, start: u64, dev_pages: u64) -> Result<Self> {
+        let mut rb = RBTree::new();
+        let mut cur_page = start;
+        let mut i = 0;
+        while cur_page < dev_pages && i < alloc_pages.len() {
+            if cur_page < alloc_pages[i] {
+                rb.try_insert(cur_page, ())?;
+                cur_page += 1;
+            } else if cur_page == alloc_pages[i] {
+                cur_page += 1;
+                i += 1;
+            } else {
+                // cur_page > alloc_pages[i]
+                // i don't THINK this can ever happen?
+                pr_info!(
+                    "ERROR: cur_page {:?}, i {:?}, alloc_pages[i] {:?}\n",
+                    cur_page,
+                    i,
+                    alloc_pages[i]
+                );
+                return Err(EINVAL);
+            }
+        }
+        // add all remaining pages to the allocator
+        let dev_pages_usize: usize = dev_pages.try_into()?;
+        if i < dev_pages_usize {
+            for j in i..dev_pages_usize {
+                rb.try_insert(j.try_into()?, ())?;
+            }
+        }
+        Ok(Some(RBPageAllocator {
+            map: Arc::try_new(Mutex::new(rb))?,
+        }))
     }
 
     fn alloc_page(&self) -> Result<PageNum> {
-        if self.next_page.load(Ordering::SeqCst) == MAX_PAGES
-            || self.next_page.load(Ordering::SeqCst) == self.max_pages
-        {
-            pr_info!(
-                "ERROR: ran out of pages in basic page allocator at page {:?}\n",
-                self.next_page.load(Ordering::SeqCst)
-            );
-            Err(ENOSPC)
+        if let Some(allocator) = self {
+            let map = Arc::clone(&allocator.map);
+            let mut map = map.lock();
+            let iter = map.iter().next();
+
+            let page = match iter {
+                None => {
+                    pr_info!("ERROR: ran out of pages in RB page allocator\n");
+                    return Err(ENOSPC);
+                }
+                Some(page) => *page.0,
+            };
+            map.remove(&page);
+            Ok(page)
         } else {
-            Ok(self.next_page.fetch_add(1, Ordering::SeqCst).try_into()?)
+            pr_info!("ERROR: page allocator is uninitialized\n");
+            Err(EINVAL)
         }
     }
 
-    fn dealloc_page(&self, _: PageNum) -> Result<()> {
-        unimplemented!();
-    }
-
-    fn update_max_pages(&mut self, dev_pages: u64) {
-        self.max_pages = dev_pages;
+    fn dealloc_page(&self, page: PageNum) -> Result<()> {
+        if let Some(allocator) = self {
+            let map = Arc::clone(&allocator.map);
+            let mut map = map.lock();
+            let res = map.try_insert(page, ())?;
+            // sanity check - the page was not already present in the tree
+            if res.is_some() {
+                pr_info!(
+                    "ERROR: page {:?} was deallocated but was already in allocator\n",
+                    page
+                );
+                Err(EINVAL)
+            } else {
+                Ok(())
+            }
+        } else {
+            pr_info!("ERROR: page allocator is uninitialized\n");
+            Err(EINVAL)
+        }
     }
 }
 

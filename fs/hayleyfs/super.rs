@@ -291,7 +291,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     // 4. scan the directory entries in live pages to determine which inodes are live
 
     while !live_inode_vec.is_empty() {
-        let live_inode = live_inode_vec.pop().unwrap();
+        // TODO: implement a VecDeque to get better perf
+        let live_inode = live_inode_vec.remove(0);
         if live_inode > max_inode {
             max_inode = live_inode;
         }
@@ -312,6 +313,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                 // add these live dentries to the index
                 for dentry in live_dentries {
                     sbi.ino_dentry_map.insert(live_inode, dentry)?;
+                    live_inode_vec.try_push(dentry.get_ino())?;
                 }
 
                 sbi.ino_dir_page_map.insert(live_inode, &dir_page_wrapper)?;
@@ -331,7 +333,11 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     }
 
     // TODO: update when allocators change
-    sbi.page_allocator = BasicPageAllocator::new((max_page + 1).try_into()?, sbi.num_blocks);
+    sbi.page_allocator = Option::<RBPageAllocator>::new_from_alloc_vec(
+        alloc_page_vec,
+        DATA_PAGE_START,
+        sbi.num_blocks,
+    )?;
     sbi.inode_allocator = BasicInodeAllocator::new(max_inode + 1);
 
     Ok(())
@@ -370,9 +376,9 @@ impl PmDevice for SbInfo {
         }
         let pgsize_i64: i64 = HAYLEYFS_PAGESIZE.try_into()?;
         self.size = num_blocks * pgsize_i64;
-        pr_info!("setting self.size to {:x}\n", self.size);
         self.num_blocks = num_blocks.try_into()?;
-        self.page_allocator.update_max_pages(self.num_blocks);
+        self.page_allocator =
+            Option::<RBPageAllocator>::new_from_range(DATA_PAGE_START, self.num_blocks)?;
 
         Ok(())
     }
