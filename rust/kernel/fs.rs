@@ -309,7 +309,7 @@ impl<T: Type + ?Sized> Tables<T> {
         dirty_inode: None,
         write_inode: None,
         drop_inode: None,
-        evict_inode: None,
+        evict_inode: Some(Self::evict_inode_callback),
         put_super: None,
         sync_fs: None,
         freeze_super: None,
@@ -339,6 +339,11 @@ impl<T: Type + ?Sized> Tables<T> {
     ) -> core::ffi::c_int {
         let sb: &SuperBlock<T> = unsafe { &*(*dentry).d_sb.cast() };
         from_kernel_result! {T::statfs(sb, buf)?; Ok(0)}
+    }
+
+    unsafe extern "C" fn evict_inode_callback(inode: *mut bindings::inode) {
+        let inode = unsafe { &*inode.cast() };
+        T::evict_inode(inode);
     }
 }
 
@@ -372,6 +377,9 @@ pub trait Type {
 
     /// Returns metadata about this file system.
     fn statfs(sb: &SuperBlock<Self>, buf: *mut bindings::kstatfs) -> Result<()>;
+
+    /// Called at the last iput() if i_nlink is 0.
+    fn evict_inode(inode: &INode);
 }
 
 /// File system flags.
