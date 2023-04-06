@@ -155,6 +155,23 @@ impl fs::Type for HayleyFs {
 
         Ok(())
     }
+
+    fn evict_inode(inode: &fs::INode) {
+        let sb = inode.i_sb();
+        let ino = inode.i_ino();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+
+        unsafe { bindings::clear_inode(inode.get_inner()) };
+
+        // TODO: we might want to make deallocating inode numbers unsafe or
+        // require proof that the inode in question has actually been
+        // persistently freed
+        sbi.inode_allocator.dealloc_ino(ino).unwrap();
+    }
 }
 
 /// # Safety

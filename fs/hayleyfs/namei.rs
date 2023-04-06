@@ -136,7 +136,6 @@ impl inode::Operations for InodeOps {
     // deallocate the dir page (at some point)
     // TODO: ihold?
     fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
-        let inode = dentry.d_inode();
         let sb = dir.i_sb();
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
@@ -149,12 +148,12 @@ impl inode::Operations for InodeOps {
             return Err(e);
         }
 
-        unsafe {
-            // TODO: is there a function we should use to read the link count?
-            if (*inode).__bindgen_anon_1.i_nlink > 0 {
-                bindings::drop_nlink(inode);
-            }
-        }
+        // unsafe {
+        //     // TODO: is there a function we should use to read the link count?
+        //     // if (*inode).__bindgen_anon_1.i_nlink > 0 {
+        //     bindings::drop_nlink(inode);
+        //     // }
+        // }
 
         Ok(())
     }
@@ -382,6 +381,7 @@ fn hayleyfs_unlink<'a>(
     InodeWrapper<'a, Clean, Complete, RegInode>,
     DentryWrapper<'a, Clean, Free>,
 )> {
+    let inode = dentry.d_inode();
     let parent_ino = dir.i_ino();
     let _parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
 
@@ -414,6 +414,13 @@ fn hayleyfs_unlink<'a>(
         let result = pi.try_complete_unlink(sbi)?;
 
         if let Ok(result) = result {
+            unsafe {
+                // TODO: is there a function we should use to read the link count?
+                // if (*inode).__bindgen_anon_1.i_nlink > 0 {
+                bindings::drop_nlink(inode);
+                // }
+            }
+
             Ok((result, pd))
         } else if let Err((pi, mut pages)) = result {
             // go through each page and deallocate it
@@ -436,12 +443,20 @@ fn hayleyfs_unlink<'a>(
                 sbi.page_allocator.dealloc_data_page(page)?;
             }
             let freed_pages = DataPageWrapper::mark_pages_free(deallocated)?;
+
+            unsafe {
+                // TODO: is there a function we should use to read the link count?
+                // if (*inode).__bindgen_anon_1.i_nlink > 0 {
+                bindings::drop_nlink(inode);
+                // }
+            }
+
             // pages are now deallocated and we can use the freed pages vector
             // to deallocate the inode.
             // TODO: make sure this works when there are no pages associated with
             // the inode
             let pi = pi.dealloc(freed_pages).flush().fence();
-            sbi.inode_allocator.dealloc_ino(&pi)?;
+            // sbi.inode_allocator.dealloc_ino(&pi)?;
             Ok((pi, pd))
         } else {
             Err(EINVAL)

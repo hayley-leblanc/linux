@@ -457,7 +457,8 @@ pub(crate) trait InodeAllocator {
     fn new(val: u64) -> Result<Self> where Self: Sized;
     fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64) -> Result<Self> where Self: Sized;
     fn alloc_ino(&self) -> Result<InodeNum>;
-    fn dealloc_ino<'a, InodeType>(&self, inode: &InodeWrapper<'a, Clean, Complete, InodeType>) -> Result<()>;
+    // TODO: should this be unsafe or require a free inode wrapper?
+    fn dealloc_ino(&self, ino: InodeNum) -> Result<()>;
 }
 
 pub(crate) struct RBInodeAllocator {
@@ -519,12 +520,12 @@ impl InodeAllocator for RBInodeAllocator {
         Ok(ino)
     }
 
-    fn dealloc_ino<'a, InodeType>(&self, inode: &InodeWrapper<'a, Clean, Complete, InodeType>) -> Result<()> {
+    fn dealloc_ino(&self, ino: InodeNum) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
-        let res = map.try_insert(inode.get_ino(), ())?;
+        let res = map.try_insert(ino, ())?;
         if res.is_some() {
-            pr_info!("ERROR: inode {:?} was deallocated but is already in allocator\n", inode.get_ino());
+            pr_info!("ERROR: inode {:?} was deallocated but is already in allocator\n", ino);
             Err(EINVAL)
         } else {
             Ok(())
