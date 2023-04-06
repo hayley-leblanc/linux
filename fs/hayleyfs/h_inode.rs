@@ -30,7 +30,7 @@ impl AnyInode for DirInode {}
 #[repr(C)]
 #[derive(Debug)]
 pub(crate) struct HayleyFsInode {
-    inode_type: InodeType, // TODO: i think this enum is 8 bytes.. could make it smaller
+    inode_type: InodeType, // TODO: currently 2 bytes? could be 1
     link_count: u16,
     mode: u16,
     uid: u32,

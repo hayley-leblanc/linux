@@ -96,7 +96,6 @@ impl inode::Operations for InodeOps {
         }
     }
 
-    // TODO: ihold?
     fn mkdir(
         mnt_userns: *mut bindings::user_namespace,
         dir: &mut fs::INode,
@@ -128,13 +127,10 @@ impl inode::Operations for InodeOps {
         _flags: u32,
     ) -> Result<()> {
         unimplemented!();
-
-        // TODO: decrement the inode's link count and delete it if link count == 0
     }
 
     // TODO: if this unlink results in its dir page being emptied, we should
     // deallocate the dir page (at some point)
-    // TODO: ihold?
     fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
         let sb = dir.i_sb();
         // TODO: safety
@@ -147,13 +143,6 @@ impl inode::Operations for InodeOps {
         if let Err(e) = result {
             return Err(e);
         }
-
-        // unsafe {
-        //     // TODO: is there a function we should use to read the link count?
-        //     // if (*inode).__bindgen_anon_1.i_nlink > 0 {
-        //     bindings::drop_nlink(inode);
-        //     // }
-        // }
 
         Ok(())
     }
@@ -415,10 +404,7 @@ fn hayleyfs_unlink<'a>(
 
         if let Ok(result) = result {
             unsafe {
-                // TODO: is there a function we should use to read the link count?
-                // if (*inode).__bindgen_anon_1.i_nlink > 0 {
                 bindings::drop_nlink(inode);
-                // }
             }
 
             Ok((result, pd))
@@ -445,18 +431,12 @@ fn hayleyfs_unlink<'a>(
             let freed_pages = DataPageWrapper::mark_pages_free(deallocated)?;
 
             unsafe {
-                // TODO: is there a function we should use to read the link count?
-                // if (*inode).__bindgen_anon_1.i_nlink > 0 {
                 bindings::drop_nlink(inode);
-                // }
             }
 
             // pages are now deallocated and we can use the freed pages vector
             // to deallocate the inode.
-            // TODO: make sure this works when there are no pages associated with
-            // the inode
             let pi = pi.dealloc(freed_pages).flush().fence();
-            // sbi.inode_allocator.dealloc_ino(&pi)?;
             Ok((pi, pd))
         } else {
             Err(EINVAL)
@@ -497,8 +477,6 @@ fn alloc_page_for_dentry<'a>(
             .flush()
             .fence();
         sbi.ino_dir_page_map.insert(parent_ino, &dir_page)?;
-        // TODO: get_free_dentry() should never return an error since all dentries
-        // in the newly-allocated page should be free - but check on that and confirm
         let pd = dir_page.get_free_dentry(sbi)?;
         Ok(pd)
     } else {
