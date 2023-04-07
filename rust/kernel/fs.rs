@@ -5,7 +5,7 @@
 //! C headers: [`include/linux/fs.h`](../../../../include/linux/fs.h)
 
 use crate::{
-    bindings, error::code::*, error::from_kernel_result, inode, str::CStr, sync::RwSemaphore,
+    bindings, dir, error::code::*, error::from_kernel_result, inode, str::CStr, sync::RwSemaphore,
     to_result, types::ForeignOwnable, types::PointerWrapper, AlwaysRefCounted, Error, Result,
     ScopeGuard, ThisModule,
 };
@@ -358,6 +358,9 @@ pub trait Type {
 
     /// Used to define `struct inode_operations` for this file system.
     type InodeOps: inode::Operations;
+
+    /// Used to define `struct file_operations` **for directories** for this file system.
+    type DirOps: dir::Operations;
 
     /// Determines how superblocks for this file system type are keyed.
     const SUPER_TYPE: Super;
@@ -729,10 +732,11 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
             inode.i_blkbits = unsafe { bindings::blksize_bits(4096).try_into()? };
 
             // SAFETY: `simple_dir_operations` never changes, it's safe to reference it.
-            inode.__bindgen_anon_3.i_fop = unsafe { &bindings::simple_dir_operations };
+            // TODO: update safety
+            inode.__bindgen_anon_3.i_fop = unsafe { dir::OperationsVtable::<T::DirOps>::build() };
 
             // SAFETY: `simple_dir_inode_operations` never changes, it's safe to reference it.
-            // inode.i_op = unsafe { &bindings::simple_dir_inode_operations };
+            // TODO: update safety
             inode.i_op = unsafe { inode::OperationsVtable::<T::InodeOps>::build() };
 
             // SAFETY: `inode` is valid for write.
