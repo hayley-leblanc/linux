@@ -5,7 +5,7 @@
 //! C headers: [`include/linux/fs.h`](../../../../include/linux/fs.h)
 
 use crate::{
-    bindings, error::code::*, error::from_kernel_result, inode, str::CStr, sync::RwSemaphore,
+    bindings, dir, error::code::*, error::from_kernel_result, inode, str::CStr, sync::RwSemaphore,
     to_result, types::ForeignOwnable, types::PointerWrapper, AlwaysRefCounted, Error, Result,
     ScopeGuard, ThisModule,
 };
