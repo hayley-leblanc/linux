@@ -367,23 +367,21 @@ macro_rules! start_timing {
 #[macro_export]
 macro_rules! end_timing {
     ($name:ident, $start:ident) => {
-        use TimingCategory::*;
         unsafe {
             let mut end = bindings::timespec64 {
                 tv_sec: 0,
                 tv_nsec: 0,
             };
             bindings::ktime_get_real_ts64(&mut end as *mut bindings::timespec64);
-            TIMING_STATS[$name as usize].fetch_add(
+            TIMING_STATS[TimingCategory::$name as usize].fetch_add(
                 ((end.tv_sec - $start.tv_sec) * 1000000000) + end.tv_nsec - $start.tv_nsec,
                 Ordering::Relaxed,
             );
-            COUNT_STATS[$name as usize].fetch_add(1, Ordering::Relaxed);
+            COUNT_STATS[TimingCategory::$name as usize].fetch_add(1, Ordering::Relaxed);
         }
     };
 }
 
-#[allow(dead_code)]
 pub(crate) fn print_timing_stats() {
     use TimingCategory::*;
     for i in 0..TimingNum as usize {
@@ -391,10 +389,25 @@ pub(crate) fn print_timing_stats() {
             let count = COUNT_STATS[i].load(Ordering::Relaxed);
             if count > 0 {
                 let time: u64 = TIMING_STATS[i].load(Ordering::Relaxed).try_into().unwrap();
-                pr_info!("{:?}: avg {:?}ns\n", match_timing_category(i), time / count);
+                pr_info!(
+                    "{:?}: avg {:?} ns, {:?} ops recorded\n",
+                    match_timing_category(i),
+                    time / count,
+                    count
+                );
             } else {
                 pr_info!("no {:?} measured\n", match_timing_category(i));
             }
+        }
+    }
+}
+
+pub(crate) fn clear_timing_stats() {
+    use TimingCategory::*;
+    for i in 0..TimingNum as usize {
+        unsafe {
+            COUNT_STATS[i].store(0, Ordering::SeqCst);
+            TIMING_STATS[i].store(0, Ordering::SeqCst);
         }
     }
 }
@@ -405,7 +418,10 @@ pub(crate) fn match_timing_category(val: usize) -> TimingCategory {
     use TimingCategory::*;
     match val {
         0 => LookupDataPage,
-        1 => TimingNum,
+        1 => ReadDataPage,
+        2 => ReadLoop,
+        3 => FullRead,
+        4 => TimingNum,
         _ => panic!("Unrecognized timing category {:?}", val),
     }
 }
@@ -414,10 +430,15 @@ pub(crate) fn match_timing_category(val: usize) -> TimingCategory {
 #[derive(Debug)]
 pub(crate) enum TimingCategory {
     LookupDataPage = 0,
+    ReadDataPage,
+    ReadLoop,
+    FullRead,
     TimingNum,
 }
 
+const ATOMIC_ZERO_I64: AtomicI64 = AtomicI64::new(0);
+const ATOMIC_ZERO_U64: AtomicU64 = AtomicU64::new(0);
 pub(crate) static mut TIMING_STATS: [AtomicI64; TimingCategory::TimingNum as usize] =
-    [AtomicI64::new(0); TimingCategory::TimingNum as usize];
+    [ATOMIC_ZERO_I64; TimingCategory::TimingNum as usize];
 pub(crate) static mut COUNT_STATS: [AtomicU64; TimingCategory::TimingNum as usize] =
-    [AtomicU64::new(0); TimingCategory::TimingNum as usize];
+    [ATOMIC_ZERO_U64; TimingCategory::TimingNum as usize];

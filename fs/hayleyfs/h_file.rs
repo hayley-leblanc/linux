@@ -172,6 +172,8 @@ fn hayleyfs_read(
     writer: &mut impl IoBufferWriter,
     mut offset: u64,
 ) -> Result<u64> {
+    init_timing!(full_read);
+    start_timing!(full_read);
     let mut count: u64 = writer.len().try_into()?;
     // TODO: update timestamp
 
@@ -186,7 +188,10 @@ fn hayleyfs_read(
     let bytes_left_in_file = size - offset; // # of bytes that can be read
 
     let mut bytes_read = 0;
+
     while count > 0 {
+        init_timing!(read_loop);
+        start_timing!(read_loop);
         let page_offset = page_offset(offset)?;
 
         let offset_in_page = offset - page_offset;
@@ -204,23 +209,31 @@ fn hayleyfs_read(
         if to_read == 0 {
             break;
         }
-        init_timing!(start);
-        start_timing!(start);
+        init_timing!(page_lookup);
+        start_timing!(page_lookup);
         // if the page exists, read from it. Otherwise, return zeroes
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
-        end_timing!(LookupDataPage, start);
+        end_timing!(LookupDataPage, page_lookup);
         if let Some(page_info) = result {
             let data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
+            init_timing!(read_page);
+            start_timing!(read_page);
             let read = data_page.read_from_page(sbi, writer, offset_in_page, to_read)?;
+            end_timing!(ReadDataPage, read_page);
             bytes_read += read;
             offset += read;
             count -= read;
         } else {
+            init_timing!(read_page);
+            start_timing!(read_page);
             writer.clear(to_read.try_into()?)?;
+            end_timing!(ReadDataPage, read_page);
             bytes_read += to_read;
             offset += to_read;
             count -= to_read;
         }
+        end_timing!(ReadLoop, read_loop);
     }
+    end_timing!(FullRead, full_read);
     Ok(bytes_read)
 }
