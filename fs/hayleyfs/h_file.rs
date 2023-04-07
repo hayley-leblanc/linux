@@ -174,20 +174,17 @@ fn hayleyfs_read(
     let inode = inode.read();
     let size: u64 = inode.i_size_read().try_into()?;
     let ino = inode.i_ino();
-
     count = if count < size { count } else { size };
     if offset >= size {
         return Ok(0);
     }
-    let bytes_left_in_file = size - count; // # of bytes that can be read
+    let bytes_left_in_file = size - offset; // # of bytes that can be read
 
     let mut bytes_read = 0;
     while count > 0 {
         let page_offset = page_offset(offset)?;
 
-        // let offset_in_page = page_offset - offset;
         let offset_in_page = offset - page_offset;
-        // let bytes_after_offset = HAYLEYFS_PAGESIZE - offset_in_page;
         let bytes_after_offset = if bytes_left_in_file < HAYLEYFS_PAGESIZE {
             bytes_left_in_file - offset_in_page
         } else {
@@ -207,10 +204,10 @@ fn hayleyfs_read(
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
         if let Some(page_info) = result {
             let data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
-            data_page.read_from_page(sbi, writer, offset_in_page, to_read)?;
-            bytes_read += to_read;
-            offset += to_read;
-            count -= to_read;
+            let read = data_page.read_from_page(sbi, writer, offset_in_page, to_read)?;
+            bytes_read += read;
+            offset += read;
+            count -= read;
         } else {
             writer.clear(to_read.try_into()?)?;
             bytes_read += to_read;

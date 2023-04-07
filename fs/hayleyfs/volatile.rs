@@ -262,7 +262,6 @@ impl InoDataPageMap for BasicInoDataPageMap {
             page_no,
             offset: page.get_offset(),
         };
-
         if let Some(node) = map.get_mut(&ino) {
             node.try_push(page_info)?;
         } else {
