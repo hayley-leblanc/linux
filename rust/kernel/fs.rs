@@ -6,8 +6,7 @@
 
 use crate::{
     bindings, dir, error::code::*, error::from_kernel_result, inode, str::CStr, sync::RwSemaphore,
-    to_result, types::ForeignOwnable, types::PointerWrapper, AlwaysRefCounted, Error, Result,
-    ScopeGuard, ThisModule,
+    to_result, types::ForeignOwnable, AlwaysRefCounted, Error, Result, ScopeGuard, ThisModule,
 };
 use alloc::boxed::Box;
 use core::{

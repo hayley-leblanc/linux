@@ -124,6 +124,7 @@ impl<T: Operations> OperationsVtable<T> {
         lookup: Some(Self::lookup_callback),
         get_link: None,
         permission: None,
+        get_inode_acl: None,
         get_acl: None,
         readlink: None,
         create: Some(Self::create_callback),
