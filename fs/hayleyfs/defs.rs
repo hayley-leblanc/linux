@@ -4,7 +4,7 @@ use crate::typestate::*;
 use crate::volatile::*;
 use core::{
     ptr, slice,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicI64, AtomicU64, Ordering},
 };
 use kernel::bindings;
 use kernel::prelude::*;
@@ -189,6 +189,7 @@ impl SbInfo {
         }
     }
 
+    // TODO: do these really need to be SeqCst?
     pub(crate) fn inc_inodes_in_use(&self) {
         self.inodes_in_use.fetch_add(1, Ordering::SeqCst);
     }
@@ -340,3 +341,83 @@ impl SbInfo {
         }
     }
 }
+
+// Timing and stats-related functions and macros
+
+/// Initialize a timespec for a timing measurement
+#[macro_export]
+macro_rules! init_timing {
+    ($t:ident) => {
+        let mut $t = bindings::timespec64 {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+    };
+}
+
+/// Record start time for an operation
+#[macro_export]
+macro_rules! start_timing {
+    ($t:ident) => {
+        unsafe { bindings::ktime_get_real_ts64(&mut $t as *mut bindings::timespec64) };
+    };
+}
+
+/// Finish recording an operation and record its elapsed wall-clock time
+#[macro_export]
+macro_rules! end_timing {
+    ($name:ident, $start:ident) => {
+        use TimingCategory::*;
+        unsafe {
+            let mut end = bindings::timespec64 {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            bindings::ktime_get_real_ts64(&mut end as *mut bindings::timespec64);
+            TIMING_STATS[$name as usize].fetch_add(
+                ((end.tv_sec - $start.tv_sec) * 1000000000) + end.tv_nsec - $start.tv_nsec,
+                Ordering::Relaxed,
+            );
+            COUNT_STATS[$name as usize].fetch_add(1, Ordering::Relaxed);
+        }
+    };
+}
+
+#[allow(dead_code)]
+pub(crate) fn print_timing_stats() {
+    use TimingCategory::*;
+    for i in 0..TimingNum as usize {
+        unsafe {
+            let count = COUNT_STATS[i].load(Ordering::Relaxed);
+            if count > 0 {
+                let time: u64 = TIMING_STATS[i].load(Ordering::Relaxed).try_into().unwrap();
+                pr_info!("{:?}: avg {:?}ns\n", match_timing_category(i), time / count);
+            } else {
+                pr_info!("no {:?} measured\n", match_timing_category(i));
+            }
+        }
+    }
+}
+
+// TODO: is there a nicer way to do this without an external crate?
+#[allow(dead_code)]
+pub(crate) fn match_timing_category(val: usize) -> TimingCategory {
+    use TimingCategory::*;
+    match val {
+        0 => LookupDataPage,
+        1 => TimingNum,
+        _ => panic!("Unrecognized timing category {:?}", val),
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) enum TimingCategory {
+    LookupDataPage = 0,
+    TimingNum,
+}
+
+pub(crate) static mut TIMING_STATS: [AtomicI64; TimingCategory::TimingNum as usize] =
+    [AtomicI64::new(0); TimingCategory::TimingNum as usize];
+pub(crate) static mut COUNT_STATS: [AtomicU64; TimingCategory::TimingNum as usize] =
+    [AtomicU64::new(0); TimingCategory::TimingNum as usize];

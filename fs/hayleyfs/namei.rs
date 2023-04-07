@@ -1,6 +1,6 @@
 use crate::balloc::*;
 use crate::defs::*;
-use crate::dir::*;
+use crate::h_dir::*;
 use crate::h_file::*;
 use crate::h_inode::*;
 use crate::pm::*;
@@ -9,7 +9,7 @@ use crate::volatile::*;
 use crate::{fence_all, fence_all_vecs, fence_obj, fence_vec};
 // use core::ffi;
 use kernel::prelude::*;
-use kernel::{bindings, error, file, fs, inode};
+use kernel::{bindings, dir, error, file, fs, inode};
 
 pub(crate) struct InodeOps;
 #[vtable]
@@ -198,7 +198,7 @@ pub(crate) fn hayleyfs_iget(
         },
         InodeType::DIR => unsafe {
             (*inode).i_op = inode::OperationsVtable::<InodeOps>::build();
-            (*inode).__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+            (*inode).__bindgen_anon_3.i_fop = dir::OperationsVtable::<DirOps>::build();
         },
         InodeType::NONE => panic!("Inode type is NONE"),
     }
@@ -244,7 +244,7 @@ fn new_vfs_inode<'a, Type>(
             vfs_inode.i_mode = umode | bindings::S_IFDIR as u16;
             unsafe {
                 vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
-                vfs_inode.__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+                vfs_inode.__bindgen_anon_3.i_fop = dir::OperationsVtable::<DirOps>::build();
                 bindings::set_nlink(vfs_inode, 2);
             }
         }

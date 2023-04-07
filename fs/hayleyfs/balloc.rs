@@ -1,5 +1,5 @@
 use crate::defs::*;
-use crate::dir::*;
+use crate::h_dir::*;
 use crate::h_inode::*;
 use crate::pm::*;
 use crate::typestate::*;
@@ -607,6 +607,7 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         unsafe { Self::wrap_data_page_header(ph, page_no) }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn read_from_page(
         &self,
         sbi: &SbInfo,

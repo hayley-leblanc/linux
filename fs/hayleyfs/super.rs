@@ -5,6 +5,7 @@
 use balloc::*;
 use core::{ffi, ptr};
 use defs::*;
+use h_dir::*;
 use h_inode::*;
 use kernel::prelude::*;
 use kernel::{bindings, c_str, fs, rbtree::RBTree};
@@ -14,9 +15,10 @@ use volatile::*;
 
 mod balloc;
 mod defs;
-mod dir;
+mod h_dir;
 mod h_file;
 mod h_inode;
+mod ioctl;
 mod namei;
 mod pm;
 mod typestate;
@@ -50,6 +52,7 @@ impl fs::Type for HayleyFs {
     type Context = Self;
     type Data = Box<SbInfo>;
     type InodeOps = InodeOps;
+    type DirOps = DirOps;
     const SUPER_TYPE: fs::Super = fs::Super::BlockDev; // TODO: or BlockDev?
     const NAME: &'static CStr = c_str!("hayleyfs");
     const FLAGS: i32 = fs::flags::REQUIRES_DEV | fs::flags::USERNS_MOUNT;

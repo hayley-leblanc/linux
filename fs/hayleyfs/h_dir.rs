@@ -5,6 +5,7 @@ use crate::typestate::*;
 use crate::volatile::*;
 use core::{ffi, marker::PhantomData, mem};
 use kernel::prelude::*;
+use kernel::{dir, file};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -206,5 +207,13 @@ impl<'a, Op> DentryWrapper<'a, InFlight, Op> {
             op: PhantomData,
             dentry: self.dentry,
         }
+    }
+}
+
+pub(crate) struct DirOps;
+#[vtable]
+impl dir::Operations for DirOps {
+    fn ioctl(data: (), file: &file::File, cmd: &mut file::IoctlCommand) -> Result<i32> {
+        cmd.dispatch::<Self>(data, file)
     }
 }

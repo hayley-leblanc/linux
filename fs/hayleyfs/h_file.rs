@@ -3,7 +3,8 @@ use crate::defs::*;
 use crate::h_inode::*;
 use crate::typestate::*;
 use crate::volatile::*;
-use core::{marker::Sync, ptr};
+use crate::{end_timing, init_timing, start_timing};
+use core::{marker::Sync, ptr, sync::atomic::Ordering};
 use kernel::prelude::*;
 use kernel::{
     bindings, error, file, fs,
@@ -88,6 +89,10 @@ impl file::Operations for FileOps {
         } else {
             Ok(result.try_into()?)
         }
+    }
+
+    fn ioctl(data: (), file: &file::File, cmd: &mut file::IoctlCommand) -> Result<i32> {
+        cmd.dispatch::<Self>(data, file)
     }
 }
 
@@ -199,9 +204,11 @@ fn hayleyfs_read(
         if to_read == 0 {
             break;
         }
-
+        init_timing!(start);
+        start_timing!(start);
         // if the page exists, read from it. Otherwise, return zeroes
         let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
+        end_timing!(LookupDataPage, start);
         if let Some(page_info) = result {
             let data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
             let read = data_page.read_from_page(sbi, writer, offset_in_page, to_read)?;

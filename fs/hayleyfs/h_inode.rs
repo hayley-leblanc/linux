@@ -1,7 +1,7 @@
 use crate::balloc::*;
 use crate::defs::*;
 use crate::pm::*;
-use crate::dir::*;
+use crate::h_dir::*;
 use crate::typestate::*;
 use crate::volatile::*;
 use core::{
