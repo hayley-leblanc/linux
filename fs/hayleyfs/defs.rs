@@ -143,7 +143,7 @@ pub(crate) struct SbInfo {
     // TODO: fix this.
     pub(crate) ino_dentry_map: BasicInoDentryMap, // InoDentryMap
     pub(crate) ino_dir_page_map: BasicInoDirPageMap, // InoDirPageMap
-    pub(crate) ino_data_page_map: BasicInoDataPageMap, // InoDataPageMap
+    pub(crate) ino_data_page_map: RBTreeInoDataPageMap, // InoDataPageMap
 
     // volatile allocators
     // again, these should really be trait objects, but the system won't compile

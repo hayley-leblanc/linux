@@ -293,8 +293,9 @@ impl InoDataPageMap for BasicInoDataPageMap {
         let mut vec = Vec::new();
         if let Some(pages) = pages {
             // FIXME: do this without cloning all of the pages in the vector
+            // FIXME: error handlign
             for page in pages {
-                vec.try_push(page.clone())?;
+                vec.try_push(page.clone()).unwrap();
             }
         }
         Ok(vec)
@@ -308,5 +309,81 @@ impl InoDataPageMap for BasicInoDataPageMap {
             pages.retain(|x| x.offset != offset);
         }
         Ok(())
+    }
+}
+
+pub(crate) struct RBTreeInoDataPageMap {
+    map: Arc<Mutex<RBTree<InodeNum, RBTree<u64, DataPageInfo>>>>,
+}
+
+impl InoDataPageMap for RBTreeInoDataPageMap {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            map: Arc::try_new(Mutex::new(RBTree::new()))?,
+        })
+    }
+
+    fn insert<'a, State: Initialized>(
+        &self,
+        ino: InodeNum,
+        page: &DataPageWrapper<'a, Clean, State>,
+    ) -> Result<()> {
+        let map = Arc::clone(&self.map);
+        let mut map = map.lock();
+        let page_no = page.get_page_no();
+        let offset = page.get_offset();
+        let page_info = DataPageInfo {
+            owner: ino,
+            page_no,
+            offset,
+        };
+        if let Some(tree) = map.get_mut(&ino) {
+            tree.try_insert(offset, page_info)?;
+        } else {
+            let mut new_tree = RBTree::new();
+            new_tree.try_insert(offset, page_info)?;
+            map.try_insert(ino, new_tree)?;
+        }
+        Ok(())
+    }
+
+    fn find(&self, ino: &InodeNum, offset: u64) -> Option<DataPageInfo> {
+        let map = Arc::clone(&self.map);
+        let map = map.lock();
+        let tree = map.get(&ino);
+        if let Some(tree) = tree {
+            let page = tree.get(&offset);
+            page.copied()
+        } else {
+            None
+        }
+    }
+
+    fn get_all_pages(&self, ino: &InodeNum) -> Result<Vec<DataPageInfo>> {
+        let map = Arc::clone(&self.map);
+        let map = map.lock();
+        let tree = map.get(&ino);
+        let mut output_vec = Vec::new();
+        if let Some(tree) = tree {
+            // FIXME: do this without creating a new vector by hand
+            for page in tree.values() {
+                output_vec.try_push(page.clone())?;
+            }
+            Ok(output_vec)
+        } else {
+            Err(ENOENT)
+        }
+    }
+
+    fn delete(&self, ino: &InodeNum, offset: u64) -> Result<()> {
+        let map = Arc::clone(&self.map);
+        let mut map = map.lock();
+        let tree = map.get_mut(&ino);
+        if let Some(tree) = tree {
+            tree.remove(&offset);
+            Ok(())
+        } else {
+            Err(ENOENT)
+        }
     }
 }
