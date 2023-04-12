@@ -755,6 +755,20 @@ void rust_helper_inode_unlock(struct inode *inode) {
 }
 EXPORT_SYMBOL_GPL(rust_helper_inode_unlock);
 
+bool rust_helper_S_ISLNK(unsigned int val) {
+	return S_ISLNK(val);
+}
+EXPORT_SYMBOL_GPL(rust_helper_S_ISLNK);
+
+bool rust_helper_S_ISREG(unsigned int val) {
+	return S_ISREG(val);
+}
+EXPORT_SYMBOL_GPL(rust_helper_S_ISREG);
+
+bool rust_helper_S_ISDIR(unsigned int val) {
+	return S_ISDIR(val);
+}
+EXPORT_SYMBOL_GPL(rust_helper_S_ISDIR);
 
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
