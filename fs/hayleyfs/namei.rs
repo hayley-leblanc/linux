@@ -9,7 +9,7 @@ use crate::volatile::*;
 use crate::{fence_all, fence_all_vecs, fence_obj, fence_vec};
 // use core::ffi;
 use kernel::prelude::*;
-use kernel::{bindings, dir, error, file, fs, inode};
+use kernel::{bindings, dir, error, file, fs, inode, ForeignOwnable};
 
 pub(crate) struct InodeOps;
 #[vtable]
@@ -224,7 +224,8 @@ fn new_vfs_inode<'a, Type>(
         bindings::inode_init_owner(mnt_userns, vfs_inode, dir.get_inner(), umode);
     }
 
-    vfs_inode.i_ino = new_inode.get_ino();
+    let ino = new_inode.get_ino();
+    vfs_inode.i_ino = ino;
 
     // we don't have access to ZST Type, but inode wrapper constructors check types
     // so we can rely on these being correct
@@ -233,6 +234,9 @@ fn new_vfs_inode<'a, Type>(
     match inode_type {
         InodeType::REG => {
             vfs_inode.i_mode = umode;
+            // initialize the DRAM info and save it in the private pointer
+            let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
+            vfs_inode.i_private = inode_info.into_foreign() as *mut _;
             unsafe {
                 vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
                 vfs_inode.__bindgen_anon_3.i_fop =
@@ -297,7 +301,7 @@ fn hayleyfs_create<'a>(
 )> {
     // TODO: should perhaps take inode wrapper to the parent so that we know
     // the parent is initialized
-    let pd = get_free_dentry(sbi, dir.i_ino())?;
+    let pd = get_free_dentry(sbi, dir)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
     let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, mnt_userns, dir, pd, umode)?;
     dentry.index(dir.i_ino(), sbi)?;
@@ -314,7 +318,7 @@ fn hayleyfs_link<'a>(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
-    let pd = get_free_dentry(sbi, dir.i_ino())?;
+    let pd = get_free_dentry(sbi, dir)?;
     let _pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     // old dentry is the dentry for the target name,
@@ -324,9 +328,9 @@ fn hayleyfs_link<'a>(
     // first, obtain the inode that's getting the link from old_dentry
     let target_ino = old_dentry.d_ino();
 
-    let target_inode = sbi.get_init_reg_inode_by_ino(target_ino)?;
+    let target_inode = sbi.get_init_reg_inode_by_vfs_inode(old_dentry.d_inode())?;
     let target_inode = target_inode.inc_link_count()?.flush().fence();
-    let pd = get_free_dentry(sbi, dir.i_ino())?;
+    let pd = get_free_dentry(sbi, dir)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     let (pd, target_inode) = pd.set_file_ino(target_inode);
@@ -349,10 +353,10 @@ fn hayleyfs_mkdir<'a>(
     InodeWrapper<'a, Clean, Complete, DirInode>, // new inode
 )> {
     let parent_ino = dir.i_ino();
-    let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
+    let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let parent_inode = parent_inode.inc_link_count()?.flush().fence();
 
-    let pd = get_free_dentry(sbi, parent_ino)?;
+    let pd = get_free_dentry(sbi, dir)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     let (dentry, parent, inode) =
@@ -372,7 +376,7 @@ fn hayleyfs_unlink<'a>(
 )> {
     let inode = dentry.d_inode();
     let parent_ino = dir.i_ino();
-    let _parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino)?;
+    let _parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
 
     // use volatile index to find the persistent dentry
     let dentry_info = sbi
@@ -388,7 +392,7 @@ fn hayleyfs_unlink<'a>(
         let ino = pd.get_ino();
         sbi.ino_dentry_map.delete(parent_ino, dentry_info)?;
 
-        let pi = sbi.get_init_reg_inode_by_ino(ino)?;
+        let pi = sbi.get_init_reg_inode_by_vfs_inode(inode)?;
         let pd = pd.clear_ino().flush().fence();
 
         // decrement the inode's link count
@@ -448,29 +452,30 @@ fn hayleyfs_unlink<'a>(
 
 fn get_free_dentry<'a>(
     sbi: &'a SbInfo,
-    parent_ino: InodeNum,
+    parent_inode: &fs::INode,
 ) -> Result<DentryWrapper<'a, Clean, Free>> {
     let result = sbi
         .ino_dir_page_map
-        .find_page_with_free_dentry(sbi, &parent_ino)?;
+        .find_page_with_free_dentry(sbi, &parent_inode.i_ino())?;
     let result = if let Some(page_info) = result {
         let dir_page = DirPageWrapper::from_dir_page_info(sbi, &page_info)?;
         dir_page.get_free_dentry(sbi)
     } else {
         // no pages have any free dentries
-        alloc_page_for_dentry(sbi, parent_ino)
+        alloc_page_for_dentry(sbi, parent_inode)
     };
     result
 }
 
 fn alloc_page_for_dentry<'a>(
     sbi: &'a SbInfo,
-    parent_ino: InodeNum,
+    // parent_ino: InodeNum,
+    parent_inode: &fs::INode,
 ) -> Result<DentryWrapper<'a, Clean, Free>> {
     // allocate a page
     let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
     sbi.inc_blocks_in_use();
-    let parent_inode = sbi.get_init_dir_inode_by_ino(parent_ino);
+    let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(parent_inode.get_inner());
     if let Ok(parent_inode) = parent_inode {
         let dir_page = dir_page
             .set_dir_page_backpointer(parent_inode)

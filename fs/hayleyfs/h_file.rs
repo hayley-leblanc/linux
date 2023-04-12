@@ -2,7 +2,6 @@ use crate::balloc::*;
 use crate::defs::*;
 use crate::h_inode::*;
 use crate::typestate::*;
-use crate::volatile::*;
 use crate::{end_timing, init_timing, start_timing};
 use core::{marker::Sync, ptr, sync::atomic::Ordering};
 use kernel::prelude::*;
@@ -111,7 +110,7 @@ fn hayleyfs_write<'a>(
     };
     let mut inode = inode.write();
     let ino = inode.i_ino();
-    let pi = sbi.get_init_reg_inode_by_ino(ino)?;
+    let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
 
     // TODO: update timestamp
 

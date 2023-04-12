@@ -3,7 +3,6 @@ use crate::defs::*;
 use crate::pm::*;
 use crate::h_dir::*;
 use crate::typestate::*;
-use crate::volatile::*;
 use core::{
     marker::PhantomData,
     mem,
@@ -51,6 +50,7 @@ pub(crate) struct InodeWrapper<'a, State, Op, Type> {
     op: PhantomData<Op>,
     inode_type: PhantomData<Type>,
     ino: InodeNum,
+    vfs_inode: Option<*mut bindings::inode>, // TODO: make this an fs::INode?
     inode: &'a mut HayleyFsInode,
 }
 
@@ -204,15 +204,16 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
 impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
     // TODO: this needs to be handled specially for types so that type generic cannot be incorrect
     pub(crate) fn wrap_inode(
-        ino: InodeNum,
-        inode: &'a mut HayleyFsInode,
+        vfs_inode: *mut bindings::inode,
+        pi: &'a mut HayleyFsInode,
     ) -> InodeWrapper<'a, State, Op, Type> {
         InodeWrapper {
             state: PhantomData,
             op: PhantomData,
             inode_type: PhantomData,
-            ino,
-            inode,
+            vfs_inode: Some(vfs_inode),
+            ino: unsafe {(*vfs_inode).i_ino},
+            inode: pi,
         }
     }
 
@@ -224,6 +225,7 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
             op: PhantomData,
             ino: i.ino,
             inode_type: i.inode_type,
+            vfs_inode: i.vfs_inode,
             inode: i.inode,
         }
     }
@@ -271,6 +273,7 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
                 state: PhantomData,
                 op: PhantomData,
                 inode_type: PhantomData,
+                vfs_inode: self.vfs_inode,
                 ino: self.ino,
                 inode: self.inode,
             },
@@ -286,6 +289,7 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
                 state: PhantomData,
                 op: PhantomData,
                 inode_type: PhantomData,
+                vfs_inode: self.vfs_inode,
                 ino: self.ino,
                 inode: self.inode,
             }))
@@ -312,6 +316,7 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
                         state: PhantomData,
                         op: PhantomData,
                         inode_type: PhantomData,
+                        vfs_inode: self.vfs_inode,
                         ino: self.ino,
                         inode: self.inode,
                     }, 
@@ -342,6 +347,7 @@ impl<'a> InodeWrapper<'a, Clean, Dealloc, RegInode> {
             state: PhantomData,
             op: PhantomData,
             inode_type: PhantomData,
+            vfs_inode: self.vfs_inode,
             ino: self.ino,
             inode: self.inode
         }
@@ -356,6 +362,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
                 state: PhantomData,
                 op: PhantomData,
                 inode_type: PhantomData,
+                vfs_inode: None,
                 ino,
                 inode: raw_inode,
             })
@@ -401,6 +408,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
                 state: PhantomData,
                 op: PhantomData,
                 inode_type: PhantomData,
+                vfs_inode: None,
                 ino,
                 inode: raw_inode,
             })

@@ -143,7 +143,6 @@ pub(crate) struct SbInfo {
     // TODO: fix this.
     pub(crate) ino_dentry_map: BasicInoDentryMap, // InoDentryMap
     pub(crate) ino_dir_page_map: BasicInoDirPageMap, // InoDirPageMap
-    pub(crate) ino_data_page_map: BasicInoDataPageMap, // InoDataPageMap
 
     // volatile allocators
     // again, these should really be trait objects, but the system won't compile
@@ -182,7 +181,6 @@ impl SbInfo {
             blocks_in_use: AtomicU64::new(0), // TODO: mark reserved pages as in use
             ino_dentry_map: InoDentryMap::new().unwrap(), // TODO: handle possible panic
             ino_dir_page_map: InoDirPageMap::new().unwrap(), // TODO: handle possible panic
-            ino_data_page_map: InoDataPageMap::new().unwrap(), // TODO: handle possible panic
             page_allocator: None,
             inode_allocator: InodeAllocator::new(ROOT_INO + 1).unwrap(),
             mount_opts: HayleyfsParams::default(),
@@ -295,46 +293,50 @@ impl SbInfo {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn get_init_reg_inode_by_ino<'a>(
+    pub(crate) fn get_init_reg_inode_by_vfs_inode<'a>(
         &self,
-        ino: InodeNum,
+        inode: *mut bindings::inode,
     ) -> Result<InodeWrapper<'a, Clean, Start, RegInode>> {
+        // TODO: use &fs::INode to avoid unsafely dereferencing the inode here
+        let ino = unsafe { (*inode).i_ino };
         // we don't use inode 0
         if ino >= NUM_INODES || ino == 0 {
             return Err(EINVAL);
         }
 
-        let inode = unsafe { self.get_inode_by_ino_mut(ino)? };
+        let pi = unsafe { self.get_inode_by_ino_mut(ino)? };
 
-        if inode.get_type() != InodeType::REG {
+        if pi.get_type() != InodeType::REG {
             pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
             return Err(EPERM);
         }
-        if inode.is_initialized() {
-            Ok(InodeWrapper::wrap_inode(ino, inode))
+        if pi.is_initialized() {
+            Ok(InodeWrapper::wrap_inode(inode, pi))
         } else {
             pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)
         }
     }
 
-    pub(crate) fn get_init_dir_inode_by_ino<'a>(
+    pub(crate) fn get_init_dir_inode_by_vfs_inode<'a>(
         &self,
-        ino: InodeNum,
+        inode: *mut bindings::inode,
     ) -> Result<InodeWrapper<'a, Clean, Start, DirInode>> {
+        // TODO: use &fs::INode to avoid unsafely dereferencing the inode here
+        let ino = unsafe { (*inode).i_ino };
         // we don't use inode 0
         if ino >= NUM_INODES || ino == 0 {
             return Err(EINVAL);
         }
 
-        let inode = unsafe { self.get_inode_by_ino_mut(ino)? };
+        let pi = unsafe { self.get_inode_by_ino_mut(ino)? };
 
-        if inode.get_type() != InodeType::DIR {
+        if pi.get_type() != InodeType::DIR {
             pr_info!("ERROR: inode {:?} is not a directory\n", ino);
             return Err(EPERM);
         }
-        if inode.is_initialized() {
-            Ok(InodeWrapper::wrap_inode(ino, inode))
+        if pi.is_initialized() {
+            Ok(InodeWrapper::wrap_inode(inode, pi))
         } else {
             pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)

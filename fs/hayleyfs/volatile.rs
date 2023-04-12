@@ -221,92 +221,89 @@ impl DataPageInfo {
     }
 }
 
+#[repr(C)]
+pub(crate) struct HayleyFsRegInodeInfo {
+    ino: InodeNum,
+    pages: Arc<Mutex<Vec<DataPageInfo>>>,
+}
+
+impl HayleyFsRegInodeInfo {
+    pub(crate) fn new(ino: InodeNum) -> Result<Self> {
+        Ok(Self {
+            ino,
+            pages: Arc::try_new(Mutex::new(Vec::new()))?,
+        })
+    }
+}
+
 /// maps file inodes to info about their pages
 pub(crate) trait InoDataPageMap {
-    fn new() -> Result<Self>
+    fn new(ino: InodeNum) -> Result<Self>
     where
         Self: Sized;
     fn insert<'a, State: Initialized>(
         &self,
-        ino: InodeNum,
         page: &DataPageWrapper<'a, Clean, State>,
     ) -> Result<()>;
-    fn find(&self, ino: &InodeNum, offset: u64) -> Option<DataPageInfo>;
-    fn get_all_pages(&self, ino: &InodeNum) -> Result<Vec<DataPageInfo>>;
-    fn delete(&self, ino: &InodeNum, offset: u64) -> Result<()>;
+    fn find(&self, offset: u64) -> Option<&DataPageInfo>;
+    fn get_all_pages(&self) -> Result<Vec<DataPageInfo>>;
+    fn delete(&self) -> Result<DataPageInfo>;
 }
 
-#[allow(dead_code)]
-pub(crate) struct BasicInoDataPageMap {
-    map: Arc<Mutex<RBTree<InodeNum, Vec<DataPageInfo>>>>,
-}
-
-#[allow(dead_code)]
-impl InoDataPageMap for BasicInoDataPageMap {
-    fn new() -> Result<Self> {
-        Ok(Self {
-            map: Arc::try_new(Mutex::new(RBTree::new()))?,
-        })
+impl InoDataPageMap for HayleyFsRegInodeInfo {
+    fn new(ino: InodeNum) -> Result<Self> {
+        HayleyFsRegInodeInfo::new(ino)
     }
 
     fn insert<'a, State: Initialized>(
         &self,
-        ino: InodeNum,
         page: &DataPageWrapper<'a, Clean, State>,
     ) -> Result<()> {
-        let map = Arc::clone(&self.map);
-        let mut map = map.lock();
+        let pages = Arc::clone(&self.pages);
+        let pages = pages.lock();
+        let offset = page.get_offset();
         let page_no = page.get_page_no();
-        let page_info = DataPageInfo {
-            owner: ino,
+        // check that we aren't trying to insert a page at an offset that
+        // already exists or in a way that will create a hole
+        let index = offset / HAYLEYFS_PAGESIZE;
+        if index != pages.len().try_into()? {
+            pr_info!(
+                "ERROR: attempted to insert page at index {:?} but pages vector has length {:?}\n",
+                index,
+                pages.len()
+            );
+            return Err(EINVAL);
+        }
+        pages.try_push(DataPageInfo {
+            owner: self.ino,
             page_no,
-            offset: page.get_offset(),
-        };
-        if let Some(node) = map.get_mut(&ino) {
-            node.try_push(page_info)?;
-        } else {
-            let mut vec = Vec::new();
-            vec.try_push(page_info)?;
-            map.try_insert(ino, vec)?;
-        }
+            offset,
+        })?;
         Ok(())
     }
 
-    fn find(&self, ino: &InodeNum, offset: u64) -> Option<DataPageInfo> {
-        let map = Arc::clone(&self.map);
-        let map = map.lock();
-        let pages = map.get(&ino);
-        if let Some(pages) = pages {
-            for page in pages {
-                if page.offset == offset {
-                    return Some(page.clone());
-                }
-            }
-        }
-        None
+    fn find(&self, offset: u64) -> Option<&DataPageInfo> {
+        let pages = Arc::clone(&self.pages);
+        let pages = pages.lock();
+        let index: usize = (offset / HAYLEYFS_PAGESIZE).try_into().unwrap();
+        pages.get(index)
     }
 
-    fn get_all_pages(&self, ino: &InodeNum) -> Result<Vec<DataPageInfo>> {
-        let map = Arc::clone(&self.map);
-        let map = map.lock();
-        let pages = map.get(&ino);
-        let mut vec = Vec::new();
-        if let Some(pages) = pages {
-            // FIXME: do this without cloning all of the pages in the vector
-            for page in pages {
-                vec.try_push(page.clone())?;
-            }
+    fn get_all_pages(&self) -> Result<Vec<DataPageInfo>> {
+        let pages = Arc::clone(&self.pages);
+        let pages = pages.lock();
+        let mut return_vec = Vec::new();
+        // TODO: do this without cloning the whole vector
+        for page in &*pages {
+            return_vec.try_push(page.clone())?;
         }
-        Ok(vec)
+        Ok(return_vec)
     }
 
-    fn delete(&self, ino: &InodeNum, offset: u64) -> Result<()> {
-        let map = Arc::clone(&self.map);
-        let mut map = map.lock();
-        let pages = map.get_mut(&ino);
-        if let Some(pages) = pages {
-            pages.retain(|x| x.offset != offset);
-        }
-        Ok(())
+    /// Deletes the last page in the file from the index and returns it
+    fn delete(&self) -> Result<DataPageInfo> {
+        let pages = Arc::clone(&self.pages);
+        let pages = pages.lock();
+        pages.pop().ok_or(EINVAL)
     }
 }
