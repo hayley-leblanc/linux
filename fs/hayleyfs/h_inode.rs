@@ -537,9 +537,6 @@ impl InodeAllocator for RBInodeAllocator {
             Some(ino) => *ino.0
         };
         map.remove(&ino);
-        if ino == 529 {
-            pr_info!("allocated inode {:?}\n", ino);
-        }
         Ok(ino)
     }
 
