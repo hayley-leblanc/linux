@@ -1645,6 +1645,41 @@ impl<T, A: Allocator> Vec<T, A> {
         }
     }
 
+
+    /// Tries to insert an element at position `index` within the vector, shifting all
+    /// elements after it to the right.
+    #[inline]
+    #[stable(feature = "kernel", since = "1.0.0")]
+    pub fn try_insert(&mut self, index: usize, element: T) -> Result<(), TryReserveError> {
+        let len = self.len();
+        
+        if len == self.buf.capacity() {
+            self.buf.try_reserve_for_push(self.len)?
+        }
+
+        unsafe {
+            // infallible
+            // The spot to put the new value
+            {
+                let p = self.as_mut_ptr().add(index);
+                if index < len {
+                    // Shift everything over to make space. (Duplicating the
+                    // `index`th element into two consecutive places.)
+                    ptr::copy(p, p.add(1), len - index);
+                } else if index == len {
+                    // No elements need shifting.
+                } else {
+                    panic!("insertion index (is {index}) should be <= len (is {len})")
+                }
+                // Write it in, overwriting the first copy of the `index`th
+                // element.
+                ptr::write(p, element);
+            }
+            self.set_len(len + 1);
+        }
+        Ok(())
+    }
+
     /// Removes and returns the element at position `index` within the vector,
     /// shifting all elements after it to the left.
     ///
