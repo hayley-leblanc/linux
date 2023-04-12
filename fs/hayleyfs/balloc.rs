@@ -600,7 +600,7 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
 
     /// This method returns a DataPageWrapper ONLY if the page is initialized
     /// Otherwise it returns an error
-    pub(crate) fn from_data_page_info(sbi: &'a SbInfo, info: DataPageInfo) -> Result<Self> {
+    pub(crate) fn from_data_page_info(sbi: &'a SbInfo, info: &DataPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
         let ph = page_no_to_data_header(sbi, page_no)?;
         // wrap_data_page_header checks whether the page is initialized

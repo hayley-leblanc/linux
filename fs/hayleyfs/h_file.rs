@@ -2,6 +2,7 @@ use crate::balloc::*;
 use crate::defs::*;
 use crate::h_inode::*;
 use crate::typestate::*;
+use crate::volatile::*;
 use crate::{end_timing, init_timing, start_timing};
 use core::{marker::Sync, ptr, sync::atomic::Ordering};
 use kernel::prelude::*;
@@ -109,8 +110,7 @@ fn hayleyfs_write<'a>(
         len
     };
     let mut inode = inode.write();
-    let ino = inode.i_ino();
-    let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    let (pi, pi_info) = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
 
     // TODO: update timestamp
 
@@ -121,9 +121,9 @@ fn hayleyfs_write<'a>(
     let page_offset = page_offset(offset)?;
 
     // does this page exist yet? if not, allocate it
-    let result = sbi.ino_data_page_map.find(&ino, page_offset);
+    let result = pi_info.find(page_offset);
     let data_page = if let Some(page_info) = result {
-        DataPageWrapper::from_data_page_info(sbi, page_info)?
+        DataPageWrapper::from_data_page_info(sbi, &page_info)?
     } else {
         let page = DataPageWrapper::alloc_data_page(sbi, offset)?
             .flush()
@@ -132,7 +132,7 @@ fn hayleyfs_write<'a>(
         let page = page.set_data_page_backpointer(&pi).flush().fence();
         // add page to the index
         // this is safe to do here because we hold a lock on this inode
-        sbi.ino_data_page_map.insert(ino, &page)?;
+        pi_info.insert(&page)?;
         page
     };
     let offset_in_page = offset - page_offset;
@@ -178,8 +178,9 @@ fn hayleyfs_read(
 
     // acquire shared read lock
     let inode = inode.read();
+    let (_, pi_info) = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     let size: u64 = inode.i_size_read().try_into()?;
-    let ino = inode.i_ino();
+
     count = if count < size { count } else { size };
     if offset >= size {
         return Ok(0);
@@ -211,10 +212,10 @@ fn hayleyfs_read(
         init_timing!(page_lookup);
         start_timing!(page_lookup);
         // if the page exists, read from it. Otherwise, return zeroes
-        let result = sbi.ino_data_page_map.find(&ino, page_offset.try_into()?);
+        let result = pi_info.find(page_offset.try_into()?);
         end_timing!(LookupDataPage, page_lookup);
         if let Some(page_info) = result {
-            let data_page = DataPageWrapper::from_data_page_info(sbi, page_info)?;
+            let data_page = DataPageWrapper::from_data_page_info(sbi, &page_info)?;
             init_timing!(read_page);
             start_timing!(read_page);
             let read = data_page.read_from_page(sbi, writer, offset_in_page, to_read)?;

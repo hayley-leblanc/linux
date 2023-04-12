@@ -11,6 +11,8 @@ use crate::{fence_all, fence_all_vecs, fence_obj, fence_vec};
 use kernel::prelude::*;
 use kernel::{bindings, dir, error, file, fs, inode, ForeignOwnable};
 
+// TODO: should use .borrow() to get the SbInfo structure out?
+
 pub(crate) struct InodeOps;
 #[vtable]
 impl inode::Operations for InodeOps {
@@ -149,6 +151,9 @@ impl inode::Operations for InodeOps {
 }
 
 // TODO: shouldn't really be generic but HayleyFs isn't accessible here
+/// hayleyfs_iget is for obtaining the VFS inode for an inode that already
+/// exists persistently. new_vfs_inode is for setting up VFS inodes for
+/// completely new inodes
 pub(crate) fn hayleyfs_iget(
     sb: *mut bindings::super_block,
     sbi: &SbInfo,
@@ -170,6 +175,7 @@ pub(crate) fn hayleyfs_iget(
 
     // set up the new inode
     let pi = sbi.get_inode_by_ino(ino)?;
+
     unsafe {
         (*inode).i_size = bindings::le64_to_cpu(pi.get_size()).try_into()?;
         bindings::set_nlink(inode, bindings::le16_to_cpu(pi.get_link_count()).into());
@@ -195,6 +201,14 @@ pub(crate) fn hayleyfs_iget(
         InodeType::REG => unsafe {
             (*inode).i_op = inode::OperationsVtable::<InodeOps>::build();
             (*inode).__bindgen_anon_3.i_fop = file::OperationsVtable::<Adapter, FileOps>::build();
+
+            let pages = sbi.ino_data_page_tree.remove(ino);
+            // if the inode has any pages associated with it, remove them from the
+            // global tree and put them in this inode's i_private
+            if let Some(pages) = pages {
+                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_vec(ino, pages))?;
+                (*inode).i_private = inode_info.into_foreign() as *mut _;
+            }
         },
         InodeType::DIR => unsafe {
             (*inode).i_op = inode::OperationsVtable::<InodeOps>::build();
@@ -207,6 +221,8 @@ pub(crate) fn hayleyfs_iget(
 }
 
 // TODO: add type
+/// new_vfs_inode is used to set up the VFS inode for a completely new HayleyFsInode.
+/// if the HayleyFsInode already exists, you should use hayleyfs_iget
 fn new_vfs_inode<'a, Type>(
     sb: *mut bindings::super_block,
     sbi: &SbInfo,
@@ -326,9 +342,7 @@ fn hayleyfs_link<'a>(
     // dentry is the dentry for the new name
 
     // first, obtain the inode that's getting the link from old_dentry
-    let target_ino = old_dentry.d_ino();
-
-    let target_inode = sbi.get_init_reg_inode_by_vfs_inode(old_dentry.d_inode())?;
+    let (target_inode, _) = sbi.get_init_reg_inode_by_vfs_inode(old_dentry.d_inode())?;
     let target_inode = target_inode.inc_link_count()?.flush().fence();
     let pd = get_free_dentry(sbi, dir)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
@@ -352,7 +366,6 @@ fn hayleyfs_mkdir<'a>(
     InodeWrapper<'a, Clean, Complete, DirInode>, // parent
     InodeWrapper<'a, Clean, Complete, DirInode>, // new inode
 )> {
-    let parent_ino = dir.i_ino();
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let parent_inode = parent_inode.inc_link_count()?.flush().fence();
 
@@ -389,10 +402,9 @@ fn hayleyfs_unlink<'a>(
 
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
-        let ino = pd.get_ino();
         sbi.ino_dentry_map.delete(parent_ino, dentry_info)?;
 
-        let pi = sbi.get_init_reg_inode_by_vfs_inode(inode)?;
+        let (pi, _) = sbi.get_init_reg_inode_by_vfs_inode(inode)?;
         let pd = pd.clear_ino().flush().fence();
 
         // decrement the inode's link count
@@ -417,8 +429,9 @@ fn hayleyfs_unlink<'a>(
             // we can drain the vector since missing a page will result in
             // a runtime panic
             let mut to_dealloc = Vec::new();
+
             for page in pages.drain(..) {
-                sbi.ino_data_page_map.delete(&ino, page.get_offset())?;
+                // the pages have already been removed from the inode's page vector
                 let page = page.unmap().flush();
                 to_dealloc.try_push(page)?;
             }
@@ -477,11 +490,13 @@ fn alloc_page_for_dentry<'a>(
     sbi.inc_blocks_in_use();
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(parent_inode.get_inner());
     if let Ok(parent_inode) = parent_inode {
+        let parent_ino = parent_inode.get_ino();
         let dir_page = dir_page
             .set_dir_page_backpointer(parent_inode)
             .flush()
             .fence();
-        sbi.ino_dir_page_map.insert(parent_ino, &dir_page)?;
+        sbi.ino_dir_page_map
+            .insert(parent_ino, &dir_page)?;
         let pd = dir_page.get_free_dentry(sbi)?;
         Ok(pd)
     } else {

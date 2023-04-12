@@ -216,8 +216,18 @@ pub(crate) struct DataPageInfo {
 }
 
 impl DataPageInfo {
+    pub(crate) fn new(owner: InodeNum, page_no: PageNum, offset: u64) -> Self {
+        Self {
+            owner, page_no, offset
+        }
+    }
+
     pub(crate) fn get_page_no(&self) -> PageNum {
         self.page_no
+    }
+
+    pub(crate) fn get_offset(&self) -> u64 {
+        self.offset
     }
 }
 
@@ -234,6 +244,13 @@ impl HayleyFsRegInodeInfo {
             pages: Arc::try_new(Mutex::new(Vec::new()))?,
         })
     }
+
+    pub(crate) fn new_from_vec(ino: InodeNum, vec: Vec<DataPageInfo>) -> Result<Self> {
+        Ok(Self {
+            ino,
+            pages: Arc::try_new(Mutex::new(vec))?,
+        })
+    }
 }
 
 /// maps file inodes to info about their pages
@@ -245,8 +262,8 @@ pub(crate) trait InoDataPageMap {
         &self,
         page: &DataPageWrapper<'a, Clean, State>,
     ) -> Result<()>;
-    fn find(&self, offset: u64) -> Option<&DataPageInfo>;
-    fn get_all_pages(&self) -> Result<Vec<DataPageInfo>>;
+    fn find(&self, offset: u64) -> Option<DataPageInfo>;
+    fn remove_all_pages(&self) -> Result<Vec<DataPageInfo>>;
     fn delete(&self) -> Result<DataPageInfo>;
 }
 
@@ -260,7 +277,7 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         page: &DataPageWrapper<'a, Clean, State>,
     ) -> Result<()> {
         let pages = Arc::clone(&self.pages);
-        let pages = pages.lock();
+        let mut pages = pages.lock();
         let offset = page.get_offset();
         let page_no = page.get_page_no();
         // check that we aren't trying to insert a page at an offset that
@@ -282,28 +299,58 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         Ok(())
     }
 
-    fn find(&self, offset: u64) -> Option<&DataPageInfo> {
+    fn find(&self, offset: u64) -> Option<DataPageInfo> {
         let pages = Arc::clone(&self.pages);
         let pages = pages.lock();
         let index: usize = (offset / HAYLEYFS_PAGESIZE).try_into().unwrap();
-        pages.get(index)
+        let result = pages.get(index);
+        match result {
+            Some(page) => Some(page.clone()),
+            None => None
+        }
     }
 
-    fn get_all_pages(&self) -> Result<Vec<DataPageInfo>> {
+    fn remove_all_pages(&self) -> Result<Vec<DataPageInfo>> {
         let pages = Arc::clone(&self.pages);
-        let pages = pages.lock();
+        let mut pages = pages.lock();
         let mut return_vec = Vec::new();
-        // TODO: do this without cloning the whole vector
+        // TODO: can you do this without copying all of the pages?
         for page in &*pages {
             return_vec.try_push(page.clone())?;
         }
+        pages.clear();
         Ok(return_vec)
     }
 
     /// Deletes the last page in the file from the index and returns it
     fn delete(&self) -> Result<DataPageInfo> {
         let pages = Arc::clone(&self.pages);
-        let pages = pages.lock();
+        let mut pages = pages.lock();
         pages.pop().ok_or(EINVAL)
+    }
+}
+
+pub(crate) struct InoDataPageTree {
+    tree: Arc<Mutex<RBTree<InodeNum, Vec<DataPageInfo>>>>,
+}
+
+impl InoDataPageTree {
+    pub(crate) fn new() -> Result<Self> {
+        Ok(Self {
+            tree: Arc::try_new(Mutex::new(RBTree::new()))?,
+        })
+    }
+
+    pub(crate) fn insert(&self, ino: InodeNum, pages: Vec<DataPageInfo>) -> Result<()> {
+        let tree = Arc::clone(&self.tree);
+        let mut tree = tree.lock();
+        tree.try_insert(ino, pages)?;
+        Ok(())
+    }
+
+    pub(crate) fn remove(&self, ino: InodeNum) -> Option<Vec<DataPageInfo>> {
+        let tree = Arc::clone(&self.tree);
+        let mut tree = tree.lock();
+        tree.remove(&ino)
     }
 }

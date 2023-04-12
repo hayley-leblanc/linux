@@ -131,6 +131,7 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
 }
 
 impl<'a, Op> DentryWrapper<'a, Clean, Op> {
+    #[allow(dead_code)]
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.dentry.get_ino()
     }

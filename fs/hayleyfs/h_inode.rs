@@ -3,12 +3,13 @@ use crate::defs::*;
 use crate::pm::*;
 use crate::h_dir::*;
 use crate::typestate::*;
+use crate::volatile::*;
 use core::{
     marker::PhantomData,
     mem,
 };
 use kernel::prelude::*;
-use kernel::{bindings, fs, sync::{Arc, smutex::Mutex}, rbtree::RBTree};
+use kernel::{bindings, ForeignOwnable, fs, sync::{Arc, smutex::Mutex}, rbtree::RBTree};
 
 // ZSTs for representing inode types
 // These are not typestate since they don't change, but they are a generic
@@ -235,6 +236,15 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
     }
 }
 
+impl<'a, State, Op> InodeWrapper<'a, State, Op, RegInode> {
+    fn get_inode_info(&self) -> Result<&HayleyFsRegInodeInfo> {
+        match self.vfs_inode {
+            Some(vfs_inode) => unsafe {Ok(<Box::<HayleyFsRegInodeInfo> as ForeignOwnable>::borrow((*vfs_inode).i_private))},
+            None => {pr_info!("ERROR: inode is uninitialized\n"); Err(EPERM)}
+        }
+    }
+}
+
 impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
     pub(crate) fn inc_link_count(self) -> Result<InodeWrapper<'a, Dirty, IncLink, Type>> {
         if self.inode.get_link_count() == MAX_LINKS {
@@ -296,7 +306,9 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
         } else {
             // get the list of pages associated with this inode and convert them into 
             // ToUnmap wrappers
-            let pages = sbi.ino_data_page_map.get_all_pages(&self.get_ino())?;
+            // let pages = sbi.ino_data_page_map.get_all_pages(&self.get_ino())?;
+            let info = self.get_inode_info()?;
+            let pages = info.remove_all_pages()?;
             // pr_info!("pages associated with this inode:\n");
             // for page in &pages {
             //     pr_info!("{:?}\n", page.get_page_no());
