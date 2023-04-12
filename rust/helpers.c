@@ -745,6 +745,31 @@ unsigned int rust_helper_blksize_bits(unsigned int size) {
 }
 EXPORT_SYMBOL_GPL(rust_helper_blksize_bits);
 
+void rust_helper_inode_lock(struct inode *inode) {
+	inode_lock(inode);
+}
+EXPORT_SYMBOL_GPL(rust_helper_inode_lock);
+
+void rust_helper_inode_unlock(struct inode *inode) {
+	inode_unlock(inode);
+}
+EXPORT_SYMBOL_GPL(rust_helper_inode_unlock);
+
+bool rust_helper_S_ISLNK(unsigned int val) {
+	return S_ISLNK(val);
+}
+EXPORT_SYMBOL_GPL(rust_helper_S_ISLNK);
+
+bool rust_helper_S_ISREG(unsigned int val) {
+	return S_ISREG(val);
+}
+EXPORT_SYMBOL_GPL(rust_helper_S_ISREG);
+
+bool rust_helper_S_ISDIR(unsigned int val) {
+	return S_ISDIR(val);
+}
+EXPORT_SYMBOL_GPL(rust_helper_S_ISDIR);
+
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
  * as the Rust `usize` type, so we can use it in contexts where Rust
