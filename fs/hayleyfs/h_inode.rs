@@ -379,7 +379,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
                 inode: raw_inode,
             })
         } else {
-            pr_info!("ERROR: inode {:?} is not free\n", ino);
+            pr_info!("ERROR: regular inode {:?} is not free\n", ino);
             Err(EPERM)
         }
     }
@@ -425,7 +425,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
                 inode: raw_inode,
             })
         } else {
-            pr_info!("ERROR: inode {:?} is not free\n", ino);
+            pr_info!("ERROR: dir inode {:?} is not free\n", ino);
             Err(EPERM)
         }
     }
@@ -537,12 +537,18 @@ impl InodeAllocator for RBInodeAllocator {
             Some(ino) => *ino.0
         };
         map.remove(&ino);
+        if ino == 529 {
+            pr_info!("allocated inode {:?}\n", ino);
+        }
         Ok(ino)
     }
 
     fn dealloc_ino(&self, ino: InodeNum) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
+        if ino == 529 {
+            pr_info!("deallocating {:?}\n", ino);
+        }
         let res = map.try_insert(ino, ())?;
         if res.is_some() {
             pr_info!("ERROR: inode {:?} was deallocated but is already in allocator\n", ino);

@@ -285,12 +285,17 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         let index = offset / HAYLEYFS_PAGESIZE;
         if index != pages.len().try_into()? {
             pr_info!(
-                "ERROR: attempted to insert page at index {:?} but pages vector has length {:?}\n",
+                "ERROR: inode {:?} attempted to insert page {:?} at index {:?} (offset {:?}) but pages vector has length {:?}\n",
+                self.ino,
+                page_no,
                 index,
+                offset,
                 pages.len()
             );
+            pr_info!("{:?}\n", pages[index as usize]);
             return Err(EINVAL);
         }
+        // pr_info!("inserting at offset {:?} for inode {:?}\n", offset, self.ino);
         pages.try_push(DataPageInfo {
             owner: self.ino,
             page_no,

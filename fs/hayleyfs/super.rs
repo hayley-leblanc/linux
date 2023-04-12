@@ -168,12 +168,29 @@ impl fs::Type for HayleyFs {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
+        // store the inode's private page list in the global tree so that we
+        // can access it later if the inode comes back into the cache
+        let mode = unsafe { (*inode.get_inner()).i_mode };
+        if unsafe { bindings::S_ISREG(mode.try_into().unwrap()) } {
+            let inode_info = unsafe {
+                &*((*inode.get_inner()).i_private as *const _ as *const HayleyFsRegInodeInfo)
+            };
+            let pages = inode_info.remove_all_pages().unwrap();
+            sbi.ino_data_page_tree.insert(ino, pages).unwrap();
+        }
+        // TODO: handle other cases
+
+        let link_count = unsafe { (*inode.get_inner()).__bindgen_anon_1.i_nlink };
+
         unsafe { bindings::clear_inode(inode.get_inner()) };
 
         // TODO: we might want to make deallocating inode numbers unsafe or
         // require proof that the inode in question has actually been
         // persistently freed
-        sbi.inode_allocator.dealloc_ino(ino).unwrap();
+        // inode should only be deallocated if the inode's link count is actually 0
+        if link_count == 0 {
+            sbi.inode_allocator.dealloc_ino(ino).unwrap();
+        }
     }
 }
 

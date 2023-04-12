@@ -208,6 +208,9 @@ pub(crate) fn hayleyfs_iget(
             if let Some(pages) = pages {
                 let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_vec(ino, pages))?;
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
+            } else {
+                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
+                (*inode).i_private = inode_info.into_foreign() as *mut _;
             }
         },
         InodeType::DIR => unsafe {
@@ -495,8 +498,7 @@ fn alloc_page_for_dentry<'a>(
             .set_dir_page_backpointer(parent_inode)
             .flush()
             .fence();
-        sbi.ino_dir_page_map
-            .insert(parent_ino, &dir_page)?;
+        sbi.ino_dir_page_map.insert(parent_ino, &dir_page)?;
         let pd = dir_page.get_free_dentry(sbi)?;
         Ok(pd)
     } else {
