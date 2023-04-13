@@ -8,7 +8,7 @@ use defs::*;
 use h_dir::*;
 use h_inode::*;
 use kernel::prelude::*;
-use kernel::{bindings, c_str, fs, rbtree::RBTree};
+use kernel::{bindings, c_str, fs, rbtree::RBTree, types::ForeignOwnable};
 use namei::*;
 use pm::*;
 use volatile::*;
@@ -172,8 +172,11 @@ impl fs::Type for HayleyFs {
         // can access it later if the inode comes back into the cache
         let mode = unsafe { (*inode.get_inner()).i_mode };
         if unsafe { bindings::S_ISREG(mode.try_into().unwrap()) } {
+            // using from_foreign should make sure the info structure is dropped here
             let inode_info = unsafe {
-                &*((*inode.get_inner()).i_private as *const _ as *const HayleyFsRegInodeInfo)
+                <Box<HayleyFsRegInodeInfo> as ForeignOwnable>::from_foreign(
+                    (*inode.get_inner()).i_private,
+                )
             };
             let pages = inode_info.remove_all_pages().unwrap();
             sbi.ino_data_page_tree.insert(ino, pages).unwrap();

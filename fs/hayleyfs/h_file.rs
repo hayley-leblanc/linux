@@ -41,7 +41,7 @@ impl file::Operations for FileOps {
         offset: u64,
     ) -> Result<usize> {
         // TODO: cleaner way to set up the semaphore with Rust RwSemaphore
-        let sem = unsafe { (*file.inode()).i_rwsem };
+        let sem = unsafe { &mut (*file.inode()).i_rwsem as *mut bindings::rw_semaphore };
         let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
         let sb = inode.i_sb();
         // TODO: safety
@@ -50,6 +50,7 @@ impl file::Operations for FileOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
         let inode = unsafe { RwSemaphore::new_with_sem(inode, sem) };
+        // let mut inode = inode.write();
         let (bytes_written, _) = hayleyfs_write(sbi, inode, reader, offset)?;
 
         Ok(bytes_written.try_into()?)
@@ -62,7 +63,7 @@ impl file::Operations for FileOps {
         offset: u64,
     ) -> Result<usize> {
         // TODO: cleaner way to set up the semaphore with Rust RwSemaphore
-        let sem = unsafe { (*file.inode()).i_rwsem };
+        let mut sem = unsafe { (*file.inode()).i_rwsem };
         let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
         let sb = inode.i_sb();
         // TODO: safety
@@ -70,8 +71,7 @@ impl file::Operations for FileOps {
         // TODO: it's probably not safe to just grab s_fs_info and
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
-        let inode = unsafe { RwSemaphore::new_with_sem(inode, sem) };
-
+        let inode = unsafe { RwSemaphore::new_with_sem(inode, &mut sem) };
         let result = hayleyfs_read(sbi, inode, writer, offset)?;
         Ok(result.try_into()?)
     }
@@ -147,7 +147,6 @@ fn hayleyfs_write<'a>(
 
     let (bytes_written, data_page) =
         data_page.write_to_page(sbi, reader, offset_in_page, to_write)?;
-
     let data_page = data_page.fence();
 
     if bytes_written < to_write {
@@ -168,6 +167,7 @@ fn hayleyfs_write<'a>(
 fn hayleyfs_read(
     sbi: &SbInfo,
     inode: RwSemaphore<&mut fs::INode>,
+    // inode: &fs::INode,
     writer: &mut impl IoBufferWriter,
     mut offset: u64,
 ) -> Result<u64> {

@@ -309,19 +309,11 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
             // let pages = sbi.ino_data_page_map.get_all_pages(&self.get_ino())?;
             let info = self.get_inode_info()?;
             let pages = info.remove_all_pages()?;
-            // pr_info!("pages associated with this inode:\n");
-            // for page in &pages {
-            //     pr_info!("{:?}\n", page.get_page_no());
-            // }
             let mut unmap_vec = Vec::new();
             for page in pages {
                 let p = DataPageWrapper::mark_to_unmap(sbi, page)?;
                 unmap_vec.try_push(p)?;
             }
-            // pr_info!("page nos to unmap:\n");
-            // for page in &unmap_vec {
-            //     pr_info!("{:?}\n", page.get_page_no());
-            // }
             Ok(
                 Err(
                     (InodeWrapper {
@@ -543,9 +535,6 @@ impl InodeAllocator for RBInodeAllocator {
     fn dealloc_ino(&self, ino: InodeNum) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
-        if ino == 529 {
-            pr_info!("deallocating {:?}\n", ino);
-        }
         let res = map.try_insert(ino, ())?;
         if res.is_some() {
             pr_info!("ERROR: inode {:?} was deallocated but is already in allocator\n", ino);
