@@ -35,7 +35,7 @@ macro_rules! rwsemaphore_init {
 /// [`struct rw_semaphore`]: ../../../include/linux/rwsem.h
 pub struct RwSemaphore<T: ?Sized> {
     /// The kernel `struct rw_semaphore` object.
-    rwsem: Opaque<bindings::rw_semaphore>,
+    rwsem: Opaque<*mut bindings::rw_semaphore>,
 
     /// An rwsem needs to be pinned because it contains a [`struct list_head`] that is
     /// self-referential, so it cannot be safely moved once it is initialised.
@@ -74,7 +74,7 @@ impl<T> RwSemaphore<T> {
     /// # Safety
     ///
     /// The caller must ensure the semaphore is initialized before using the rw semaphore.
-    pub unsafe fn new_with_sem(t: T, sem: bindings::rw_semaphore) -> Self {
+    pub unsafe fn new_with_sem(t: T, sem: *mut bindings::rw_semaphore) -> Self {
         Self {
             rwsem: Opaque::new(sem),
             data: UnsafeCell::new(t),
@@ -112,7 +112,7 @@ impl<T> LockFactory for RwSemaphore<T> {
 
 impl<T> LockIniter for RwSemaphore<T> {
     fn init_lock(self: Pin<&mut Self>, name: &'static CStr, key: &'static LockClassKey) {
-        unsafe { bindings::__init_rwsem(self.rwsem.get(), name.as_char_ptr(), key.get()) };
+        unsafe { bindings::__init_rwsem(*self.rwsem.get(), name.as_char_ptr(), key.get()) };
     }
 }
 
@@ -124,14 +124,14 @@ unsafe impl<T: ?Sized> Lock for RwSemaphore<T> {
 
     fn lock_noguard(&self) -> EmptyGuardContext {
         // SAFETY: `rwsem` points to valid memory.
-        unsafe { bindings::down_write(self.rwsem.get()) };
+        unsafe { bindings::down_write(*self.rwsem.get()) };
         EmptyGuardContext
     }
 
     unsafe fn unlock(&self, _: &mut EmptyGuardContext) {
         // SAFETY: The safety requirements of the function ensure that the rw semaphore is owned by
         // the caller.
-        unsafe { bindings::up_write(self.rwsem.get()) };
+        unsafe { bindings::up_write(*self.rwsem.get()) };
     }
 
     fn locked_data(&self) -> &UnsafeCell<T> {
@@ -147,14 +147,14 @@ unsafe impl<T: ?Sized> Lock<ReadLock> for RwSemaphore<T> {
 
     fn lock_noguard(&self) -> EmptyGuardContext {
         // SAFETY: `rwsem` points to valid memory.
-        unsafe { bindings::down_read(self.rwsem.get()) };
+        unsafe { bindings::down_read(*self.rwsem.get()) };
         EmptyGuardContext
     }
 
     unsafe fn unlock(&self, _: &mut EmptyGuardContext) {
         // SAFETY: The safety requirements of the function ensure that the rw semaphore is owned by
         // the caller.
-        unsafe { bindings::up_read(self.rwsem.get()) };
+        unsafe { bindings::up_read(*self.rwsem.get()) };
     }
 
     fn locked_data(&self) -> &UnsafeCell<T> {

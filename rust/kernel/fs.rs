@@ -5,8 +5,8 @@
 //! C headers: [`include/linux/fs.h`](../../../../include/linux/fs.h)
 
 use crate::{
-    bindings, dir, error::code::*, error::from_kernel_result, inode, str::CStr, sync::RwSemaphore,
-    to_result, types::ForeignOwnable, AlwaysRefCounted, Error, Result, ScopeGuard, ThisModule,
+    bindings, dir, error::code::*, error::from_kernel_result, inode, str::CStr, to_result,
+    types::ForeignOwnable, AlwaysRefCounted, Error, Result, ScopeGuard, ThisModule,
 };
 use alloc::boxed::Box;
 use core::{
@@ -879,14 +879,14 @@ impl INode {
         unsafe { bindings::i_size_write(self.0.get(), pos) };
     }
 
-    /// Returns the inner inode wrapped in the Rust binding for its RwSemaphore
-    ///
-    /// # Safety
-    /// TODO: safety. caller must ensure that the inode actually has an irwsem?
-    pub unsafe fn i_rwsem(&mut self) -> RwSemaphore<&mut Self> {
-        let i_rwsem = unsafe { (*self.0.get()).i_rwsem };
-        unsafe { RwSemaphore::new_with_sem(self, i_rwsem) }
-    }
+    // /// Returns the inner inode wrapped in the Rust binding for its RwSemaphore
+    // ///
+    // /// # Safety
+    // /// TODO: safety. caller must ensure that the inode actually has an irwsem?
+    // pub unsafe fn i_rwsem(&mut self) -> RwSemaphore<&mut Self> {
+    //     let i_rwsem = unsafe { (*self.0.get()).i_rwsem };
+    //     unsafe { RwSemaphore::new_with_sem(self, i_rwsem) }
+    // }
 
     /// Sets the inode's `i_ctime` field to the current time.
     pub fn update_ctime(&mut self) {
