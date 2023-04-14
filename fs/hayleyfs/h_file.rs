@@ -10,6 +10,7 @@ use kernel::{
     bindings, error, file, fs,
     io_buffer::{IoBufferReader, IoBufferWriter},
     sync::RwSemaphore,
+    ForeignOwnable,
 };
 
 pub(crate) struct Adapter {}
@@ -46,10 +47,8 @@ impl file::Operations for FileOps {
         let sb = inode.i_sb();
         unsafe { bindings::sb_start_write(sb) };
         // TODO: safety
-        let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // TODO: it's probably not safe to just grab s_fs_info and
-        // get a mutable reference to one of the dram indexes
-        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::borrow((*sb).s_fs_info) };
+
         let inode = unsafe { RwSemaphore::new_with_sem(inode, sem) };
         // let mut inode = inode.write();
 
@@ -74,10 +73,7 @@ impl file::Operations for FileOps {
         let sb = inode.i_sb();
         unsafe { bindings::sb_start_write(sb) };
         // TODO: safety
-        let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // TODO: it's probably not safe to just grab s_fs_info and
-        // get a mutable reference to one of the dram indexes
-        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::borrow((*sb).s_fs_info) };
         let inode = unsafe { RwSemaphore::new_with_sem(inode, &mut sem) };
         let result = hayleyfs_read(sbi, inode, writer, offset);
         unsafe { bindings::sb_end_write(sb) }
@@ -190,9 +186,7 @@ fn hayleyfs_read(
     // TODO: update timestamp
 
     // acquire shared read lock
-    pr_info!("reader waiting\n");
     let inode = inode.read();
-    pr_info!("reader got the lock\n");
     let (_, pi_info) = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     let size: u64 = inode.i_size_read().try_into()?;
 

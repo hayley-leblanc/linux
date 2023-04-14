@@ -8,7 +8,7 @@ use defs::*;
 use h_dir::*;
 use h_inode::*;
 use kernel::prelude::*;
-use kernel::{bindings, c_str, fs, rbtree::RBTree, types::ForeignOwnable};
+use kernel::{bindings, c_str, container_of_mut, fs, rbtree::RBTree, types::ForeignOwnable};
 use namei::*;
 use pm::*;
 use volatile::*;
@@ -100,7 +100,8 @@ impl fs::Type for HayleyFs {
                 },
             )?;
 
-            let sbi = unsafe { &mut *((*sb.get_inner()).s_fs_info as *mut SbInfo) };
+            let sbi =
+                unsafe { <Box<SbInfo> as ForeignOwnable>::borrow((*sb.get_inner()).s_fs_info) };
 
             let pi = sbi.get_inode_by_ino(ROOT_INO)?;
 
@@ -142,9 +143,17 @@ impl fs::Type for HayleyFs {
         Ok(sb)
     }
 
+    fn put_super(sb: &fs::SuperBlock<Self>) {
+        // TODO: safety
+        // use from_foreign here so that Rust drops the structure at the end of the function
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::from_foreign(sb.s_fs_info()) };
+        unsafe { bindings::kfree(sbi.inode_cache as *const _ as *const core::ffi::c_void) };
+
+        // TODO: other cleanup? make s_fs_info null?
+    }
+
     fn statfs(sb: &fs::SuperBlock<Self>, buf: *mut bindings::kstatfs) -> Result<()> {
-        // TODO: better support in rust/ so we don't have to do this all via raw pointers
-        let sbi = unsafe { &*(sb.s_fs_info() as *const SbInfo) };
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::borrow(sb.s_fs_info()) };
         unsafe {
             (*buf).f_type = SUPER_MAGIC;
             (*buf).f_bsize = sbi.blocksize.try_into()?;
@@ -159,14 +168,46 @@ impl fs::Type for HayleyFs {
         Ok(())
     }
 
+    fn alloc_inode(sb: &fs::SuperBlock<Self>) -> *mut bindings::inode {
+        let sbi = unsafe { &*(sb.s_fs_info() as *const SbInfo) };
+
+        // allocate an inode info structure from the cache
+        let inode_info: *mut HayleyFsInodeInfo = unsafe {
+            bindings::kmem_cache_alloc(sbi.inode_cache, bindings::GFP_NOFS())
+                as *mut HayleyFsInodeInfo
+        };
+
+        // check that the pointer isn't null before we try to dereference it
+        if inode_info.is_null() {
+            return core::ptr::null_mut();
+        }
+
+        let inode_info = unsafe { &mut *(inode_info as *mut HayleyFsInodeInfo) };
+
+        // initialize the header and return the vfs inode
+        let result = inode_info.set_up_header();
+        if result.is_err() {
+            return core::ptr::null_mut();
+        }
+
+        &mut inode_info.vfs_inode
+    }
+
+    fn destroy_inode(inode: &fs::INode) {
+        let inode = inode.get_inner();
+        unsafe {
+            bindings::call_rcu(
+                &mut (*inode).__bindgen_anon_2.i_rcu,
+                Some(hayleyfs_i_callback),
+            )
+        };
+    }
+
     fn evict_inode(inode: &fs::INode) {
         let sb = inode.i_sb();
         let ino = inode.i_ino();
         // TODO: safety
-        let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // TODO: it's probably not safe to just grab s_fs_info and
-        // get a mutable reference to one of the dram indexes
-        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::borrow((*sb).s_fs_info) };
 
         // store the inode's private page list in the global tree so that we
         // can access it later if the inode comes back into the cache
@@ -174,7 +215,7 @@ impl fs::Type for HayleyFs {
         if unsafe { bindings::S_ISREG(mode.try_into().unwrap()) } {
             // using from_foreign should make sure the info structure is dropped here
             let inode_info = unsafe {
-                <Box<HayleyFsRegInodeInfo> as ForeignOwnable>::from_foreign(
+                <Box<HayleyFsInodeInfo> as ForeignOwnable>::from_foreign(
                     (*inode.get_inner()).i_private,
                 )
             };
@@ -195,6 +236,18 @@ impl fs::Type for HayleyFs {
             sbi.inode_allocator.dealloc_ino(ino).unwrap();
         }
     }
+}
+
+unsafe extern "C" fn hayleyfs_i_callback(head: *mut bindings::callback_head) {
+    let inode = container_of_mut!(head, bindings::inode, __bindgen_anon_2.i_rcu);
+    let sb = unsafe { <Box<SbInfo> as ForeignOwnable>::from_foreign((*(*inode).i_sb).s_fs_info) };
+    let inode_info = hayleyfs_i(inode);
+    unsafe {
+        bindings::kmem_cache_free(
+            sb.inode_cache,
+            inode_info as *mut _ as *mut core::ffi::c_void,
+        )
+    };
 }
 
 /// # Safety

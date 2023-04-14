@@ -9,7 +9,7 @@ use core::{
     mem,
 };
 use kernel::prelude::*;
-use kernel::{bindings, ForeignOwnable, fs, sync::{Arc, smutex::Mutex}, rbtree::RBTree};
+use kernel::{bindings, fs, sync::{Arc, smutex::Mutex}, rbtree::RBTree};
 
 // ZSTs for representing inode types
 // These are not typestate since they don't change, but they are a generic
@@ -236,10 +236,12 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
     }
 }
 
+// TODO: should restructure so that the wrapper does not carry a pointer to the VFS inode,
+// if possible? may not be possible
 impl<'a, State, Op> InodeWrapper<'a, State, Op, RegInode> {
-    fn get_inode_info(&self) -> Result<&HayleyFsRegInodeInfo> {
+    fn get_inode_info(&self) -> Result<&HayleyFsInodeInfo> {
         match self.vfs_inode {
-            Some(vfs_inode) => unsafe {Ok(<Box::<HayleyFsRegInodeInfo> as ForeignOwnable>::borrow((*vfs_inode).i_private))},
+            Some(vfs_inode) => Ok(hayleyfs_i(vfs_inode)),
             None => {pr_info!("ERROR: inode is uninitialized\n"); Err(EPERM)}
         }
     }

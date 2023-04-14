@@ -7,7 +7,7 @@ use core::{
     sync::atomic::{AtomicI64, AtomicU64, Ordering},
 };
 use kernel::prelude::*;
-use kernel::{bindings, ForeignOwnable};
+use kernel::{bindings, container_of_mut};
 
 // TODO: different magic value
 pub(crate) const SUPER_MAGIC: i64 = 0xabcdef;
@@ -163,6 +163,10 @@ pub(crate) struct SbInfo {
     pub(crate) page_allocator: Option<RBPageAllocator>,
     pub(crate) inode_allocator: RBInodeAllocator,
 
+    // vfs inode allocator
+    // TODO: make safe
+    pub(crate) inode_cache: *mut bindings::kmem_cache,
+
     pub(crate) mount_opts: HayleyfsParams,
 }
 
@@ -195,6 +199,17 @@ impl SbInfo {
             ino_data_page_tree: InoDataPageTree::new().unwrap(),
             page_allocator: None,
             inode_allocator: InodeAllocator::new(ROOT_INO + 1).unwrap(),
+            inode_cache: unsafe {
+                bindings::kmem_cache_create(
+                    "hayleyfs_inode_cache".as_ptr() as *const i8,
+                    core::mem::size_of::<HayleyFsInodeInfo>()
+                        .try_into()
+                        .unwrap(),
+                    0,
+                    bindings::SLAB_RECLAIM_ACCOUNT() | bindings::SLAB_MEM_SPREAD(),
+                    Some(init_once),
+                )
+            },
             mount_opts: HayleyfsParams::default(),
         }
     }
@@ -308,10 +323,7 @@ impl SbInfo {
     pub(crate) fn get_init_reg_inode_by_vfs_inode<'a>(
         &self,
         inode: *mut bindings::inode,
-    ) -> Result<(
-        InodeWrapper<'a, Clean, Start, RegInode>,
-        &HayleyFsRegInodeInfo,
-    )> {
+    ) -> Result<(InodeWrapper<'a, Clean, Start, RegInode>, &HayleyFsInodeInfo)> {
         // TODO: use &fs::INode to avoid unsafely dereferencing the inode here
         let ino = unsafe { (*inode).i_ino };
         // we don't use inode 0
@@ -320,8 +332,9 @@ impl SbInfo {
         }
 
         let pi = unsafe { self.get_inode_by_ino_mut(ino)? };
-        let pi_info =
-            unsafe { <Box<HayleyFsRegInodeInfo> as ForeignOwnable>::borrow((*inode).i_private) };
+        let pi_info = hayleyfs_i(inode);
+        // let pi_info =
+        //     unsafe { <Box<HayleyFsInodeInfo> as ForeignOwnable>::borrow((*inode).i_private) };
 
         if pi.get_type() != InodeType::REG {
             pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
@@ -359,6 +372,17 @@ impl SbInfo {
             pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)
         }
+    }
+}
+
+unsafe extern "C" fn init_once(inode: *mut core::ffi::c_void) {
+    let inode_info = unsafe { &mut *(inode as *mut HayleyFsInodeInfo) };
+    unsafe { bindings::inode_init_once(&mut inode_info.vfs_inode) };
+}
+
+pub(crate) fn hayleyfs_i(inode: *mut bindings::inode) -> &'static mut HayleyFsInodeInfo {
+    unsafe {
+        &mut *(container_of_mut!(inode, HayleyFsInodeInfo, vfs_inode) as *mut HayleyFsInodeInfo)
     }
 }
 

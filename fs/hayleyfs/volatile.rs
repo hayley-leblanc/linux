@@ -4,6 +4,7 @@ use crate::typestate::*;
 use core::ffi;
 use kernel::prelude::*;
 use kernel::{
+    bindings,
     rbtree::RBTree,
     sync::{smutex::Mutex, Arc},
 };
@@ -218,7 +219,9 @@ pub(crate) struct DataPageInfo {
 impl DataPageInfo {
     pub(crate) fn new(owner: InodeNum, page_no: PageNum, offset: u64) -> Self {
         Self {
-            owner, page_no, offset
+            owner,
+            page_no,
+            offset,
         }
     }
 
@@ -232,51 +235,69 @@ impl DataPageInfo {
 }
 
 #[repr(C)]
-pub(crate) struct HayleyFsRegInodeInfo {
+pub(crate) struct HayleyFsInodeInfoHeader {
     ino: InodeNum,
     pages: Arc<Mutex<Vec<DataPageInfo>>>,
 }
 
-impl HayleyFsRegInodeInfo {
-    pub(crate) fn new(ino: InodeNum) -> Result<Self> {
-        Ok(Self {
-            ino,
-            pages: Arc::try_new(Mutex::new(Vec::new()))?,
-        })
+#[repr(C)]
+pub(crate) struct HayleyFsInodeInfo {
+    header: HayleyFsInodeInfoHeader,
+    pub(crate) vfs_inode: bindings::inode, // has to be public for container_of! lookups
+}
+
+impl HayleyFsInodeInfo {
+    // takes a reference to self because alloc_inode allocates
+    // the header structures - we just want to make sure the
+    // values are filled in properly
+    pub(crate) fn set_up_header(&mut self) -> Result<()> {
+        self.header.ino = 0; // TODO: at some point we need to set this!
+        self.header.pages = Arc::try_new(Mutex::new(Vec::new()))?;
+        Ok(())
     }
 
-    pub(crate) fn new_from_vec(ino: InodeNum, vec: Vec<DataPageInfo>) -> Result<Self> {
-        Ok(Self {
-            ino,
-            pages: Arc::try_new(Mutex::new(vec))?,
-        })
+    pub(crate) fn set_ino(&mut self, ino: InodeNum) {
+        self.header.ino = ino;
     }
 }
 
+// impl HayleyFsRegInodeInfo {
+//     pub(crate) fn new(ino: InodeNum) -> Result<Self> {
+//         Ok(Self {
+//             ino,
+//             pages: Arc::try_new(Mutex::new(Vec::new()))?,
+//         })
+//     }
+
+//     pub(crate) fn new_from_vec(ino: InodeNum, vec: Vec<DataPageInfo>) -> Result<Self> {
+//         Ok(Self {
+//             ino,
+//             pages: Arc::try_new(Mutex::new(vec))?,
+//         })
+//     }
+// }
+
 /// maps file inodes to info about their pages
 pub(crate) trait InoDataPageMap {
-    fn new(ino: InodeNum) -> Result<Self>
-    where
-        Self: Sized;
+    // fn new(ino: InodeNum) -> Result<Self>
+    // where
+    //     Self: Sized;
     fn insert<'a, State: Initialized>(
         &self,
         page: &DataPageWrapper<'a, Clean, State>,
     ) -> Result<()>;
+    fn insert_pages(&self, vec: Vec<DataPageInfo>) -> Result<()>;
     fn find(&self, offset: u64) -> Option<DataPageInfo>;
     fn remove_all_pages(&self) -> Result<Vec<DataPageInfo>>;
-    fn delete(&self) -> Result<DataPageInfo>;
+    // fn delete(&self) -> Result<DataPageInfo>;
 }
 
-impl InoDataPageMap for HayleyFsRegInodeInfo {
-    fn new(ino: InodeNum) -> Result<Self> {
-        HayleyFsRegInodeInfo::new(ino)
-    }
-
+impl InoDataPageMap for HayleyFsInodeInfo {
     fn insert<'a, State: Initialized>(
         &self,
         page: &DataPageWrapper<'a, Clean, State>,
     ) -> Result<()> {
-        let pages = Arc::clone(&self.pages);
+        let pages = Arc::clone(&self.header.pages);
         let mut pages = pages.lock();
         let offset = page.get_offset();
         let page_no = page.get_page_no();
@@ -285,38 +306,47 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         let index = offset / HAYLEYFS_PAGESIZE;
         if index != pages.len().try_into()? {
             pr_info!(
-                "ERROR: inode {:?} attempted to insert page {:?} at index {:?} (offset {:?}) but pages vector has length {:?}\n",
-                self.ino,
-                page_no,
-                index,
-                offset,
-                pages.len()
-            );
+                    "ERROR: inode {:?} attempted to insert page {:?} at index {:?} (offset {:?}) but pages vector has length {:?}\n",
+                    self.header.ino,
+                    page_no,
+                    index,
+                    offset,
+                    pages.len()
+                );
             pr_info!("{:?}\n", pages[index as usize]);
             return Err(EINVAL);
         }
         // pr_info!("inserting at offset {:?} for inode {:?}\n", offset, self.ino);
         pages.try_push(DataPageInfo {
-            owner: self.ino,
+            owner: self.header.ino,
             page_no,
             offset,
         })?;
         Ok(())
     }
 
+    fn insert_pages(&self, vec: Vec<DataPageInfo>) -> Result<()> {
+        let pages = Arc::clone(&self.header.pages);
+        let mut pages = pages.lock();
+        for page in vec {
+            pages.try_push(page)?;
+        }
+        Ok(())
+    }
+
     fn find(&self, offset: u64) -> Option<DataPageInfo> {
-        let pages = Arc::clone(&self.pages);
+        let pages = Arc::clone(&self.header.pages);
         let pages = pages.lock();
         let index: usize = (offset / HAYLEYFS_PAGESIZE).try_into().unwrap();
         let result = pages.get(index);
         match result {
             Some(page) => Some(page.clone()),
-            None => None
+            None => None,
         }
     }
 
     fn remove_all_pages(&self) -> Result<Vec<DataPageInfo>> {
-        let pages = Arc::clone(&self.pages);
+        let pages = Arc::clone(&self.header.pages);
         let mut pages = pages.lock();
         let mut return_vec = Vec::new();
         // TODO: can you do this without copying all of the pages?
@@ -327,12 +357,12 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         Ok(return_vec)
     }
 
-    /// Deletes the last page in the file from the index and returns it
-    fn delete(&self) -> Result<DataPageInfo> {
-        let pages = Arc::clone(&self.pages);
-        let mut pages = pages.lock();
-        pages.pop().ok_or(EINVAL)
-    }
+    //     /// Deletes the last page in the file from the index and returns it
+    //     fn delete(&self) -> Result<DataPageInfo> {
+    //         let pages = Arc::clone(&self.pages);
+    //         let mut pages = pages.lock();
+    //         pages.pop().ok_or(EINVAL)
+    //     }
 }
 
 pub(crate) struct InoDataPageTree {

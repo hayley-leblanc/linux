@@ -27,10 +27,7 @@ impl inode::Operations for InodeOps {
 
         let sb = dir.i_sb();
         // TODO: safety
-        let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // TODO: it's probably not safe to just grab s_fs_info and
-        // get a mutable reference to one of the dram indexes
-        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::borrow((*sb).s_fs_info) };
 
         let result = sbi
             .ino_dentry_map
@@ -53,10 +50,7 @@ impl inode::Operations for InodeOps {
     ) -> Result<i32> {
         let sb = dir.i_sb();
         // TODO: safety
-        let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // TODO: it's probably not safe to just grab s_fs_info and
-        // get a mutable reference to one of the dram indexes
-        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::borrow((*sb).s_fs_info) };
 
         let (_new_dentry, new_inode) = hayleyfs_create(sbi, mnt_userns, dir, dentry, umode, excl)?;
         // TODO: turn this into a new_vfs_inode function
@@ -71,10 +65,7 @@ impl inode::Operations for InodeOps {
         let inode = old_dentry.d_inode();
         let sb = dir.i_sb();
         // TODO: safety
-        let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // TODO: it's probably not safe to just grab s_fs_info and
-        // get a mutable reference to one of the dram indexes
-        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::borrow((*sb).s_fs_info) };
 
         let result = hayleyfs_link(sbi, old_dentry, dir, dentry);
 
@@ -106,10 +97,7 @@ impl inode::Operations for InodeOps {
     ) -> Result<i32> {
         let sb = dir.i_sb();
         // TODO: safety
-        let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // TODO: it's probably not safe to just grab s_fs_info and
-        // get a mutable reference to one of the dram indexes
-        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::borrow((*sb).s_fs_info) };
 
         let (_new_dentry, _parent_inode, new_inode) =
             hayleyfs_mkdir(sbi, mnt_userns, dir, dentry, umode)?;
@@ -136,10 +124,7 @@ impl inode::Operations for InodeOps {
     fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
         let sb = dir.i_sb();
         // TODO: safety
-        let fs_info_raw = unsafe { (*sb).s_fs_info };
-        // TODO: it's probably not safe to just grab s_fs_info and
-        // get a mutable reference to one of the dram indexes
-        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let sbi = unsafe { <Box<SbInfo> as ForeignOwnable>::borrow((*sb).s_fs_info) };
 
         let result = hayleyfs_unlink(sbi, dir, dentry);
         if let Err(e) = result {
@@ -203,19 +188,18 @@ pub(crate) fn hayleyfs_iget(
             (*inode).__bindgen_anon_3.i_fop = file::OperationsVtable::<Adapter, FileOps>::build();
 
             let pages = sbi.ino_data_page_tree.remove(ino);
-            // if the inode has any pages associated with it, remove them from the
-            // global tree and put them in this inode's i_private
+            let inode_info = hayleyfs_i(inode);
+            inode_info.set_ino(ino);
+
             if let Some(pages) = pages {
-                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_vec(ino, pages))?;
-                (*inode).i_private = inode_info.into_foreign() as *mut _;
-            } else {
-                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
-                (*inode).i_private = inode_info.into_foreign() as *mut _;
+                inode_info.insert_pages(pages)?;
             }
+            // else, the inode info vector has already been set up as empty
         },
         InodeType::DIR => unsafe {
             (*inode).i_op = inode::OperationsVtable::<InodeOps>::build();
             (*inode).__bindgen_anon_3.i_fop = dir::OperationsVtable::<DirOps>::build();
+            // TODO: use inode info structure for directories too
         },
         InodeType::NONE => panic!("Inode type is NONE"),
     }
@@ -253,9 +237,7 @@ fn new_vfs_inode<'a, Type>(
     match inode_type {
         InodeType::REG => {
             vfs_inode.i_mode = umode;
-            // initialize the DRAM info and save it in the private pointer
-            let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
-            vfs_inode.i_private = inode_info.into_foreign() as *mut _;
+            // DRAM inode info has already been initialized
             unsafe {
                 vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
                 vfs_inode.__bindgen_anon_3.i_fop =
@@ -329,7 +311,7 @@ fn hayleyfs_create<'a>(
 }
 
 fn hayleyfs_link<'a>(
-    sbi: &'a mut SbInfo,
+    sbi: &'a SbInfo,
     old_dentry: &fs::DEntry,
     dir: &fs::INode,
     dentry: &fs::DEntry,
