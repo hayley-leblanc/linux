@@ -770,6 +770,16 @@ bool rust_helper_S_ISDIR(unsigned int val) {
 }
 EXPORT_SYMBOL_GPL(rust_helper_S_ISDIR);
 
+void rust_helper_sb_start_write(struct super_block *sb) {
+	sb_start_write(sb);
+}
+EXPORT_SYMBOL_GPL(rust_helper_sb_start_write);
+
+void rust_helper_sb_end_write(struct super_block *sb) {
+	sb_end_write(sb);
+}
+EXPORT_SYMBOL_GPL(rust_helper_sb_end_write);
+
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
  * as the Rust `usize` type, so we can use it in contexts where Rust
