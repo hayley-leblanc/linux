@@ -303,14 +303,14 @@ impl<T: Type + ?Sized> Tables<T> {
     }
 
     const SUPER_BLOCK: bindings::super_operations = bindings::super_operations {
-        alloc_inode: None,
-        destroy_inode: None,
+        alloc_inode: Some(Self::alloc_inode_callback),
+        destroy_inode: Some(Self::destroy_inode_callback),
         free_inode: None,
         dirty_inode: None,
         write_inode: None,
         drop_inode: None,
         evict_inode: Some(Self::evict_inode_callback),
-        put_super: None,
+        put_super: Some(Self::put_super_callback),
         sync_fs: None,
         freeze_super: None,
         freeze_fs: None,
@@ -332,6 +332,23 @@ impl<T: Type + ?Sized> Tables<T> {
         nr_cached_objects: None,
         free_cached_objects: None,
     };
+
+    unsafe extern "C" fn alloc_inode_callback(
+        sb: *mut bindings::super_block,
+    ) -> *mut bindings::inode {
+        let sb: &SuperBlock<T> = unsafe { &*sb.cast::<SuperBlock<_>>() };
+        T::alloc_inode(sb)
+    }
+
+    unsafe extern "C" fn destroy_inode_callback(inode: *mut bindings::inode) {
+        let inode: &INode = unsafe { &*inode.cast() };
+        T::destroy_inode(inode);
+    }
+
+    unsafe extern "C" fn put_super_callback(sb: *mut bindings::super_block) {
+        let sb: &SuperBlock<T> = unsafe { &*sb.cast() };
+        T::put_super(sb);
+    }
 
     unsafe extern "C" fn statfs_callback(
         dentry: *mut bindings::dentry,
@@ -377,6 +394,15 @@ pub trait Type {
         data: <Self::Context as Context<Self>>::Data,
         sb: NewSuperBlock<'_, Self>,
     ) -> Result<&SuperBlock<Self>>;
+
+    /// Allocate a new VFS inode
+    fn alloc_inode(sb: &SuperBlock<Self>) -> *mut bindings::inode;
+
+    /// Destroy a VFS inode
+    fn destroy_inode(inode: &INode);
+
+    /// Clean up the superblock at unmount
+    fn put_super(sb: &SuperBlock<Self>);
 
     /// Returns metadata about this file system.
     fn statfs(sb: &SuperBlock<Self>, buf: *mut bindings::kstatfs) -> Result<()>;

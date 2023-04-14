@@ -253,6 +253,17 @@ macro_rules! container_of {
     }}
 }
 
+/// Produces a pointer to an object from a pointer to one of its fields.
+/// Same as `container_of!` except it returns a mutable raw pointer.
+#[macro_export]
+macro_rules! container_of_mut {
+    ($ptr:expr, $type:ty, $($f:tt)*) => {{
+        let ptr = $ptr as *const _ as *mut u8;
+        let offset = $crate::offset_of!($type, $($f)*);
+        ptr.wrapping_offset(-offset) as *mut $type
+    }}
+}
+
 #[cfg(not(any(testlib, test)))]
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {

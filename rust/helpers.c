@@ -780,6 +780,21 @@ void rust_helper_sb_end_write(struct super_block *sb) {
 }
 EXPORT_SYMBOL_GPL(rust_helper_sb_end_write);
 
+slab_flags_t rust_helper_SLAB_RECLAIM_ACCOUNT(void) {
+	return SLAB_RECLAIM_ACCOUNT;
+}
+EXPORT_SYMBOL_GPL(rust_helper_SLAB_RECLAIM_ACCOUNT);
+
+slab_flags_t rust_helper_SLAB_MEM_SPREAD(void) {
+	return SLAB_MEM_SPREAD;
+}
+EXPORT_SYMBOL_GPL(rust_helper_SLAB_MEM_SPREAD);
+
+gfp_t rust_helper_GFP_NOFS(void) {
+	return GFP_NOFS;
+}
+EXPORT_SYMBOL_GPL(rust_helper_GFP_NOFS);
+
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
  * as the Rust `usize` type, so we can use it in contexts where Rust
