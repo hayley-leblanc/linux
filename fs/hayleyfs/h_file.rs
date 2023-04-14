@@ -44,6 +44,7 @@ impl file::Operations for FileOps {
         let sem = unsafe { &mut (*file.inode()).i_rwsem as *mut bindings::rw_semaphore };
         let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
         let sb = inode.i_sb();
+        unsafe { bindings::sb_start_write(sb) };
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
         // TODO: it's probably not safe to just grab s_fs_info and
@@ -51,9 +52,14 @@ impl file::Operations for FileOps {
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
         let inode = unsafe { RwSemaphore::new_with_sem(inode, sem) };
         // let mut inode = inode.write();
-        let (bytes_written, _) = hayleyfs_write(sbi, inode, reader, offset)?;
 
-        Ok(bytes_written.try_into()?)
+        // let (bytes_written, _) = hayleyfs_write(sbi, inode, reader, offset)?;
+        let result = hayleyfs_write(sbi, inode, reader, offset);
+        unsafe { bindings::sb_end_write(sb) };
+        match result {
+            Ok((bytes_written, _)) => Ok(bytes_written.try_into()?),
+            Err(e) => Err(e),
+        }
     }
 
     fn read(
@@ -66,14 +72,21 @@ impl file::Operations for FileOps {
         let mut sem = unsafe { (*file.inode()).i_rwsem };
         let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
         let sb = inode.i_sb();
+        unsafe { bindings::sb_start_write(sb) };
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
         // TODO: it's probably not safe to just grab s_fs_info and
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
         let inode = unsafe { RwSemaphore::new_with_sem(inode, &mut sem) };
-        let result = hayleyfs_read(sbi, inode, writer, offset)?;
-        Ok(result.try_into()?)
+        let result = hayleyfs_read(sbi, inode, writer, offset);
+        unsafe { bindings::sb_end_write(sb) }
+        match result {
+            Ok(r) => Ok(r.try_into()?),
+            Err(e) => Err(e),
+        }
+        // let result = hayleyfs_read(sbi, inode, writer, offset)?;
+        // Ok(result.try_into()?)
     }
 
     fn seek(_data: (), f: &file::File, offset: file::SeekFrom) -> Result<u64> {
@@ -177,7 +190,9 @@ fn hayleyfs_read(
     // TODO: update timestamp
 
     // acquire shared read lock
+    pr_info!("reader waiting\n");
     let inode = inode.read();
+    pr_info!("reader got the lock\n");
     let (_, pi_info) = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     let size: u64 = inode.i_size_read().try_into()?;
 
