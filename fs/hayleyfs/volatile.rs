@@ -218,7 +218,9 @@ pub(crate) struct DataPageInfo {
 impl DataPageInfo {
     pub(crate) fn new(owner: InodeNum, page_no: PageNum, offset: u64) -> Self {
         Self {
-            owner, page_no, offset
+            owner,
+            page_no,
+            offset,
         }
     }
 
@@ -311,7 +313,7 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         let result = pages.get(index);
         match result {
             Some(page) => Some(page.clone()),
-            None => None
+            None => None,
         }
     }
 

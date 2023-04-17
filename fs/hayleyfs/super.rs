@@ -142,6 +142,10 @@ impl fs::Type for HayleyFs {
         Ok(sb)
     }
 
+    fn put_super(_sb: &fs::SuperBlock<Self>) {
+        pr_info!("PUT SUPERBLOCK\n");
+    }
+
     fn statfs(sb: &fs::SuperBlock<Self>, buf: *mut bindings::kstatfs) -> Result<()> {
         // TODO: better support in rust/ so we don't have to do this all via raw pointers
         let sbi = unsafe { &*(sb.s_fs_info() as *const SbInfo) };
@@ -178,6 +182,7 @@ impl fs::Type for HayleyFs {
                     (*inode.get_inner()).i_private,
                 )
             };
+            unsafe { (*inode.get_inner()).i_private = core::ptr::null_mut() };
             let pages = inode_info.remove_all_pages().unwrap();
             sbi.ino_data_page_tree.insert(ino, pages).unwrap();
         }

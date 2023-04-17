@@ -470,6 +470,7 @@ impl TryFrom<&PageDescriptor> for &DataPageHeader {
 
 /// Given the offset into a file, returns the offset of the
 /// DataPageHeader that includes that offset
+#[allow(dead_code)]
 pub(crate) fn page_offset(offset: u64) -> Result<u64> {
     // integer division removes the remainder; multiplying by HAYLEYFS_PAGESIZE
     // gives us the offset of the page to read/write
