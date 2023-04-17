@@ -755,6 +755,16 @@ void rust_helper_inode_unlock(struct inode *inode) {
 }
 EXPORT_SYMBOL_GPL(rust_helper_inode_unlock);
 
+void rust_helper_inode_lock_shared(struct inode *inode) {
+	inode_lock_shared(inode);
+}
+EXPORT_SYMBOL_GPL(rust_helper_inode_lock_shared);
+
+void rust_helper_inode_unlock_shared(struct inode *inode) {
+	inode_unlock_shared(inode);
+}
+EXPORT_SYMBOL_GPL(rust_helper_inode_unlock_shared);
+
 bool rust_helper_S_ISLNK(unsigned int val) {
 	return S_ISLNK(val);
 }
