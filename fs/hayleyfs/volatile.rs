@@ -294,10 +294,8 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
                 offset,
                 pages.len()
             );
-            pr_info!("{:?}\n", pages[index as usize]);
             return Err(EINVAL);
         }
-        // pr_info!("inserting at offset {:?} for inode {:?}\n", offset, self.ino);
         pages.try_push(DataPageInfo {
             owner: self.ino,
             page_no,

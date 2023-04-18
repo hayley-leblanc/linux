@@ -7,7 +7,10 @@ use crate::{end_timing, init_timing, start_timing};
 use core::{marker::Sync, ptr, sync::atomic::Ordering};
 use kernel::prelude::*;
 use kernel::{
-    bindings, error, file, fs,
+    bindings,
+    error,
+    file,
+    fs,
     io_buffer::{IoBufferReader, IoBufferWriter},
     // sync::RwSemaphore,
 };
@@ -149,7 +152,6 @@ fn hayleyfs_write<'a>(
             .fence();
         sbi.inc_blocks_in_use();
         let page = page.set_data_page_backpointer(&pi).flush().fence();
-        // pr_info!("allocated page {:?} for offset {:?} in inode {:?}\n", page.get_page_no(), page_offset, inode.i_ino());
         // add page to the index
         // this is safe to do here because we hold a lock on this inode
         pi_info.insert(&page)?;
