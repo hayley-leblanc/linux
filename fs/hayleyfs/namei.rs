@@ -59,9 +59,6 @@ impl inode::Operations for InodeOps {
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
         let (_new_dentry, new_inode) = hayleyfs_create(sbi, mnt_userns, dir, dentry, umode, excl)?;
-        // TODO: turn this into a new_vfs_inode function
-        // TODO: add some functions/methods to the kernel crate so we don't have
-        // to call them directly here
 
         new_vfs_inode(sb, sbi, mnt_userns, dir, dentry, new_inode, umode)?;
         Ok(0)
@@ -248,7 +245,6 @@ fn new_vfs_inode<'a, Type>(
 
     // we don't have access to ZST Type, but inode wrapper constructors check types
     // so we can rely on these being correct
-    // TODO: what should i_fop be set to?
     let inode_type = new_inode.get_type();
     match inode_type {
         InodeType::REG => {

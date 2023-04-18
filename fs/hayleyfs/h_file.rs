@@ -44,7 +44,6 @@ impl file::Operations for FileOps {
         offset: u64,
     ) -> Result<usize> {
         // TODO: cleaner way to set up the semaphore with Rust RwSemaphore
-        // let sem = unsafe { &mut (*file.inode()).i_rwsem as *mut bindings::rw_semaphore };
         let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
         let sb = inode.i_sb();
         unsafe { bindings::sb_start_write(sb) };
@@ -53,11 +52,7 @@ impl file::Operations for FileOps {
         // TODO: it's probably not safe to just grab s_fs_info and
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
-        // let inode = unsafe { RwSemaphore::new_with_sem(inode, sem) };
-        // let mut inode = inode.write();
         unsafe { bindings::inode_lock(inode.get_inner()) };
-
-        // let (bytes_written, _) = hayleyfs_write(sbi, inode, reader, offset)?;
         let result = hayleyfs_write(sbi, inode, reader, offset);
         unsafe { bindings::inode_unlock(inode.get_inner()) };
         unsafe { bindings::sb_end_write(sb) };
@@ -74,7 +69,6 @@ impl file::Operations for FileOps {
         offset: u64,
     ) -> Result<usize> {
         // TODO: cleaner way to set up the semaphore with Rust RwSemaphore
-        // let mut sem = unsafe { (*file.inode()).i_rwsem };
         let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
         let sb = inode.i_sb();
         unsafe { bindings::sb_start_write(sb) };
@@ -83,7 +77,6 @@ impl file::Operations for FileOps {
         // TODO: it's probably not safe to just grab s_fs_info and
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
-        // let inode = unsafe { RwSemaphore::new_with_sem(inode, &mut sem) };
         unsafe { bindings::inode_lock_shared(inode.get_inner()) };
         let result = hayleyfs_read(sbi, inode, writer, offset);
         unsafe { bindings::inode_unlock_shared(inode.get_inner()) };
@@ -92,8 +85,6 @@ impl file::Operations for FileOps {
             Ok(r) => Ok(r.try_into()?),
             Err(e) => Err(e),
         }
-        // let result = hayleyfs_read(sbi, inode, writer, offset)?;
-        // Ok(result.try_into()?)
     }
 
     fn seek(_data: (), f: &file::File, offset: file::SeekFrom) -> Result<u64> {
@@ -131,7 +122,6 @@ fn hayleyfs_write<'a>(
     } else {
         len
     };
-    // let mut inode = inode.write();
     let (pi, pi_info) = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
 
     // TODO: update timestamp

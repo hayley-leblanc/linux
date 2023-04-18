@@ -33,7 +33,6 @@ pub(crate) const NUM_DESCRIPTOR_TABLE_PAGES: u64 = DESCRIPTOR_TABLE_SIZE / HAYLE
 pub(crate) const NUM_PAGE_DESCRIPTORS: u64 = DESCRIPTOR_TABLE_SIZE / PAGE_DESCRIPTOR_SIZE;
 
 /// Reserved pages
-/// TODO: update these
 #[allow(dead_code)]
 pub(crate) const SB_PAGE: PageNum = 0;
 #[allow(dead_code)]
@@ -75,7 +74,6 @@ pub(crate) enum DropType {
 pub(crate) trait PmObjWrapper {}
 
 /// Persistent super block
-/// TODO: add stuff
 #[repr(C)]
 pub(crate) struct HayleyFsSuperBlock {
     magic: i64,
@@ -140,7 +138,6 @@ pub(crate) struct SbInfo {
     // but writing it this way would cause SbInfo to be !Sized which causes
     // all kinds of problems elsewhere. Next best solution is to manually make
     // sure that each field's type implements the associated trait.
-    // TODO: fix this.
     pub(crate) ino_dentry_map: BasicInoDentryMap, // InoDentryMap
     pub(crate) ino_dir_page_map: BasicInoDirPageMap, // InoDirPageMap
     // ino_data_page_tree is NOT the index used for lookups of data pages.
@@ -190,8 +187,8 @@ impl SbInfo {
             num_blocks: 0,
             inodes_in_use: AtomicU64::new(1),
             blocks_in_use: AtomicU64::new(0), // TODO: mark reserved pages as in use
-            ino_dentry_map: InoDentryMap::new().unwrap(), // TODO: handle possible panic
-            ino_dir_page_map: InoDirPageMap::new().unwrap(), // TODO: handle possible panic
+            ino_dentry_map: InoDentryMap::new().unwrap(),
+            ino_dir_page_map: InoDirPageMap::new().unwrap(),
             ino_data_page_tree: InoDataPageTree::new().unwrap(),
             page_allocator: None,
             inode_allocator: InodeAllocator::new(ROOT_INO + 1).unwrap(),

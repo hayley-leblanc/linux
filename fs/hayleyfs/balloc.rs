@@ -35,8 +35,6 @@ pub(crate) struct RBPageAllocator {
 }
 
 impl PageAllocator for Option<RBPageAllocator> {
-    // TODO: will need two constructors - one from a range of pages (to use at init) and
-    // one to use at remount for disjoint sets of pages
     fn new_from_range(val: u64, dev_pages: u64) -> Result<Self> {
         let mut rb = RBTree::new();
         for i in val..dev_pages {
@@ -298,7 +296,7 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
     }
 }
 
-// TODO: safety
+
 fn page_no_to_dir_header<'a>(sbi: &'a SbInfo, page_no: PageNum) -> Result<&'a mut DirPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
     let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
@@ -535,12 +533,9 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
 }
 
 // TODO: should check page type?
-#[allow(dead_code)]
 fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
     let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
-    // let ph: &mut PageDescriptor = &mut page_desc_table[page_index];
-    // let ph: &mut PageDescriptor = page_desc_table.get_mut(page_index).ok_or(ENOSPC);
     let ph = page_desc_table.get_mut(page_index);
     if ph.is_none() {
         pr_info!(
@@ -722,7 +717,6 @@ impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
 impl<'a> DataPageWrapper<'a, Clean, ClearIno> {
     /// Returns in Dealloc state, not Free state, because it's still not safe
     /// to drop the pages until they are all persisted
-    /// TODO: return deallocated pages to the page allocator
     pub(crate) fn dealloc(mut self) -> DataPageWrapper<'a, Dirty, Dealloc> {
         match &mut self.page {
             Some(page) => {

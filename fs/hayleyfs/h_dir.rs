@@ -88,8 +88,6 @@ impl<'a> DentryWrapper<'a, Clean, Free> {
 }
 
 impl<'a> DentryWrapper<'a, Clean, Alloc> {
-    // TODO: update alloy model to reflect dentry being in complete instead of init
-    // after setting its ino
     pub(crate) fn set_file_ino<State: AddLink>(
         self,
         inode: InodeWrapper<'a, Clean, State, RegInode>,

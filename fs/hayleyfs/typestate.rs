@@ -1,41 +1,23 @@
-// TODO: remove debug derivations - they probably make these types non-zero-sized
-
 /// Zero-sized types for persistence state
-#[derive(Debug)]
 pub(crate) struct Dirty {}
-#[derive(Debug)]
 pub(crate) struct InFlight {}
-#[derive(Debug)]
 pub(crate) struct Clean {}
 
 // TODO: maybe have op-specific complete states?
 
 /// Zero-sized types for operation state
-#[derive(Debug)]
 pub(crate) struct Start {}
-#[derive(Debug)]
 pub(crate) struct Free {}
-#[derive(Debug)]
 pub(crate) struct Alloc {}
-#[derive(Debug)]
 pub(crate) struct Init {}
-#[derive(Debug)]
 pub(crate) struct IncLink {}
-#[derive(Debug)]
 pub(crate) struct Complete {}
-#[derive(Debug)]
 pub(crate) struct Writeable {}
-#[derive(Debug)]
 pub(crate) struct Written {}
-#[derive(Debug)]
 pub(crate) struct IncSize {}
-#[derive(Debug)]
 pub(crate) struct ClearIno {}
-#[derive(Debug)]
 pub(crate) struct DecLink {}
-#[derive(Debug)]
 pub(crate) struct Dealloc {}
-#[derive(Debug)]
 pub(crate) struct ToUnmap {}
 
 /// Traits to allow a transition from multiple legal typestates

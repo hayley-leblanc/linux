@@ -51,7 +51,7 @@ pub(crate) struct InodeWrapper<'a, State, Op, Type> {
     op: PhantomData<Op>,
     inode_type: PhantomData<Type>,
     ino: InodeNum,
-    vfs_inode: Option<*mut bindings::inode>, // TODO: make this an fs::INode?
+    vfs_inode: Option<*mut bindings::inode>, // TODO: make this an fs::INode? or point it directly to the inode info structure?
     inode: &'a mut HayleyFsInode,
 }
 

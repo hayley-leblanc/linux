@@ -53,11 +53,10 @@ impl fs::Type for HayleyFs {
     type Data = Box<SbInfo>;
     type InodeOps = InodeOps;
     type DirOps = DirOps;
-    const SUPER_TYPE: fs::Super = fs::Super::BlockDev; // TODO: or BlockDev?
+    const SUPER_TYPE: fs::Super = fs::Super::BlockDev;
     const NAME: &'static CStr = c_str!("hayleyfs");
     const FLAGS: i32 = fs::flags::REQUIRES_DEV | fs::flags::USERNS_MOUNT;
 
-    // TODO: take init argument and only initialize new FS if it is given
     fn fill_super(
         mut data: Box<SbInfo>,
         sb: fs::NewSuperBlock<'_, Self>,
@@ -106,7 +105,6 @@ impl fs::Type for HayleyFs {
 
             // TODO: this is so janky. fix the kernel code so that this is cleaner
             // obtain the root inode we just created and fill it in with correct values
-            // TODO: does this allocate a new inode?
             let inode = unsafe { bindings::new_inode(sb.get_inner()) };
             if inode.is_null() {
                 return Err(ENOMEM);
@@ -223,7 +221,6 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
 
         // TODO: this is so janky. fix the kernel code so that this is cleaner
         // obtain the root inode we just created and fill it in with correct values
-        // TODO: does this allocate a new inode?
         let inode = bindings::new_inode(sb.get_inner());
         if inode.is_null() {
             return Err(ENOMEM);
@@ -269,7 +266,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut processed_live_inodes: RBTree<InodeNum, ()> = RBTree::new(); // rbtree as a set
 
     // keeps track of maximum inode/page number in use to recreate the allocator
-    // TODO: this will have to change when inodes/pages can be reused
     let mut max_inode = 0;
     let mut max_page = DATA_PAGE_START;
 
@@ -374,7 +370,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         processed_live_inodes.try_insert(live_inode, ())?;
     }
 
-    // TODO: update when allocators change
     sbi.page_allocator = Option::<RBPageAllocator>::new_from_alloc_vec(
         alloc_page_vec,
         DATA_PAGE_START,
