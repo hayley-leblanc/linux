@@ -398,12 +398,6 @@ pub trait Type {
         sb: NewSuperBlock<'_, Self>,
     ) -> Result<&SuperBlock<Self>>;
 
-    // /// Allocate a new VFS inode
-    // fn alloc_inode(sb: &SuperBlock<Self>) -> *mut bindings::inode;
-
-    // /// Destroy a VFS inode
-    // fn destroy_inode(inode: &INode);
-
     /// Clean up the superblock at unmount
     fn put_super(sb: &SuperBlock<Self>);
 
@@ -412,6 +406,9 @@ pub trait Type {
 
     /// Called at the last iput() if i_nlink is 0.
     fn evict_inode(inode: &INode);
+
+    /// Initializes i_private field for the root inode.
+    fn init_private(inode: *mut bindings::inode) -> Result<()>;
 }
 
 /// File system flags.
@@ -769,6 +766,8 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
 
             // SAFETY: `inode` is valid for write.
             unsafe { bindings::set_nlink(inode, 2) };
+
+            T::init_private(inode)?;
         }
 
         // SAFETY: `d_make_root` requires that `inode` be valid and referenced, which is the
@@ -799,6 +798,8 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
 
             // TODO: safety
             (*inode).i_op = inode::OperationsVtable::<T::InodeOps>::build();
+
+            T::init_private(inode)?;
         }
 
         // TODO: safety
