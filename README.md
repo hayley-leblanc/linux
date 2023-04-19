@@ -32,6 +32,14 @@ You can create your own VM setup or use a pre-existing image. Details are below.
 2. Untar the VM image: `tar -xf rustfs.img.tar.gz`
 3. The VM can now be booted using `qemu-system-x86_64 -boot c -m 8G -hda rustfs.img -enable-kvm -net nic -net user,hostfwd=tcp::2222-:22 -cpu host -nographic -smp 8`
 
+## Baremetal setup
+
+Follow these instructions to install the kernel on a baremetal Chameleon Cloud machine.
+
+1. Create a baremetal Chameleon cloud instance with their Ubuntu22.04 image. 
+2. On the instance, run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang-11 zstd lld-11 llvm-11`.
+3. Clone this repository onto the instance. 
+4. Follow the kernel setup instructions below. EXXCEPT, instead of using `defconfig`, use `olddefconfig`. This will use the current kernel's .config file as the basis for configuration, and will use default settings for any new options. This creates a larger kernel but will ensure that it has the correct drivers to run on the baremetal instance. You will still need to check that the configuration options listed below are set properly. 
 
 ## Kernel setup (skip if using pre-existing image)
 
