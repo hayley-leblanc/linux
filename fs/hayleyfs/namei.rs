@@ -213,6 +213,17 @@ pub(crate) fn hayleyfs_iget(
         InodeType::DIR => unsafe {
             (*inode).i_op = inode::OperationsVtable::<InodeOps>::build();
             (*inode).__bindgen_anon_3.i_fop = dir::OperationsVtable::<DirOps>::build();
+
+            let pages = sbi.ino_dir_page_tree.remove(ino);
+            // if the inode has any pages associated with it, remove them from the
+            // global tree and put them in this inode's i_private
+            if let Some(pages) = pages {
+                let inode_info = Box::try_new(HayleyFsDirInodeInfo::new_from_vec(ino, pages))?;
+                (*inode).i_private = inode_info.into_foreign() as *mut _;
+            } else {
+                let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ino))?;
+                (*inode).i_private = inode_info.into_foreign() as *mut _;
+            }
         },
         InodeType::NONE => panic!("Inode type is NONE"),
     }
@@ -261,6 +272,9 @@ fn new_vfs_inode<'a, Type>(
         }
         InodeType::DIR => {
             vfs_inode.i_mode = umode | bindings::S_IFDIR as u16;
+            // initialize the DRAM info and save it in the private pointer
+            let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ino))?;
+            vfs_inode.i_private = inode_info.into_foreign() as *mut _;
             unsafe {
                 vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
                 vfs_inode.__bindgen_anon_3.i_fop = dir::OperationsVtable::<DirOps>::build();
@@ -316,7 +330,9 @@ fn hayleyfs_create<'a>(
 )> {
     // TODO: should perhaps take inode wrapper to the parent so that we know
     // the parent is initialized
-    let pd = get_free_dentry(sbi, dir)?;
+    let (_parent_inode, parent_inode_info) =
+        sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
     let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, mnt_userns, dir, pd, umode)?;
     dentry.index(dir.i_ino(), sbi)?;
@@ -333,7 +349,9 @@ fn hayleyfs_link<'a>(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
-    let pd = get_free_dentry(sbi, dir)?;
+    let (_parent_inode, parent_inode_info) =
+        sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
     let _pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     // old dentry is the dentry for the target name,
@@ -343,7 +361,9 @@ fn hayleyfs_link<'a>(
     // first, obtain the inode that's getting the link from old_dentry
     let (target_inode, _) = sbi.get_init_reg_inode_by_vfs_inode(old_dentry.d_inode())?;
     let target_inode = target_inode.inc_link_count()?.flush().fence();
-    let pd = get_free_dentry(sbi, dir)?;
+    let (_parent_inode, parent_inode_info) =
+        sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     let (pd, target_inode) = pd.set_file_ino(target_inode);
@@ -365,12 +385,10 @@ fn hayleyfs_mkdir<'a>(
     InodeWrapper<'a, Clean, Complete, DirInode>, // parent
     InodeWrapper<'a, Clean, Complete, DirInode>, // new inode
 )> {
-    let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let (parent_inode, parent_inode_info) = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let parent_inode = parent_inode.inc_link_count()?.flush().fence();
-
-    let pd = get_free_dentry(sbi, dir)?;
+    let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
-
     let (dentry, parent, inode) =
         init_dentry_with_new_dir_inode(sbi, mnt_userns, dir, pd, parent_inode, mode)?;
     dentry.index(dir.i_ino(), sbi)?;
@@ -465,10 +483,9 @@ fn hayleyfs_unlink<'a>(
 fn get_free_dentry<'a>(
     sbi: &'a SbInfo,
     parent_inode: &fs::INode,
+    parent_inode_info: &HayleyFsDirInodeInfo,
 ) -> Result<DentryWrapper<'a, Clean, Free>> {
-    let result = sbi
-        .ino_dir_page_map
-        .find_page_with_free_dentry(sbi, &parent_inode.i_ino())?;
+    let result = parent_inode_info.find_page_with_free_dentry(sbi)?;
     let result = if let Some(page_info) = result {
         let dir_page = DirPageWrapper::from_dir_page_info(sbi, &page_info)?;
         dir_page.get_free_dentry(sbi)
@@ -481,20 +498,18 @@ fn get_free_dentry<'a>(
 
 fn alloc_page_for_dentry<'a>(
     sbi: &'a SbInfo,
-    // parent_ino: InodeNum,
     parent_inode: &fs::INode,
 ) -> Result<DentryWrapper<'a, Clean, Free>> {
     // allocate a page
     let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
     sbi.inc_blocks_in_use();
-    let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(parent_inode.get_inner());
-    if let Ok(parent_inode) = parent_inode {
-        let parent_ino = parent_inode.get_ino();
+    let result = sbi.get_init_dir_inode_by_vfs_inode(parent_inode.get_inner());
+    if let Ok((parent_inode, parent_inode_info)) = result {
         let dir_page = dir_page
             .set_dir_page_backpointer(parent_inode)
             .flush()
             .fence();
-        sbi.ino_dir_page_map.insert(parent_ino, &dir_page)?;
+        parent_inode_info.insert(&dir_page)?;
         let pd = dir_page.get_free_dentry(sbi)?;
         Ok(pd)
     } else {

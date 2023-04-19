@@ -82,6 +82,9 @@ impl fs::Type for HayleyFs {
                 },
             )?;
 
+            // let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ROOT_INO))?;
+            // root_ino.i_private = inode_info.into_foreign() as *mut _;
+
             sb.init_root_from_inode(inode)?
         } else {
             // remount
@@ -182,7 +185,17 @@ impl fs::Type for HayleyFs {
             };
             unsafe { (*inode.get_inner()).i_private = core::ptr::null_mut() };
             let pages = inode_info.remove_all_pages().unwrap();
-            sbi.ino_data_page_tree.insert(ino, pages).unwrap();
+            sbi.ino_data_page_tree.insert_vec(ino, pages).unwrap();
+        } else if unsafe { bindings::S_ISDIR(mode.try_into().unwrap()) } {
+            // using from_foreign should make sure the info structure is dropped here
+            let inode_info = unsafe {
+                <Box<HayleyFsDirInodeInfo> as ForeignOwnable>::from_foreign(
+                    (*inode.get_inner()).i_private,
+                )
+            };
+            unsafe { (*inode.get_inner()).i_private = core::ptr::null_mut() };
+            let pages = inode_info.remove_all_pages().unwrap();
+            sbi.ino_dir_page_tree.insert_vec(ino, pages).unwrap();
         }
         // TODO: handle other cases
 
@@ -197,6 +210,13 @@ impl fs::Type for HayleyFs {
         if link_count == 0 {
             sbi.inode_allocator.dealloc_ino(ino).unwrap();
         }
+    }
+
+    // TODO: safety
+    fn init_private(inode: *mut bindings::inode) -> Result<()> {
+        let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ROOT_INO))?;
+        unsafe { (*inode).i_private = inode_info.into_foreign() as *mut _ };
+        Ok(())
     }
 }
 
@@ -253,6 +273,7 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
         (*inode).i_blkbits = bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()?;
         // TODO: set the rest of the fields!
 
+        pr_info!("init fs done\n");
         Ok(inode)
     }
 }
@@ -356,15 +377,16 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                     sbi.ino_dentry_map.insert(live_inode, dentry)?;
                     live_inode_vec.try_push(dentry.get_ino())?;
                 }
-
-                sbi.ino_dir_page_map.insert(live_inode, &dir_page_wrapper)?;
+                let page_info = DirPageInfo::new(dir_page_wrapper.get_page_no());
+                sbi.ino_dir_page_tree.insert_one(live_inode, page_info)?;
             }
         }
 
         // add data page to the volatile index
         if let Some(pages) = owned_data_pages {
             let sorted_pages = sort_by_offset(sbi, live_inode, pages)?;
-            sbi.ino_data_page_tree.insert(live_inode, sorted_pages)?;
+            sbi.ino_data_page_tree
+                .insert_vec(live_inode, sorted_pages)?;
         }
 
         processed_live_inodes.try_insert(live_inode, ())?;

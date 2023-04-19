@@ -116,10 +116,9 @@ fn str_equals(str1: &CStr, str2: &CStr) -> bool {
     return true;
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct DirPageInfo {
-    owner: InodeNum,
+    // owner: InodeNum,
     page_no: PageNum,
     // full: bool,
     // virt_addr: *mut ffi::c_void,
@@ -129,81 +128,9 @@ impl DirPageInfo {
     pub(crate) fn get_page_no(&self) -> PageNum {
         self.page_no
     }
-}
 
-/// maps dir inodes to info about their pages
-pub(crate) trait InoDirPageMap {
-    fn new() -> Result<Self>
-    where
-        Self: Sized;
-    fn insert<'a, State: Initialized>(
-        &self,
-        ino: InodeNum,
-        page: &DirPageWrapper<'a, Clean, State>,
-    ) -> Result<()>;
-    fn find_page_with_free_dentry(
-        &self,
-        sbi: &SbInfo,
-        ino: &InodeNum,
-    ) -> Result<Option<DirPageInfo>>;
-    fn delete(&self, ino: InodeNum, page: DirPageInfo) -> Result<()>;
-}
-
-pub(crate) struct BasicInoDirPageMap {
-    map: Arc<Mutex<RBTree<InodeNum, Vec<DirPageInfo>>>>,
-}
-
-impl InoDirPageMap for BasicInoDirPageMap {
-    fn new() -> Result<Self> {
-        Ok(Self {
-            map: Arc::try_new(Mutex::new(RBTree::new()))?,
-        })
-    }
-
-    fn insert<'a, State: Initialized>(
-        &self,
-        ino: InodeNum,
-        page: &DirPageWrapper<'a, Clean, State>,
-    ) -> Result<()> {
-        let map = Arc::clone(&self.map);
-        let mut map = map.lock();
-        let page_no = page.get_page_no();
-        let page_info = DirPageInfo {
-            owner: ino,
-            page_no,
-        };
-        if let Some(node) = map.get_mut(&ino) {
-            node.try_push(page_info)?;
-        } else {
-            let mut vec = Vec::new();
-            vec.try_push(page_info)?;
-            map.try_insert(ino, vec)?;
-        }
-        Ok(())
-    }
-
-    fn find_page_with_free_dentry<'a>(
-        &self,
-        sbi: &SbInfo,
-        ino: &InodeNum,
-    ) -> Result<Option<DirPageInfo>> {
-        let map = Arc::clone(&self.map);
-        let map = map.lock();
-        let pages = map.get(&ino);
-        if let Some(pages) = pages {
-            for page in pages {
-                let p = DirPageWrapper::from_page_no(sbi, page.get_page_no())?;
-                if p.has_free_space(sbi)? {
-                    return Ok(Some(page.clone()));
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    fn delete(&self, _ino: InodeNum, _page: DirPageInfo) -> Result<()> {
-        unimplemented!();
+    pub(crate) fn new(page_no: PageNum) -> Self {
+        Self { page_no }
     }
 }
 
@@ -335,25 +262,131 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
     }
 }
 
-pub(crate) struct InoDataPageTree {
-    tree: Arc<Mutex<RBTree<InodeNum, Vec<DataPageInfo>>>>,
+/// maps dir inodes to info about their pages
+pub(crate) trait InoDirPageMap {
+    fn new(ino: InodeNum) -> Result<Self>
+    where
+        Self: Sized;
+    fn insert<'a, State: Initialized>(&self, page: &DirPageWrapper<'a, Clean, State>)
+        -> Result<()>;
+    fn find_page_with_free_dentry(&self, sbi: &SbInfo) -> Result<Option<DirPageInfo>>;
+    fn remove_all_pages(&self) -> Result<Vec<DirPageInfo>>;
+    fn delete(&self, page: DirPageInfo) -> Result<()>;
 }
 
-impl InoDataPageTree {
+#[repr(C)]
+pub(crate) struct HayleyFsDirInodeInfo {
+    ino: InodeNum,
+    pages: Arc<Mutex<Vec<DirPageInfo>>>,
+}
+
+impl HayleyFsDirInodeInfo {
+    pub(crate) fn new(ino: InodeNum) -> Result<Self> {
+        Ok(Self {
+            ino,
+            pages: Arc::try_new(Mutex::new(Vec::new()))?,
+        })
+    }
+
+    pub(crate) fn new_from_vec(ino: InodeNum, vec: Vec<DirPageInfo>) -> Result<Self> {
+        Ok(Self {
+            ino,
+            pages: Arc::try_new(Mutex::new(vec))?,
+        })
+    }
+}
+
+impl InoDirPageMap for HayleyFsDirInodeInfo {
+    fn new(ino: InodeNum) -> Result<Self> {
+        Self::new(ino)
+    }
+
+    fn insert<'a, State: Initialized>(
+        &self,
+        page: &DirPageWrapper<'a, Clean, State>,
+    ) -> Result<()> {
+        let pages = Arc::clone(&self.pages);
+        let mut pages = pages.lock();
+        // TODO: ordering?
+        let page_info = DirPageInfo {
+            // owner: self.ino,
+            page_no: page.get_page_no(),
+        };
+        pages.try_push(page_info)?;
+        Ok(())
+    }
+
+    // TODO: this only works because we don't ever deallocate dir pages right now
+    // there could be a race between a process that is deleting a dir page and a
+    // process trying to add a dentry to it. this method should just add the dentry
+    fn find_page_with_free_dentry<'a>(&self, sbi: &SbInfo) -> Result<Option<DirPageInfo>> {
+        let pages = Arc::clone(&self.pages);
+        let pages = pages.lock();
+        for page in &*pages {
+            let p = DirPageWrapper::from_page_no(sbi, page.get_page_no())?;
+            if p.has_free_space(sbi)? {
+                return Ok(Some(page.clone()));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn remove_all_pages(&self) -> Result<Vec<DirPageInfo>> {
+        let pages = Arc::clone(&self.pages);
+        let mut pages = pages.lock();
+        let mut return_vec = Vec::new();
+        // TODO: can you do this without copying all of the pages?
+        for page in &*pages {
+            return_vec.try_push(page.clone())?;
+        }
+        pages.clear();
+        Ok(return_vec)
+    }
+
+    // TODO: implement
+    fn delete(&self, _page: DirPageInfo) -> Result<()> {
+        unimplemented!();
+    }
+}
+
+pub(crate) trait PageInfo {}
+impl PageInfo for DataPageInfo {}
+impl PageInfo for DirPageInfo {}
+
+pub(crate) struct InoPageTree<T: PageInfo> {
+    tree: Arc<Mutex<RBTree<InodeNum, Vec<T>>>>,
+}
+
+impl<T: PageInfo> InoPageTree<T> {
     pub(crate) fn new() -> Result<Self> {
         Ok(Self {
             tree: Arc::try_new(Mutex::new(RBTree::new()))?,
         })
     }
 
-    pub(crate) fn insert(&self, ino: InodeNum, pages: Vec<DataPageInfo>) -> Result<()> {
+    pub(crate) fn insert_vec(&self, ino: InodeNum, pages: Vec<T>) -> Result<()> {
         let tree = Arc::clone(&self.tree);
         let mut tree = tree.lock();
         tree.try_insert(ino, pages)?;
         Ok(())
     }
 
-    pub(crate) fn remove(&self, ino: InodeNum) -> Option<Vec<DataPageInfo>> {
+    pub(crate) fn insert_one(&self, ino: InodeNum, page: T) -> Result<()> {
+        let tree = Arc::clone(&self.tree);
+        let mut tree = tree.lock();
+        let entry = tree.get_mut(&ino);
+        if let Some(entry) = entry {
+            entry.try_push(page)?;
+        } else {
+            let mut new_vec = Vec::new();
+            new_vec.try_push(page)?;
+            tree.try_insert(ino, new_vec)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn remove(&self, ino: InodeNum) -> Option<Vec<T>> {
         let tree = Arc::clone(&self.tree);
         let mut tree = tree.lock();
         tree.remove(&ino)
