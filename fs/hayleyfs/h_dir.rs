@@ -177,13 +177,13 @@ impl<'a> DentryWrapper<'a, Clean, ClearIno> {
 impl<'a> DentryWrapper<'a, Clean, Complete> {
     // TODO: maybe should take completed inode as well? or ino dentry insert should
     // take the wrappers directly
-    pub(crate) fn index(&self, parent: InodeNum, sb: &SbInfo) -> Result<()> {
+    pub(crate) fn index(&self, parent_inode_info: &HayleyFsDirInodeInfo) -> Result<()> {
         let dentry_info = DentryInfo::new(
             self.dentry.ino,
             self.dentry as *const _ as *const ffi::c_void,
             self.dentry.name,
         );
-        sb.ino_dentry_map.insert(parent, dentry_info)
+        parent_inode_info.insert_dentry(dentry_info)
     }
 }
 

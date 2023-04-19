@@ -40,29 +40,29 @@ impl DentryInfo {
     }
 }
 
-/// maps inodes to info about dentries for inode's children
-pub(crate) trait InoDentryMap {
-    fn new() -> Result<Self>
-    where
-        Self: Sized;
-    fn insert(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
-    fn lookup_dentry(&self, ino: &InodeNum, name: &CStr) -> Option<DentryInfo>;
-    fn delete(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
-}
+// /// maps inodes to info about dentries for inode's children
+// pub(crate) trait InoDentryMap {
+//     fn new() -> Result<Self>
+//     where
+//         Self: Sized;
+//     fn insert(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
+//     fn lookup_dentry(&self, ino: &InodeNum, name: &CStr) -> Option<DentryInfo>;
+//     fn delete(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()>;
+// }
 
 #[allow(dead_code)]
-pub(crate) struct BasicInoDentryMap {
+pub(crate) struct InoDentryTree {
     map: Arc<Mutex<RBTree<InodeNum, Vec<DentryInfo>>>>,
 }
 
-impl InoDentryMap for BasicInoDentryMap {
-    fn new() -> Result<Self> {
+impl InoDentryTree {
+    pub(crate) fn new() -> Result<Self> {
         Ok(Self {
             map: Arc::try_new(Mutex::new(RBTree::new()))?,
         })
     }
 
-    fn insert(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()> {
+    pub(crate) fn insert(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
         if let Some(ref mut node) = map.get_mut(&ino) {
@@ -75,29 +75,10 @@ impl InoDentryMap for BasicInoDentryMap {
         Ok(())
     }
 
-    fn lookup_dentry(&self, ino: &InodeNum, name: &CStr) -> Option<DentryInfo> {
-        let map = Arc::clone(&self.map);
-        let map = map.lock();
-        let dentry_vec = map.get(&ino);
-        if let Some(dentry_vec) = dentry_vec {
-            for dentry in dentry_vec {
-                let dentry_name = unsafe { CStr::from_char_ptr(dentry.name.as_ptr() as *const i8) };
-                if str_equals(name, dentry_name) {
-                    return Some(dentry.clone());
-                }
-            }
-        }
-        None
-    }
-
-    fn delete(&self, ino: InodeNum, dentry: DentryInfo) -> Result<()> {
+    pub(crate) fn remove(&self, ino: InodeNum) -> Option<Vec<DentryInfo>> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
-        let mut dentry_vec = map.get_mut(&ino);
-        if let Some(ref mut dentry_vec) = dentry_vec {
-            dentry_vec.retain(|x| x.virt_addr != dentry.virt_addr);
-        }
-        Ok(())
+        map.remove(&ino)
     }
 }
 
@@ -278,6 +259,7 @@ pub(crate) trait InoDirPageMap {
 pub(crate) struct HayleyFsDirInodeInfo {
     ino: InodeNum,
     pages: Arc<Mutex<Vec<DirPageInfo>>>,
+    dentries: Arc<Mutex<Vec<DentryInfo>>>,
 }
 
 impl HayleyFsDirInodeInfo {
@@ -285,13 +267,19 @@ impl HayleyFsDirInodeInfo {
         Ok(Self {
             ino,
             pages: Arc::try_new(Mutex::new(Vec::new()))?,
+            dentries: Arc::try_new(Mutex::new(Vec::new()))?,
         })
     }
 
-    pub(crate) fn new_from_vec(ino: InodeNum, vec: Vec<DirPageInfo>) -> Result<Self> {
+    pub(crate) fn new_from_vec(
+        ino: InodeNum,
+        page_vec: Vec<DirPageInfo>,
+        dentry_vec: Vec<DentryInfo>,
+    ) -> Result<Self> {
         Ok(Self {
             ino,
-            pages: Arc::try_new(Mutex::new(vec))?,
+            pages: Arc::try_new(Mutex::new(page_vec))?,
+            dentries: Arc::try_new(Mutex::new(dentry_vec))?,
         })
     }
 }
@@ -347,6 +335,40 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
     // TODO: implement
     fn delete(&self, _page: DirPageInfo) -> Result<()> {
         unimplemented!();
+    }
+}
+
+pub(crate) trait InoDentryMap {
+    fn insert_dentry(&self, dentry: DentryInfo) -> Result<()>;
+    fn lookup_dentry(&self, name: &CStr) -> Option<DentryInfo>;
+    fn delete_dentry(&self, dentry: DentryInfo) -> Result<()>;
+}
+
+impl InoDentryMap for HayleyFsDirInodeInfo {
+    fn insert_dentry(&self, dentry: DentryInfo) -> Result<()> {
+        let dentries = Arc::clone(&self.dentries);
+        let mut dentries = dentries.lock();
+        dentries.try_push(dentry)?;
+        Ok(())
+    }
+
+    fn lookup_dentry(&self, name: &CStr) -> Option<DentryInfo> {
+        let dentries = Arc::clone(&self.dentries);
+        let dentries = dentries.lock();
+        for dentry in &*dentries {
+            let dentry_name = unsafe { CStr::from_char_ptr(dentry.name.as_ptr() as *const i8) };
+            if str_equals(name, dentry_name) {
+                return Some(dentry.clone());
+            }
+        }
+        None
+    }
+
+    fn delete_dentry(&self, dentry: DentryInfo) -> Result<()> {
+        let dentries = Arc::clone(&self.dentries);
+        let mut dentries = dentries.lock();
+        dentries.retain(|x| x.virt_addr != dentry.virt_addr);
+        Ok(())
     }
 }
 

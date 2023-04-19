@@ -134,12 +134,6 @@ pub(crate) struct SbInfo {
     pub(crate) blocks_in_use: AtomicU64,
 
     // volatile index structures
-    // these should really be trait objects,
-    // but writing it this way would cause SbInfo to be !Sized which causes
-    // all kinds of problems elsewhere. Next best solution is to manually make
-    // sure that each field's type implements the associated trait.
-    pub(crate) ino_dentry_map: BasicInoDentryMap, // InoDentryMap
-    // ino_data_page_tree is NOT the index used for lookups of data pages.
     // we use per-inode structures stored in the VFS inodes for those lookups.
     // however, we can't fill in those structures until a corresponding file
     // is actually accessed. we don't want to do a full disk scan to determine
@@ -148,6 +142,7 @@ pub(crate) struct SbInfo {
     // a lookup.
     pub(crate) ino_data_page_tree: InoPageTree<DataPageInfo>,
     pub(crate) ino_dir_page_tree: InoPageTree<DirPageInfo>,
+    pub(crate) ino_dentry_tree: InoDentryTree,
 
     // volatile allocators
     // again, these should really be trait objects, but the system won't compile
@@ -184,9 +179,9 @@ impl SbInfo {
             num_blocks: 0,
             inodes_in_use: AtomicU64::new(1),
             blocks_in_use: AtomicU64::new(0), // TODO: mark reserved pages as in use
-            ino_dentry_map: InoDentryMap::new().unwrap(),
             ino_data_page_tree: InoPageTree::<DataPageInfo>::new().unwrap(),
             ino_dir_page_tree: InoPageTree::<DirPageInfo>::new().unwrap(),
+            ino_dentry_tree: InoDentryTree::new().unwrap(),
             page_allocator: None,
             inode_allocator: InodeAllocator::new(ROOT_INO + 1).unwrap(),
             mount_opts: HayleyfsParams::default(),

@@ -32,9 +32,12 @@ impl inode::Operations for InodeOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        let result = sbi
-            .ino_dentry_map
-            .lookup_dentry(&dir.i_ino(), dentry.d_name());
+        let (_parent_inode, parent_inode_info) =
+            sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+        let result = parent_inode_info.lookup_dentry(dentry.d_name());
+        // let result = sbi
+        //     .ino_dentry_map
+        //     .lookup_dentry(&dir.i_ino(), dentry.d_name());
         if let Some(dentry_info) = result {
             // the dentry exists in the specified directory
             Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino())?))
@@ -218,7 +221,12 @@ pub(crate) fn hayleyfs_iget(
             // if the inode has any pages associated with it, remove them from the
             // global tree and put them in this inode's i_private
             if let Some(pages) = pages {
-                let inode_info = Box::try_new(HayleyFsDirInodeInfo::new_from_vec(ino, pages))?;
+                let dentries = sbi.ino_dentry_tree.remove(ino);
+                let inode_info = if let Some(dentries) = dentries {
+                    Box::try_new(HayleyFsDirInodeInfo::new_from_vec(ino, pages, dentries))?
+                } else {
+                    Box::try_new(HayleyFsDirInodeInfo::new_from_vec(ino, pages, Vec::new()))?
+                };
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             } else {
                 let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ino))?;
@@ -335,7 +343,7 @@ fn hayleyfs_create<'a>(
     let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
     let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, mnt_userns, dir, pd, umode)?;
-    dentry.index(dir.i_ino(), sbi)?;
+    dentry.index(parent_inode_info)?;
 
     Ok((dentry, inode))
 }
@@ -369,7 +377,7 @@ fn hayleyfs_link<'a>(
     let (pd, target_inode) = pd.set_file_ino(target_inode);
     let pd = pd.flush().fence();
 
-    pd.index(dir.i_ino(), sbi)?;
+    pd.index(parent_inode_info)?;
 
     Ok((pd, target_inode))
 }
@@ -391,7 +399,7 @@ fn hayleyfs_mkdir<'a>(
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
     let (dentry, parent, inode) =
         init_dentry_with_new_dir_inode(sbi, mnt_userns, dir, pd, parent_inode, mode)?;
-    dentry.index(dir.i_ino(), sbi)?;
+    dentry.index(parent_inode_info)?;
     Ok((dentry, parent, inode))
 }
 
@@ -405,13 +413,11 @@ fn hayleyfs_unlink<'a>(
     DentryWrapper<'a, Clean, Free>,
 )> {
     let inode = dentry.d_inode();
-    let parent_ino = dir.i_ino();
-    let _parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let (_parent_inode, parent_inode_info) =
+        sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
 
     // use volatile index to find the persistent dentry
-    let dentry_info = sbi
-        .ino_dentry_map
-        .lookup_dentry(&parent_ino, dentry.d_name());
+    let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name());
     if let Some(dentry_info) = dentry_info {
         // FIXME?: right now we don't enforce that the dentry has to have pointed
         // to the inode - theoretically an unrelated directory entry being
@@ -419,7 +425,7 @@ fn hayleyfs_unlink<'a>(
 
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
-        sbi.ino_dentry_map.delete(parent_ino, dentry_info)?;
+        parent_inode_info.delete_dentry(dentry_info)?;
 
         let (pi, _) = sbi.get_init_reg_inode_by_vfs_inode(inode)?;
         let pd = pd.clear_ino().flush().fence();

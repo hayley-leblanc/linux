@@ -374,7 +374,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                 pr_info!("live dentries: {:?}\n", live_dentries);
                 // add these live dentries to the index
                 for dentry in live_dentries {
-                    sbi.ino_dentry_map.insert(live_inode, dentry)?;
+                    sbi.ino_dentry_tree.insert(live_inode, dentry)?;
                     live_inode_vec.try_push(dentry.get_ino())?;
                 }
                 let page_info = DirPageInfo::new(dir_page_wrapper.get_page_no());
