@@ -3,7 +3,7 @@
 //! Rust file system sample.
 
 use balloc::*;
-use core::{ffi, ptr};
+use core::{ffi, ptr, sync::atomic::Ordering};
 use defs::*;
 use h_dir::*;
 use h_inode::*;
@@ -165,6 +165,8 @@ impl fs::Type for HayleyFs {
     }
 
     fn evict_inode(inode: &fs::INode) {
+        init_timing!(evict_inode_full);
+        start_timing!(evict_inode_full);
         let sb = inode.i_sb();
         let ino = inode.i_ino();
         // TODO: safety
@@ -177,6 +179,8 @@ impl fs::Type for HayleyFs {
         // can access it later if the inode comes back into the cache
         let mode = unsafe { (*inode.get_inner()).i_mode };
         if unsafe { bindings::S_ISREG(mode.try_into().unwrap()) } {
+            init_timing!(evict_reg_inode_pages);
+            start_timing!(evict_reg_inode_pages);
             // using from_foreign should make sure the info structure is dropped here
             let inode_info = unsafe {
                 <Box<HayleyFsRegInodeInfo> as ForeignOwnable>::from_foreign(
@@ -186,7 +190,10 @@ impl fs::Type for HayleyFs {
             unsafe { (*inode.get_inner()).i_private = core::ptr::null_mut() };
             let pages = inode_info.remove_all_pages().unwrap();
             sbi.ino_data_page_tree.insert_vec(ino, pages).unwrap();
+            end_timing!(EvictRegInodePages, evict_reg_inode_pages);
         } else if unsafe { bindings::S_ISDIR(mode.try_into().unwrap()) } {
+            init_timing!(evict_dir_inode_pages);
+            start_timing!(evict_dir_inode_pages);
             // using from_foreign should make sure the info structure is dropped here
             let inode_info = unsafe {
                 <Box<HayleyFsDirInodeInfo> as ForeignOwnable>::from_foreign(
@@ -196,6 +203,7 @@ impl fs::Type for HayleyFs {
             unsafe { (*inode.get_inner()).i_private = core::ptr::null_mut() };
             let pages = inode_info.remove_all_pages().unwrap();
             sbi.ino_dir_page_tree.insert_vec(ino, pages).unwrap();
+            end_timing!(EvictDirInodePages, evict_dir_inode_pages);
         }
         // TODO: handle other cases
 
@@ -210,6 +218,7 @@ impl fs::Type for HayleyFs {
         if link_count == 0 {
             sbi.inode_allocator.dealloc_ino(ino).unwrap();
         }
+        end_timing!(EvictInodeFull, evict_inode_full);
     }
 
     // TODO: safety

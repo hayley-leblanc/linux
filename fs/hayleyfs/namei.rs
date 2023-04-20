@@ -6,8 +6,9 @@ use crate::h_inode::*;
 use crate::pm::*;
 use crate::typestate::*;
 use crate::volatile::*;
-use crate::{fence_all, fence_all_vecs, fence_obj, fence_vec};
-// use core::ffi;
+use crate::{fence_all, fence_all_vecs, fence_obj, fence_vec, init_timing, start_timing, end_timing};
+
+use core::sync::atomic::Ordering;
 use kernel::prelude::*;
 use kernel::{bindings, dir, error, file, fs, inode, ForeignOwnable};
 
@@ -159,6 +160,11 @@ pub(crate) fn hayleyfs_iget(
     sbi: &SbInfo,
     ino: InodeNum,
 ) -> Result<*mut bindings::inode> {
+    use TimingCategory::*;
+    init_timing!(inode_exists);
+    start_timing!(inode_exists);
+    init_timing!(full_iget);
+    start_timing!(full_iget);
     // obtain an inode from VFS
     let inode = unsafe { bindings::iget_locked(sb, ino) };
     if inode.is_null() {
@@ -169,6 +175,7 @@ pub(crate) fn hayleyfs_iget(
 
     unsafe {
         if (*inode).i_state & i_new == 0 {
+            end_timing!(IgetInodeExists, inode_exists);
             return Ok(inode);
         }
     }
@@ -199,6 +206,8 @@ pub(crate) fn hayleyfs_iget(
     let inode_type = pi.get_type();
     match inode_type {
         InodeType::REG => unsafe {
+            init_timing!(init_reg_inode);
+            start_timing!(init_reg_inode);
             (*inode).i_op = inode::OperationsVtable::<InodeOps>::build();
             (*inode).__bindgen_anon_3.i_fop = file::OperationsVtable::<Adapter, FileOps>::build();
 
@@ -212,8 +221,11 @@ pub(crate) fn hayleyfs_iget(
                 let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             }
+            end_timing!(InitRegInode, init_reg_inode);
         },
         InodeType::DIR => unsafe {
+            init_timing!(init_dir_inode);
+            start_timing!(init_dir_inode);
             (*inode).i_op = inode::OperationsVtable::<InodeOps>::build();
             (*inode).__bindgen_anon_3.i_fop = dir::OperationsVtable::<DirOps>::build();
 
@@ -232,10 +244,12 @@ pub(crate) fn hayleyfs_iget(
                 let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ino))?;
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             }
+            end_timing!(InitDirInode, init_dir_inode);
         },
         InodeType::NONE => panic!("Inode type is NONE"),
     }
     unsafe { bindings::unlock_new_inode(inode) };
+    end_timing!(FullIget, full_iget);
     Ok(inode)
 }
 
@@ -251,6 +265,9 @@ fn new_vfs_inode<'a, Type>(
     new_inode: InodeWrapper<'a, Clean, Complete, Type>,
     umode: bindings::umode_t,
 ) -> Result<()> {
+    use TimingCategory::*;
+    init_timing!(full_vfs_inode);
+    start_timing!(full_vfs_inode);
     // set up VFS structures
     let vfs_inode = unsafe { &mut *(bindings::new_inode(sb) as *mut bindings::inode) };
 
@@ -267,6 +284,8 @@ fn new_vfs_inode<'a, Type>(
     let inode_type = new_inode.get_type();
     match inode_type {
         InodeType::REG => {
+            init_timing!(init_reg_vfs_inode);
+            start_timing!(init_reg_vfs_inode);
             vfs_inode.i_mode = umode;
             // initialize the DRAM info and save it in the private pointer
             let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
@@ -277,8 +296,11 @@ fn new_vfs_inode<'a, Type>(
                     file::OperationsVtable::<Adapter, FileOps>::build();
                 bindings::set_nlink(vfs_inode, 1);
             }
+            end_timing!(InitRegVfsInode, init_reg_vfs_inode);
         }
         InodeType::DIR => {
+            init_timing!(init_dir_vfs_inode);
+            start_timing!(init_dir_vfs_inode);
             vfs_inode.i_mode = umode | bindings::S_IFDIR as u16;
             // initialize the DRAM info and save it in the private pointer
             let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ino))?;
@@ -288,6 +310,7 @@ fn new_vfs_inode<'a, Type>(
                 vfs_inode.__bindgen_anon_3.i_fop = dir::OperationsVtable::<DirOps>::build();
                 bindings::set_nlink(vfs_inode, 2);
             }
+            end_timing!(InitDirVfsInode, init_dir_vfs_inode);
         }
         InodeType::NONE => panic!("Inode type is none"),
     }
@@ -321,7 +344,7 @@ fn new_vfs_inode<'a, Type>(
         bindings::d_instantiate(dentry.get_inner(), vfs_inode);
         bindings::unlock_new_inode(vfs_inode);
     }
-
+    end_timing!(FullVfsInode, full_vfs_inode);
     Ok(())
 }
 
@@ -412,16 +435,26 @@ fn hayleyfs_unlink<'a>(
     InodeWrapper<'a, Clean, Complete, RegInode>,
     DentryWrapper<'a, Clean, Free>,
 )> {
+    init_timing!(unlink_full_declink);
+    start_timing!(unlink_full_declink);
+    init_timing!(unlink_full_delete);
+    start_timing!(unlink_full_delete);
     let inode = dentry.d_inode();
+    init_timing!(unlink_lookup);
+    start_timing!(unlink_lookup);
     let (_parent_inode, parent_inode_info) =
         sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
 
     // use volatile index to find the persistent dentry
     let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name());
+    end_timing!(UnlinkLookup, unlink_lookup);
     if let Some(dentry_info) = dentry_info {
         // FIXME?: right now we don't enforce that the dentry has to have pointed
         // to the inode - theoretically an unrelated directory entry being
         // deallocated could be used to decrement an inode's link count
+
+        init_timing!(dec_link_count);
+        start_timing!(dec_link_count);
 
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
@@ -440,17 +473,20 @@ fn hayleyfs_unlink<'a>(
         let (pi, pd) = fence_all!(pi, pd);
 
         let result = pi.try_complete_unlink(sbi)?;
+        end_timing!(DecLinkCount, dec_link_count);
 
         if let Ok(result) = result {
             unsafe {
                 bindings::drop_nlink(inode);
             }
-
+            end_timing!(UnlinkFullDecLink, unlink_full_declink);
             Ok((result, pd))
         } else if let Err((pi, mut pages)) = result {
             // go through each page and deallocate it
             // we can drain the vector since missing a page will result in
             // a runtime panic
+            init_timing!(dealloc_pages);
+            start_timing!(dealloc_pages);
             let mut to_dealloc = Vec::new();
 
             for page in pages.drain(..) {
@@ -477,6 +513,8 @@ fn hayleyfs_unlink<'a>(
             // pages are now deallocated and we can use the freed pages vector
             // to deallocate the inode.
             let pi = pi.dealloc(freed_pages).flush().fence();
+            end_timing!(DeallocPages, dealloc_pages);
+            end_timing!(UnlinkFullDelete, unlink_full_delete);
             Ok((pi, pd))
         } else {
             Err(EINVAL)
