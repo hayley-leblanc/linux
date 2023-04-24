@@ -6,7 +6,9 @@ use crate::h_inode::*;
 use crate::pm::*;
 use crate::typestate::*;
 use crate::volatile::*;
-use crate::{fence_all, fence_all_vecs, fence_obj, fence_vec, init_timing, start_timing, end_timing};
+use crate::{
+    end_timing, fence_all, fence_all_vecs, fence_obj, fence_vec, init_timing, start_timing,
+};
 
 use core::sync::atomic::Ordering;
 use kernel::prelude::*;
@@ -160,7 +162,6 @@ pub(crate) fn hayleyfs_iget(
     sbi: &SbInfo,
     ino: InodeNum,
 ) -> Result<*mut bindings::inode> {
-    use TimingCategory::*;
     init_timing!(inode_exists);
     start_timing!(inode_exists);
     init_timing!(full_iget);
@@ -265,7 +266,6 @@ fn new_vfs_inode<'a, Type>(
     new_inode: InodeWrapper<'a, Clean, Complete, Type>,
     umode: bindings::umode_t,
 ) -> Result<()> {
-    use TimingCategory::*;
     init_timing!(full_vfs_inode);
     start_timing!(full_vfs_inode);
     // set up VFS structures
