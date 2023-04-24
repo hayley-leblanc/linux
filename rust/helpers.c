@@ -59,19 +59,23 @@ int rust_helper_clk_prepare_enable(struct clk *clk)
 }
 EXPORT_SYMBOL_GPL(rust_helper_clk_prepare_enable);
 
-unsigned long rust_helper_copy_from_user(void *to, const void __user *from, unsigned long n)
+unsigned long rust_helper_copy_from_user(void *to, const void __user *from,
+					 unsigned long n)
 {
 	return copy_from_user(to, from, n);
 }
 EXPORT_SYMBOL_GPL(rust_helper_copy_from_user);
 
-unsigned long rust_helper_copy_from_user_inatomic_nocache(void* to, const void __user *from, unsigned long n)
+unsigned long
+rust_helper_copy_from_user_inatomic_nocache(void *to, const void __user *from,
+					    unsigned long n)
 {
 	return __copy_from_user_inatomic_nocache(to, from, n);
 }
 EXPORT_SYMBOL_GPL(rust_helper_copy_from_user_inatomic_nocache);
 
-unsigned long rust_helper_copy_to_user(void __user *to, const void *from, unsigned long n)
+unsigned long rust_helper_copy_to_user(void __user *to, const void *from,
+				       unsigned long n)
 {
 	return copy_to_user(to, from, n);
 }
@@ -193,7 +197,8 @@ void rust_helper_writeq_relaxed(u64 value, volatile void __iomem *addr)
 EXPORT_SYMBOL_GPL(rust_helper_writeq_relaxed);
 #endif
 
-void rust_helper_memcpy_fromio(void *to, const volatile void __iomem *from, long count)
+void rust_helper_memcpy_fromio(void *to, const volatile void __iomem *from,
+			       long count)
 {
 	memcpy_fromio(to, from, count);
 }
@@ -291,12 +296,14 @@ void rust_helper_init_waitqueue_func_entry(struct wait_queue_entry *wq_entry,
 }
 EXPORT_SYMBOL_GPL(rust_helper_init_waitqueue_func_entry);
 
-void rust_helper_i_size_write(struct inode *inode, loff_t i_size) {
+void rust_helper_i_size_write(struct inode *inode, loff_t i_size)
+{
 	i_size_write(inode, i_size);
 }
 EXPORT_SYMBOL_GPL(rust_helper_i_size_write);
 
-loff_t rust_helper_i_size_read(const struct inode *inode) {
+loff_t rust_helper_i_size_read(const struct inode *inode)
+{
 	return i_size_read(inode);
 }
 EXPORT_SYMBOL_GPL(rust_helper_i_size_read);
@@ -337,7 +344,8 @@ size_t rust_helper_copy_from_iter(void *addr, size_t bytes, struct iov_iter *i)
 }
 EXPORT_SYMBOL_GPL(rust_helper_copy_from_iter);
 
-size_t rust_helper_copy_to_iter(const void *addr, size_t bytes, struct iov_iter *i)
+size_t rust_helper_copy_to_iter(const void *addr, size_t bytes,
+				struct iov_iter *i)
 {
 	return copy_to_iter(addr, bytes, i);
 }
@@ -361,7 +369,7 @@ const char *rust_helper_errname(int err)
 }
 EXPORT_SYMBOL_GPL(rust_helper_errname);
 
-const void *rust_helper_ERR_PTR(long error) 
+const void *rust_helper_ERR_PTR(long error)
 {
 	return ERR_PTR(error);
 }
@@ -385,16 +393,13 @@ void *rust_helper_amba_get_drvdata(struct amba_device *dev)
 }
 EXPORT_SYMBOL_GPL(rust_helper_amba_get_drvdata);
 
-void *
-rust_helper_platform_get_drvdata(const struct platform_device *pdev)
+void *rust_helper_platform_get_drvdata(const struct platform_device *pdev)
 {
 	return platform_get_drvdata(pdev);
 }
 EXPORT_SYMBOL_GPL(rust_helper_platform_get_drvdata);
 
-void
-rust_helper_platform_set_drvdata(struct platform_device *pdev,
-				 void *data)
+void rust_helper_platform_set_drvdata(struct platform_device *pdev, void *data)
 {
 	return platform_set_drvdata(pdev, data);
 }
@@ -563,15 +568,13 @@ void *rust_helper_irq_desc_get_handler_data(struct irq_desc *desc)
 }
 EXPORT_SYMBOL_GPL(rust_helper_irq_desc_get_handler_data);
 
-void rust_helper_chained_irq_enter(struct irq_chip *chip,
-				   struct irq_desc *desc)
+void rust_helper_chained_irq_enter(struct irq_chip *chip, struct irq_desc *desc)
 {
 	chained_irq_enter(chip, desc);
 }
 EXPORT_SYMBOL_GPL(rust_helper_chained_irq_enter);
 
-void rust_helper_chained_irq_exit(struct irq_chip *chip,
-				   struct irq_desc *desc)
+void rust_helper_chained_irq_exit(struct irq_chip *chip, struct irq_desc *desc)
 {
 	chained_irq_exit(chip, desc);
 }
@@ -589,8 +592,9 @@ void rust_helper_put_cred(const struct cred *cred)
 }
 EXPORT_SYMBOL_GPL(rust_helper_put_cred);
 
-const struct of_device_id *rust_helper_of_match_device(
-		const struct of_device_id *matches, const struct device *dev)
+const struct of_device_id *
+rust_helper_of_match_device(const struct of_device_id *matches,
+			    const struct device *dev)
 {
 	return of_match_device(matches, dev);
 }
@@ -645,7 +649,8 @@ unsigned int rust_helper_NF_QUEUE_NR(unsigned int n)
 EXPORT_SYMBOL_GPL(rust_helper_NF_QUEUE_NR);
 
 void rust_helper___INIT_WORK_WITH_KEY(struct work_struct *work,
-		work_func_t func, bool on_stack, struct lock_class_key *key)
+				      work_func_t func, bool on_stack,
+				      struct lock_class_key *key)
 {
 	__INIT_WORK_WITH_KEY(work, func, on_stack, key);
 }
@@ -670,140 +675,175 @@ void rust_helper_lockdep_unregister_key(struct lock_class_key *key)
 EXPORT_SYMBOL_GPL(rust_helper_lockdep_unregister_key);
 
 int rust_helper_fs_parse(struct fs_context *fc,
-		const struct fs_parameter_spec *desc,
-		struct fs_parameter *param,
-		struct fs_parse_result *result)
+			 const struct fs_parameter_spec *desc,
+			 struct fs_parameter *param,
+			 struct fs_parse_result *result)
 {
 	return fs_parse(fc, desc, param, result);
 }
 EXPORT_SYMBOL_GPL(rust_helper_fs_parse);
 
-unsigned short rust_helper_le16_to_cpu(unsigned short value) {
+unsigned short rust_helper_le16_to_cpu(unsigned short value)
+{
 	return le16_to_cpu(value);
 }
 EXPORT_SYMBOL_GPL(rust_helper_le16_to_cpu);
 
-
-unsigned int rust_helper_le32_to_cpu(unsigned int value) {
+unsigned int rust_helper_le32_to_cpu(unsigned int value)
+{
 	return le32_to_cpu(value);
 }
 EXPORT_SYMBOL_GPL(rust_helper_le32_to_cpu);
 
-unsigned long rust_helper_le64_to_cpu(unsigned long value) {
+unsigned long rust_helper_le64_to_cpu(unsigned long value)
+{
 	return le64_to_cpu(value);
 }
 EXPORT_SYMBOL_GPL(rust_helper_le64_to_cpu);
 
-unsigned short rust_helper_cpu_to_le16(unsigned short value) {
+unsigned short rust_helper_cpu_to_le16(unsigned short value)
+{
 	return cpu_to_le16(value);
 }
 EXPORT_SYMBOL_GPL(rust_helper_cpu_to_le16);
 
-
-unsigned int rust_helper_cpu_to_le32(unsigned int value) {
+unsigned int rust_helper_cpu_to_le32(unsigned int value)
+{
 	return cpu_to_le32(value);
 }
 EXPORT_SYMBOL_GPL(rust_helper_cpu_to_le32);
 
-unsigned long rust_helper_cpu_to_le64(unsigned long value) {
+unsigned long rust_helper_cpu_to_le64(unsigned long value)
+{
 	return cpu_to_le64(value);
 }
 EXPORT_SYMBOL_GPL(rust_helper_cpu_to_le64);
 
-kuid_t rust_helper_current_fsuid(void) {
+kuid_t rust_helper_current_fsuid(void)
+{
 	return current_fsuid();
 }
 EXPORT_SYMBOL_GPL(rust_helper_current_fsuid);
 
-kgid_t rust_helper_current_fsgid(void) {
+kgid_t rust_helper_current_fsgid(void)
+{
 	return current_fsgid();
 }
 EXPORT_SYMBOL_GPL(rust_helper_current_fsgid);
 
-uid_t rust_helper_from_kuid(struct user_namespace *targ, kuid_t kuid) {
+uid_t rust_helper_from_kuid(struct user_namespace *targ, kuid_t kuid)
+{
 	return from_kuid(targ, kuid);
 }
 EXPORT_SYMBOL_GPL(rust_helper_from_kuid);
 
-gid_t rust_helper_from_kgid(struct user_namespace *targ, kgid_t kgid) {
+gid_t rust_helper_from_kgid(struct user_namespace *targ, kgid_t kgid)
+{
 	return from_kgid(targ, kgid);
 }
 EXPORT_SYMBOL_GPL(rust_helper_from_kgid);
 
-void rust_helper_i_uid_write(struct inode *inode, uid_t uid) {
+void rust_helper_i_uid_write(struct inode *inode, uid_t uid)
+{
 	i_uid_write(inode, uid);
 }
 EXPORT_SYMBOL_GPL(rust_helper_i_uid_write);
 
-void rust_helper_i_gid_write(struct inode *inode, gid_t gid) {
+void rust_helper_i_gid_write(struct inode *inode, gid_t gid)
+{
 	i_gid_write(inode, gid);
 }
 EXPORT_SYMBOL_GPL(rust_helper_i_gid_write);
 
-unsigned int rust_helper_blksize_bits(unsigned int size) {
+unsigned int rust_helper_blksize_bits(unsigned int size)
+{
 	return blksize_bits(size);
 }
 EXPORT_SYMBOL_GPL(rust_helper_blksize_bits);
 
-void rust_helper_inode_lock(struct inode *inode) {
+void rust_helper_inode_lock(struct inode *inode)
+{
 	inode_lock(inode);
 }
 EXPORT_SYMBOL_GPL(rust_helper_inode_lock);
 
-void rust_helper_inode_unlock(struct inode *inode) {
+void rust_helper_inode_unlock(struct inode *inode)
+{
 	inode_unlock(inode);
 }
 EXPORT_SYMBOL_GPL(rust_helper_inode_unlock);
 
-void rust_helper_inode_lock_shared(struct inode *inode) {
+void rust_helper_inode_lock_shared(struct inode *inode)
+{
 	inode_lock_shared(inode);
 }
 EXPORT_SYMBOL_GPL(rust_helper_inode_lock_shared);
 
-void rust_helper_inode_unlock_shared(struct inode *inode) {
+void rust_helper_inode_unlock_shared(struct inode *inode)
+{
 	inode_unlock_shared(inode);
 }
 EXPORT_SYMBOL_GPL(rust_helper_inode_unlock_shared);
 
-bool rust_helper_S_ISLNK(unsigned int val) {
+bool rust_helper_S_ISLNK(unsigned int val)
+{
 	return S_ISLNK(val);
 }
 EXPORT_SYMBOL_GPL(rust_helper_S_ISLNK);
 
-bool rust_helper_S_ISREG(unsigned int val) {
+bool rust_helper_S_ISREG(unsigned int val)
+{
 	return S_ISREG(val);
 }
 EXPORT_SYMBOL_GPL(rust_helper_S_ISREG);
 
-bool rust_helper_S_ISDIR(unsigned int val) {
+bool rust_helper_S_ISDIR(unsigned int val)
+{
 	return S_ISDIR(val);
 }
 EXPORT_SYMBOL_GPL(rust_helper_S_ISDIR);
 
-void rust_helper_sb_start_write(struct super_block *sb) {
+void rust_helper_sb_start_write(struct super_block *sb)
+{
 	sb_start_write(sb);
 }
 EXPORT_SYMBOL_GPL(rust_helper_sb_start_write);
 
-void rust_helper_sb_end_write(struct super_block *sb) {
+void rust_helper_sb_end_write(struct super_block *sb)
+{
 	sb_end_write(sb);
 }
 EXPORT_SYMBOL_GPL(rust_helper_sb_end_write);
 
-slab_flags_t rust_helper_SLAB_RECLAIM_ACCOUNT(void) {
+slab_flags_t rust_helper_SLAB_RECLAIM_ACCOUNT(void)
+{
 	return SLAB_RECLAIM_ACCOUNT;
 }
 EXPORT_SYMBOL_GPL(rust_helper_SLAB_RECLAIM_ACCOUNT);
 
-slab_flags_t rust_helper_SLAB_MEM_SPREAD(void) {
+slab_flags_t rust_helper_SLAB_MEM_SPREAD(void)
+{
 	return SLAB_MEM_SPREAD;
 }
 EXPORT_SYMBOL_GPL(rust_helper_SLAB_MEM_SPREAD);
 
-gfp_t rust_helper_GFP_NOFS(void) {
+gfp_t rust_helper_GFP_NOFS(void)
+{
 	return GFP_NOFS;
 }
 EXPORT_SYMBOL_GPL(rust_helper_GFP_NOFS);
+
+unsigned int rust_helper_num_online_cpus(void)
+{
+	return num_online_cpus();
+}
+EXPORT_SYMBOL_GPL(rust_helper_num_online_cpus);
+
+unsigned int rust_helper_smp_processor_id(void)
+{
+	return smp_processor_id();
+}
+EXPORT_SYMBOL_GPL(rust_helper_smp_processor_id);
 
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
@@ -822,8 +862,6 @@ EXPORT_SYMBOL_GPL(rust_helper_GFP_NOFS);
  * your platform such that `size_t` matches `uintptr_t` (i.e., to increase
  * `size_t`, because `uintptr_t` has to be at least as big as `size_t`).
  */
-static_assert(
-	sizeof(size_t) == sizeof(uintptr_t) &&
-	__alignof__(size_t) == __alignof__(uintptr_t),
-	"Rust code expects C `size_t` to match Rust `usize`"
-);
+static_assert(sizeof(size_t) == sizeof(uintptr_t) &&
+		      __alignof__(size_t) == __alignof__(uintptr_t),
+	      "Rust code expects C `size_t` to match Rust `usize`");
