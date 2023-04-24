@@ -70,6 +70,7 @@ TODO: add instructions for building on host and using direct boot.
         9. Set `CONFIG_X86_PMEM_LEGACY` to Y
         10. Set `CONFIG_FS_DAX` to Y
         11. Set `CONFIG_HAYLEY_FS` to M
+        12. Set `CONFIG_DEBUG_PREEMPTION` to N
 5. Build the kernel with `make LLVM=-11 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
     - Note: while building the kernel, it may prompt you to select some configuration options interactively.
     - Select the first option (i.e. 1,2,3 => choose 1 OR N/y => choose N)
