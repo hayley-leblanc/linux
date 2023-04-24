@@ -405,6 +405,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         alloc_page_vec,
         DATA_PAGE_START,
         sbi.num_blocks,
+        sbi.cpus,
     )?;
     sbi.inode_allocator = RBInodeAllocator::new_from_alloc_vec(alloc_inode_vec, ROOT_INO)?;
 
@@ -476,7 +477,7 @@ impl PmDevice for SbInfo {
         self.size = num_blocks * pgsize_i64;
         self.num_blocks = num_blocks.try_into()?;
         self.page_allocator =
-            Option::<RBPageAllocator>::new_from_range(DATA_PAGE_START, self.num_blocks)?;
+            Option::<RBPageAllocator>::new_from_range(DATA_PAGE_START, self.num_blocks, self.cpus)?;
 
         Ok(())
     }

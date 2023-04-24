@@ -133,6 +133,8 @@ pub(crate) struct SbInfo {
     pub(crate) inodes_in_use: AtomicU64,
     pub(crate) blocks_in_use: AtomicU64,
 
+    pub(crate) cpus: u32,
+
     // volatile index structures
     // we use per-inode structures stored in the VFS inodes for those lookups.
     // however, we can't fill in those structures until a corresponding file
@@ -179,6 +181,7 @@ impl SbInfo {
             num_blocks: 0,
             inodes_in_use: AtomicU64::new(1),
             blocks_in_use: AtomicU64::new(0), // TODO: mark reserved pages as in use
+            cpus: unsafe { bindings::num_online_cpus() },
             ino_data_page_tree: InoPageTree::<DataPageInfo>::new().unwrap(),
             ino_dir_page_tree: InoPageTree::<DirPageInfo>::new().unwrap(),
             ino_dentry_tree: InoDentryTree::new().unwrap(),
@@ -354,6 +357,10 @@ impl SbInfo {
             Err(EPERM)
         }
     }
+}
+
+pub(crate) fn get_cpuid(cpus: &u32) -> u32 {
+    (unsafe { bindings::smp_processor_id() }) % cpus
 }
 
 // Timing and stats-related functions and macros

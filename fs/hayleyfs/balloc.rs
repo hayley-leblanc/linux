@@ -19,10 +19,15 @@ use kernel::{
 };
 
 pub(crate) trait PageAllocator {
-    fn new_from_range(val: u64, dev_pages: u64) -> Result<Self>
+    fn new_from_range(val: u64, dev_pages: u64, cpus: u32) -> Result<Self>
     where
         Self: Sized;
-    fn new_from_alloc_vec(alloc_pages: Vec<PageNum>, start: u64, dev_pages: u64) -> Result<Self>
+    fn new_from_alloc_vec(
+        alloc_pages: Vec<PageNum>,
+        start: u64,
+        dev_pages: u64,
+        cpus: u32,
+    ) -> Result<Self>
     where
         Self: Sized;
     fn alloc_page(&self) -> Result<PageNum>;
@@ -35,7 +40,7 @@ pub(crate) struct RBPageAllocator {
 }
 
 impl PageAllocator for Option<RBPageAllocator> {
-    fn new_from_range(val: u64, dev_pages: u64) -> Result<Self> {
+    fn new_from_range(val: u64, dev_pages: u64, _cpus: u32) -> Result<Self> {
         let mut rb = RBTree::new();
         for i in val..dev_pages {
             rb.try_insert(i, ())?;
@@ -47,7 +52,12 @@ impl PageAllocator for Option<RBPageAllocator> {
 
     // alloc_pages must be in sorted order. only pages between start and dev_pages
     // will be added to the allocator tree
-    fn new_from_alloc_vec(alloc_pages: Vec<PageNum>, start: u64, dev_pages: u64) -> Result<Self> {
+    fn new_from_alloc_vec(
+        alloc_pages: Vec<PageNum>,
+        start: u64,
+        dev_pages: u64,
+        _cpus: u32,
+    ) -> Result<Self> {
         let mut rb = RBTree::new();
         let mut cur_page = start;
         let mut i = 0;
@@ -153,6 +163,246 @@ impl PageAllocator for Option<RBPageAllocator> {
         } else {
             pr_info!("ERROR: page allocator is uninitialized\n");
             Err(EINVAL)
+        }
+    }
+}
+
+// represents one CPU's pool of pages
+pub(crate) struct PageFreeList {
+    // fields can safely be made public because this structure should always
+    // be wrapped in a mutex
+    pub(crate) free_pages: u64, // number of free pages in this pool
+    pub(crate) list: RBTree<PageNum, ()>,
+}
+
+pub(crate) struct PerCpuPageAllocator {
+    free_lists: Vec<Arc<Mutex<PageFreeList>>>,
+    pages_per_cpu: u64,
+    cpus: u32,
+    // first page the allocator is allowed to return. used to figure out
+    // which cpu deallocated pages belong to
+    start: u64,
+}
+
+impl PageAllocator for Option<PerCpuPageAllocator> {
+    // TODO: test!
+    fn new_from_range(val: u64, dev_pages: u64, cpus: u32) -> Result<Self> {
+        let total_pages = dev_pages - val;
+        let cpus_u64: u64 = cpus.into();
+        let pages_per_cpu = total_pages / cpus_u64;
+        let mut current_page = val;
+        let mut free_lists = Vec::new();
+        for _ in 0..cpus {
+            let mut rb_tree = RBTree::new();
+            for i in current_page..current_page + pages_per_cpu {
+                rb_tree.try_insert(i, ())?;
+            }
+            current_page = current_page + pages_per_cpu;
+            let free_list = PageFreeList {
+                free_pages: pages_per_cpu,
+                list: rb_tree,
+            };
+            free_lists.try_push(Arc::try_new(Mutex::new(free_list))?)?;
+        }
+
+        Ok(Some(PerCpuPageAllocator {
+            free_lists,
+            pages_per_cpu,
+            cpus,
+            start: val,
+        }))
+    }
+
+    // TODO: test!
+    /// alloc_pages must be in sorted order. only pages between start and dev_pages
+    /// will be added to the allocator
+    fn new_from_alloc_vec(
+        alloc_pages: Vec<PageNum>,
+        start: u64,
+        dev_pages: u64,
+        cpus: u32,
+    ) -> Result<Self> {
+        let total_pages = dev_pages - start;
+        let cpus_u64: u64 = cpus.into();
+        let pages_per_cpu = total_pages / cpus_u64;
+        let mut free_lists = Vec::new();
+        let mut current_page = start;
+        let mut current_cpu_start = start; // used to keep track of when to move to the next cpu pool
+        let mut i = 0;
+        let mut rb_tree = RBTree::new();
+        while current_page < dev_pages && i < alloc_pages.len() {
+            if current_page == current_cpu_start + pages_per_cpu {
+                let free_list = PageFreeList {
+                    free_pages: pages_per_cpu,
+                    list: rb_tree,
+                };
+                free_lists.try_push(Arc::try_new(Mutex::new(free_list))?)?;
+                rb_tree = RBTree::new();
+                current_cpu_start += pages_per_cpu;
+            }
+            if current_page < alloc_pages[i] {
+                rb_tree.try_insert(current_page, ())?;
+                current_page += 1;
+            } else if current_page == alloc_pages[i] {
+                current_page += 1;
+                i += 1;
+            } else {
+                // current_page > alloc_pages[i]
+                // i don't THINK this can ever happen?
+                pr_info!(
+                    "ERROR: cur_page {:?}, i {:?}, alloc_pages[i] {:?}\n",
+                    current_page,
+                    i,
+                    alloc_pages[i]
+                );
+                return Err(EINVAL);
+            }
+        }
+
+        // add all remaining pages to the allocator
+        let dev_pages_usize: usize = dev_pages.try_into()?;
+        if i < dev_pages_usize {
+            for current_page in i..dev_pages_usize {
+                if current_page == (current_cpu_start + pages_per_cpu).try_into()? {
+                    let free_list = PageFreeList {
+                        free_pages: pages_per_cpu,
+                        list: rb_tree,
+                    };
+                    free_lists.try_push(Arc::try_new(Mutex::new(free_list))?)?;
+                    rb_tree = RBTree::new();
+                    current_cpu_start += pages_per_cpu;
+                }
+                rb_tree.try_insert(current_page.try_into()?, ())?;
+            }
+        }
+
+        Ok(Some(PerCpuPageAllocator {
+            free_lists,
+            pages_per_cpu,
+            cpus,
+            start,
+        }))
+    }
+
+    // TODO: allow allocating multiple pages at once
+    fn alloc_page(&self) -> Result<PageNum> {
+        if let Some(allocator) = self {
+            let cpu = get_cpuid(&allocator.cpus);
+            let cpu_usize: usize = cpu.try_into()?;
+            let free_list = Arc::clone(&allocator.free_lists[cpu_usize]);
+            let mut free_list = free_list.lock();
+
+            // does this pool have any free blocks?
+            if free_list.free_pages > 0 {
+                // TODO: is using an iterator the fastest way to do this?
+                let iter = free_list.list.iter().next();
+                let page = match iter {
+                    None => {
+                        pr_info!("ERROR: unable to get free page on CPU {:?}\n", cpu);
+                        return Err(ENOSPC);
+                    }
+                    Some(page) => *page.0,
+                };
+                free_list.list.remove(&page);
+                free_list.free_pages -= 1;
+                Ok(page)
+            } else {
+                // find the free list with the most free blocks and allocate from there
+                // TODO: can we do this without so much locking?
+                let mut num_free_pages = 0;
+                let mut cpuid = 0;
+                for i in 0..allocator.cpus {
+                    // skip the one we've already checked
+                    if i != cpu {
+                        let i_usize: usize = i.try_into()?;
+                        let free_list = Arc::clone(&allocator.free_lists[i_usize]);
+                        let free_list = free_list.lock();
+                        if free_list.free_pages > num_free_pages {
+                            num_free_pages = free_list.free_pages;
+                            cpuid = i_usize;
+                        }
+                    }
+                }
+
+                // now grab a page from that cpu's pool
+                let free_list = Arc::clone(&allocator.free_lists[cpuid]);
+                let mut free_list = free_list.lock();
+                if free_list.free_pages == 0 {
+                    pr_info!("ERROR: no more pages\n");
+                    Err(ENOSPC)
+                } else {
+                    // TODO: is using an iterator the fastest way to do this?
+                    let iter = free_list.list.iter().next();
+                    let page = match iter {
+                        None => {
+                            pr_info!("ERROR: unable to get free page on CPU {:?}\n", cpu);
+                            return Err(ENOSPC);
+                        }
+                        Some(page) => *page.0,
+                    };
+                    free_list.list.remove(&page);
+                    free_list.free_pages -= 1;
+                    Ok(page)
+                }
+            }
+        } else {
+            pr_info!("ERROR: page allocator is uninitialized\n");
+            Err(EINVAL)
+        }
+    }
+
+    fn dealloc_data_page<'a>(&self, page: &DataPageWrapper<'a, Clean, Dealloc>) -> Result<()> {
+        if let Some(allocator) = self {
+            let page_no = page.get_page_no();
+            allocator.dealloc_page(page_no)
+        } else {
+            pr_info!("ERROR: page allocator is uninitialized\n");
+            Err(EINVAL)
+        }
+    }
+
+    fn dealloc_dir_page<'a>(&self, page: &DirPageWrapper<'a, Clean, Dealloc>) -> Result<()> {
+        if let Some(allocator) = self {
+            let page_no = page.get_page_no();
+            allocator.dealloc_page(page_no)
+        } else {
+            pr_info!("ERROR: page allocator is uninitialized\n");
+            Err(EINVAL)
+        }
+    }
+}
+
+impl PerCpuPageAllocator {
+    fn dealloc_page(&self, page_no: PageNum) -> Result<()> {
+        // rust division rounds down
+        let cpu: usize = ((page_no - self.start) / self.pages_per_cpu).try_into()?;
+        let free_list = Arc::clone(&self.free_lists[cpu]);
+        let mut free_list = free_list.lock();
+        let res = free_list.list.try_insert(page_no, ());
+        free_list.free_pages += 1;
+        // unwrap the error so we can get at the option
+        let res = match res {
+            Ok(res) => res,
+            Err(e) => {
+                pr_info!(
+                    "ERROR: failed to insert {:?} into page allocator at CPU {:?}, error {:?}\n",
+                    page_no,
+                    cpu,
+                    e
+                );
+                return Err(e);
+            }
+        };
+        // check that the page was not already present in the tree
+        if res.is_some() {
+            pr_info!(
+                "ERROR: page {:?} was already in the allocator at CPU {:?}\n",
+                page_no,
+                cpu
+            );
+            Err(EINVAL)
+        } else {
+            Ok(())
         }
     }
 }
@@ -295,7 +545,6 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
         Self::from_page_no(sbi, page_no)
     }
 }
-
 
 fn page_no_to_dir_header<'a>(sbi: &'a SbInfo, page_no: PageNum) -> Result<&'a mut DirPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
