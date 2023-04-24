@@ -190,11 +190,17 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
         let total_pages = dev_pages - val;
         let cpus_u64: u64 = cpus.into();
         let pages_per_cpu = total_pages / cpus_u64;
+        pr_info!("pages per cpu: {:?}\n", pages_per_cpu);
         let mut current_page = val;
         let mut free_lists = Vec::new();
         for _ in 0..cpus {
             let mut rb_tree = RBTree::new();
-            for i in current_page..current_page + pages_per_cpu {
+            let upper = if (current_page + pages_per_cpu) < dev_pages {
+                current_page + pages_per_cpu
+            } else {
+                dev_pages
+            };
+            for i in current_page..upper {
                 rb_tree.try_insert(i, ())?;
             }
             current_page = current_page + pages_per_cpu;
@@ -203,6 +209,9 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                 list: rb_tree,
             };
             free_lists.try_push(Arc::try_new(Mutex::new(free_list))?)?;
+            if upper == dev_pages {
+                break;
+            }
         }
 
         Ok(Some(PerCpuPageAllocator {
@@ -288,6 +297,7 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
     fn alloc_page(&self) -> Result<PageNum> {
         if let Some(allocator) = self {
             let cpu = get_cpuid(&allocator.cpus);
+
             let cpu_usize: usize = cpu.try_into()?;
             let free_list = Arc::clone(&allocator.free_lists[cpu_usize]);
             let mut free_list = free_list.lock();
@@ -303,10 +313,15 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                     }
                     Some(page) => *page.0,
                 };
+                // pr_info!("allocating page {:?} on cpu {:?}\n", page, cpu);
                 free_list.list.remove(&page);
                 free_list.free_pages -= 1;
                 Ok(page)
             } else {
+                // pr_info!(
+                //     "cpu {:?} is full, searching other CPUs for free blocks\n",
+                //     cpu
+                // );
                 // find the free list with the most free blocks and allocate from there
                 // TODO: can we do this without so much locking?
                 let mut num_free_pages = 0;
@@ -376,6 +391,7 @@ impl PerCpuPageAllocator {
     fn dealloc_page(&self, page_no: PageNum) -> Result<()> {
         // rust division rounds down
         let cpu: usize = ((page_no - self.start) / self.pages_per_cpu).try_into()?;
+        // pr_info!("deallocating page {:?} on cpu {:?}\n", page_no, cpu);
         let free_list = Arc::clone(&self.free_lists[cpu]);
         let mut free_list = free_list.lock();
         let res = free_list.list.try_insert(page_no, ());
@@ -576,6 +592,7 @@ impl<'a> DirPageWrapper<'a, Dirty, Alloc> {
     pub(crate) fn alloc_dir_page(sbi: &'a SbInfo) -> Result<Self> {
         // TODO: should we zero the page here?
         let page_no = sbi.page_allocator.alloc_page()?;
+        // pr_info!("alloc dir page\n");
         let ph = page_no_to_dir_header(sbi, page_no)?;
 
         ph.page_type = PageType::DIR;

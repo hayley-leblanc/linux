@@ -401,10 +401,15 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         processed_live_inodes.try_insert(live_inode, ())?;
     }
 
-    sbi.page_allocator = Option::<RBPageAllocator>::new_from_alloc_vec(
+    sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
         alloc_page_vec,
         DATA_PAGE_START,
-        sbi.num_blocks,
+        // sbi.num_blocks,
+        if NUM_PAGE_DESCRIPTORS < sbi.num_blocks {
+            NUM_PAGE_DESCRIPTORS
+        } else {
+            sbi.num_blocks
+        },
         sbi.cpus,
     )?;
     sbi.inode_allocator = RBInodeAllocator::new_from_alloc_vec(alloc_inode_vec, ROOT_INO)?;
@@ -476,8 +481,18 @@ impl PmDevice for SbInfo {
         let pgsize_i64: i64 = HAYLEYFS_PAGESIZE.try_into()?;
         self.size = num_blocks * pgsize_i64;
         self.num_blocks = num_blocks.try_into()?;
-        self.page_allocator =
-            Option::<RBPageAllocator>::new_from_range(DATA_PAGE_START, self.num_blocks, self.cpus)?;
+        // self.page_allocator =
+        //     Option::<PerCpuPageAllocator>::new_from_range(DATA_PAGE_START, self.num_blocks, self.cpus)?;
+        self.page_allocator = Option::<PerCpuPageAllocator>::new_from_range(
+            DATA_PAGE_START,
+            // NUM_PAGE_DESCRIPTORS, // TODO: have this be the actual number of blocks
+            if NUM_PAGE_DESCRIPTORS < self.num_blocks {
+                NUM_PAGE_DESCRIPTORS
+            } else {
+                self.num_blocks
+            },
+            self.cpus,
+        )?;
 
         Ok(())
     }

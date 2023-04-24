@@ -151,7 +151,7 @@ pub(crate) struct SbInfo {
     // if they are.
     // TODO: fix this.
     // optional because we can't set it up until we know how big the fs is
-    pub(crate) page_allocator: Option<RBPageAllocator>,
+    pub(crate) page_allocator: Option<PerCpuPageAllocator>,
     pub(crate) inode_allocator: RBInodeAllocator,
 
     pub(crate) mount_opts: HayleyfsParams,
