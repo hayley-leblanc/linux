@@ -318,10 +318,9 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                 free_list.free_pages -= 1;
                 Ok(page)
             } else {
-                // pr_info!(
-                //     "cpu {:?} is full, searching other CPUs for free blocks\n",
-                //     cpu
-                // );
+                // drop the free_list lock so that we can't deadlock with other processes that might
+                // be looking for free pages at that CPU
+                drop(free_list);
                 // find the free list with the most free blocks and allocate from there
                 // TODO: can we do this without so much locking?
                 let mut num_free_pages = 0;
