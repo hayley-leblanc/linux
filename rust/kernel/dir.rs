@@ -36,6 +36,17 @@ impl<T: Operations> OperationsVtable<T> {
         }
     }
 
+    unsafe extern "C" fn iterate_callback(
+        file: *mut bindings::file,
+        ctx: *mut bindings::dir_context,
+    ) -> core::ffi::c_int {
+        from_kernel_result! {
+            // TODO: don't pass the raw dir_context pointer
+            let res = T::iterate(unsafe { File::from_ptr(file) }, ctx)?;
+            Ok(res.try_into().unwrap())
+        }
+    }
+
     const VTABLE: bindings::file_operations = bindings::file_operations {
         open: None,
         release: None,
@@ -52,7 +63,11 @@ impl<T: Operations> OperationsVtable<T> {
         flush: None,
         fsync: None,
         get_unmapped_area: None,
-        iterate: None,
+        iterate: if T::HAS_ITERATE {
+            Some(Self::iterate_callback)
+        } else {
+            None
+        },
         iterate_shared: None,
         iopoll: None,
         lock: None,
@@ -106,5 +121,12 @@ pub trait Operations {
         _cmd: &mut IoctlCommand,
     ) -> Result<i32> {
         Err(ENOTTY)
+    }
+
+    /// Iterate over directory entries
+    ///
+    /// Corresponds to the `iterate` function pointer in `struct file_operations`.
+    fn iterate(_file: &File, _ctx: *mut bindings::dir_context) -> Result<u32> {
+        Err(EINVAL)
     }
 }

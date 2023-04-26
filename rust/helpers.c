@@ -845,6 +845,13 @@ unsigned int rust_helper_smp_processor_id(void)
 }
 EXPORT_SYMBOL_GPL(rust_helper_smp_processor_id);
 
+bool rust_helper_dir_emit(struct dir_context *ctx, const char *name,
+			  int namelen, u64 ino, unsigned type)
+{
+	return dir_emit(ctx, name, namelen, ino, type);
+}
+EXPORT_SYMBOL_GPL(rust_helper_dir_emit);
+
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
  * as the Rust `usize` type, so we can use it in contexts where Rust
