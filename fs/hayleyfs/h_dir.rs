@@ -5,7 +5,7 @@ use crate::typestate::*;
 use crate::volatile::*;
 use core::{ffi, marker::PhantomData, mem};
 use kernel::prelude::*;
-use kernel::{dir, file};
+use kernel::{bindings, dir, file, fs};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -212,7 +212,58 @@ impl<'a, Op> DentryWrapper<'a, InFlight, Op> {
 pub(crate) struct DirOps;
 #[vtable]
 impl dir::Operations for DirOps {
+    fn iterate(f: &file::File, ctx: *mut bindings::dir_context) -> Result<u32> {
+        let inode: &mut fs::INode = unsafe { &mut *f.inode().cast() };
+        let sb = inode.i_sb();
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let result = hayleyfs_readdir(sbi, inode, ctx);
+        match result {
+            Ok(r) => Ok(r),
+            Err(e) => Err(e),
+        }
+    }
+
     fn ioctl(data: (), file: &file::File, cmd: &mut file::IoctlCommand) -> Result<i32> {
         cmd.dispatch::<Self>(data, file)
     }
+}
+
+pub(crate) fn hayleyfs_readdir(
+    sbi: &SbInfo,
+    dir: &mut fs::INode,
+    ctx: *mut bindings::dir_context,
+) -> Result<u32> {
+    // get all dentries currently in this inode
+    // TODO: need to start at the specified position
+    let (_parent_inode, parent_inode_info) =
+        sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let dentries = parent_inode_info.get_all_dentries()?;
+    let num_dentries: i64 = dentries.len().try_into()?;
+    unsafe {
+        if (*ctx).pos >= num_dentries {
+            return Ok(0);
+        }
+    }
+    for dentry in dentries {
+        let name =
+            unsafe { CStr::from_char_ptr(dentry.get_name().as_ptr() as *const core::ffi::c_char) };
+        let file_type = bindings::DT_UNKNOWN; // TODO: get the actual type
+        let result = unsafe {
+            bindings::dir_emit(
+                ctx,
+                name.as_char_ptr(),
+                name.len().try_into()?,
+                parent_inode_info.get_ino(),
+                file_type,
+            )
+        };
+        if !result {
+            return Ok(0);
+        }
+    }
+    unsafe { (*ctx).pos += num_dentries };
+    Ok(0)
 }

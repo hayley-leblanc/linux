@@ -38,6 +38,10 @@ impl DentryInfo {
     pub(crate) fn get_virt_addr(&self) -> *const ffi::c_void {
         self.virt_addr
     }
+
+    pub(crate) fn get_name(&self) -> &[u8; MAX_FILENAME_LEN] {
+        &self.name
+    }
 }
 
 // /// maps inodes to info about dentries for inode's children
@@ -282,6 +286,10 @@ impl HayleyFsDirInodeInfo {
             dentries: Arc::try_new(Mutex::new(dentry_vec))?,
         })
     }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.ino
+    }
 }
 
 impl InoDirPageMap for HayleyFsDirInodeInfo {
@@ -341,6 +349,7 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
 pub(crate) trait InoDentryMap {
     fn insert_dentry(&self, dentry: DentryInfo) -> Result<()>;
     fn lookup_dentry(&self, name: &CStr) -> Option<DentryInfo>;
+    fn get_all_dentries(&self) -> Result<Vec<DentryInfo>>;
     fn delete_dentry(&self, dentry: DentryInfo) -> Result<()>;
 }
 
@@ -362,6 +371,17 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
             }
         }
         None
+    }
+
+    fn get_all_dentries(&self) -> Result<Vec<DentryInfo>> {
+        let dentries = Arc::clone(&self.dentries);
+        let dentries = dentries.lock();
+        let mut return_vec = Vec::new();
+        // TODO: don't clone all of the dentries to return?
+        for dentry in &*dentries {
+            return_vec.try_push(dentry.clone())?
+        }
+        Ok(return_vec)
     }
 
     fn delete_dentry(&self, dentry: DentryInfo) -> Result<()> {

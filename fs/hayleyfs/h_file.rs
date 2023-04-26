@@ -105,6 +105,20 @@ impl file::Operations for FileOps {
     fn ioctl(data: (), file: &file::File, cmd: &mut file::IoctlCommand) -> Result<i32> {
         cmd.dispatch::<Self>(data, file)
     }
+
+    // fn iterate(f: &file::File, ctx: *mut bindings::dir_context) -> Result<u32> {
+    //     let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
+    //     let sb = inode.i_sb();
+    //     let fs_info_raw = unsafe { (*sb).s_fs_info };
+    //     // TODO: it's probably not safe to just grab s_fs_info and
+    //     // get a mutable reference to one of the dram indexes
+    //     let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+    //     let result = hayleyfs_readdir(sbi, inode, ctx);
+    //     match result {
+    //         Ok(r) => Ok(r),
+    //         Err(e) => Err(e),
+    //     }
+    // }
 }
 
 #[allow(dead_code)]
