@@ -216,7 +216,7 @@ pub(crate) fn hayleyfs_iget(
             // if the inode has any pages associated with it, remove them from the
             // global tree and put them in this inode's i_private
             if let Some(pages) = pages {
-                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_vec(ino, pages))?;
+                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_tree(ino, pages))?;
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             } else {
                 let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;

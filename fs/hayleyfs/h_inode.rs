@@ -308,9 +308,9 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
             // ToUnmap wrappers
             // let pages = sbi.ino_data_page_map.get_all_pages(&self.get_ino())?;
             let info = self.get_inode_info()?;
-            let pages = info.remove_all_pages()?;
+            let pages = info.get_all_pages()?;
             let mut unmap_vec = Vec::new();
-            for page in pages {
+            for page in pages.values() {
                 let p = DataPageWrapper::mark_to_unmap(sbi, page)?;
                 unmap_vec.try_push(p)?;
             }

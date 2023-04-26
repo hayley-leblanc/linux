@@ -142,8 +142,8 @@ pub(crate) struct SbInfo {
     // which pages belong to which file when looking up an inode, so instead,
     // we'll scan at mount and store that information here until we perform
     // a lookup.
-    pub(crate) ino_data_page_tree: InoPageTree<DataPageInfo>,
-    pub(crate) ino_dir_page_tree: InoPageTree<DirPageInfo>,
+    pub(crate) ino_data_page_tree: InoDataPageTree,
+    pub(crate) ino_dir_page_tree: InoDirPageTree,
     pub(crate) ino_dentry_tree: InoDentryTree,
 
     // volatile allocators
@@ -182,8 +182,8 @@ impl SbInfo {
             inodes_in_use: AtomicU64::new(1),
             blocks_in_use: AtomicU64::new(0), // TODO: mark reserved pages as in use
             cpus: unsafe { bindings::num_online_cpus() },
-            ino_data_page_tree: InoPageTree::<DataPageInfo>::new().unwrap(),
-            ino_dir_page_tree: InoPageTree::<DirPageInfo>::new().unwrap(),
+            ino_data_page_tree: InoDataPageTree::new().unwrap(),
+            ino_dir_page_tree: InoDirPageTree::new().unwrap(),
             ino_dentry_tree: InoDentryTree::new().unwrap(),
             page_allocator: None,
             inode_allocator: InodeAllocator::new(ROOT_INO + 1).unwrap(),

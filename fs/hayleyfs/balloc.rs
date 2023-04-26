@@ -953,7 +953,7 @@ impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn mark_to_unmap(sbi: &'a SbInfo, info: DataPageInfo) -> Result<Self> {
+    pub(crate) fn mark_to_unmap(sbi: &'a SbInfo, info: &DataPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
         let ph = page_no_to_data_header(sbi, page_no)?;
         unsafe { Self::wrap_page_to_unmap(ph, page_no) }

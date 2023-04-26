@@ -101,7 +101,7 @@ fn str_equals(str1: &CStr, str2: &CStr) -> bool {
     return true;
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialOrd, Eq, PartialEq, Ord)]
 pub(crate) struct DirPageInfo {
     // owner: InodeNum,
     page_no: PageNum,
@@ -139,30 +139,37 @@ impl DataPageInfo {
     pub(crate) fn get_page_no(&self) -> PageNum {
         self.page_no
     }
-
-    pub(crate) fn get_offset(&self) -> u64 {
-        self.offset
-    }
 }
 
+// TODO: could just be offset and page number - storing whole DataPageInfo is redundant...
 #[repr(C)]
 pub(crate) struct HayleyFsRegInodeInfo {
     ino: InodeNum,
-    pages: Arc<Mutex<Vec<DataPageInfo>>>,
+    // pages: Arc<Mutex<Vec<DataPageInfo>>>,
+    pages: Arc<Mutex<RBTree<u64, DataPageInfo>>>,
+    // num_pages: usize,
 }
 
 impl HayleyFsRegInodeInfo {
     pub(crate) fn new(ino: InodeNum) -> Result<Self> {
         Ok(Self {
             ino,
-            pages: Arc::try_new(Mutex::new(Vec::new()))?,
+            // pages: Arc::try_new(Mutex::new(Vec::new()))?,
+            pages: Arc::try_new(Mutex::new(RBTree::new()))?,
+            // num_pages: 0,
         })
     }
 
-    pub(crate) fn new_from_vec(ino: InodeNum, vec: Vec<DataPageInfo>) -> Result<Self> {
+    pub(crate) fn new_from_tree(ino: InodeNum, tree: RBTree<u64, DataPageInfo>) -> Result<Self> {
+        // let rb_tree = RBTree::new();
+        // for page in vec {
+        //     rb_tree.try_insert(page.offset, page)?;
+        // }
+        // let num_pages = tree.keys().len();
         Ok(Self {
             ino,
-            pages: Arc::try_new(Mutex::new(vec))?,
+            pages: Arc::try_new(Mutex::new(tree))?,
+            // num_pages,
         })
     }
 }
@@ -177,8 +184,8 @@ pub(crate) trait InoDataPageMap {
         page: &DataPageWrapper<'a, Clean, State>,
     ) -> Result<()>;
     fn find(&self, offset: u64) -> Option<DataPageInfo>;
-    fn remove_all_pages(&self) -> Result<Vec<DataPageInfo>>;
-    fn delete(&self) -> Result<DataPageInfo>;
+    fn get_all_pages(&self) -> Result<RBTree<u64, DataPageInfo>>;
+    // fn delete(&self) -> Result<DataPageInfo>;
 }
 
 impl InoDataPageMap for HayleyFsRegInodeInfo {
@@ -193,58 +200,52 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         let pages = Arc::clone(&self.pages);
         let mut pages = pages.lock();
         let offset = page.get_offset();
-        let page_no = page.get_page_no();
-        // check that we aren't trying to insert a page at an offset that
-        // already exists or in a way that will create a hole
-        let index = offset / HAYLEYFS_PAGESIZE;
-        if index != pages.len().try_into()? {
-            pr_info!(
-                "ERROR: inode {:?} attempted to insert page {:?} at index {:?} (offset {:?}) but pages vector has length {:?}\n",
-                self.ino,
-                page_no,
-                index,
-                offset,
-                pages.len()
-            );
-            return Err(EINVAL);
-        }
-        pages.try_push(DataPageInfo {
-            owner: self.ino,
-            page_no,
+        pages.try_insert(
             offset,
-        })?;
+            DataPageInfo {
+                owner: self.ino,
+                page_no: page.get_page_no(),
+                offset,
+            },
+        )?;
         Ok(())
     }
 
     fn find(&self, offset: u64) -> Option<DataPageInfo> {
         let pages = Arc::clone(&self.pages);
         let pages = pages.lock();
-        let index: usize = (offset / HAYLEYFS_PAGESIZE).try_into().unwrap();
-        let result = pages.get(index);
+        // let index: usize = (offset / HAYLEYFS_PAGESIZE).try_into().unwrap();
+        let result = pages.get(&offset);
         match result {
             Some(page) => Some(page.clone()),
             None => None,
         }
     }
 
-    fn remove_all_pages(&self) -> Result<Vec<DataPageInfo>> {
+    fn get_all_pages(&self) -> Result<RBTree<u64, DataPageInfo>> {
         let pages = Arc::clone(&self.pages);
-        let mut pages = pages.lock();
-        let mut return_vec = Vec::new();
+        let pages = pages.lock();
+        let mut return_tree = RBTree::new();
         // TODO: can you do this without copying all of the pages?
-        for page in &*pages {
-            return_vec.try_push(page.clone())?;
+        for offset in pages.keys() {
+            return_tree.try_insert(*offset, pages.get(offset).unwrap().clone())?;
         }
-        pages.clear();
-        Ok(return_vec)
+        // let mut return_vec = Vec::new();
+        // // TODO: can you do this without copying all of the pages?
+        // for page in &*pages {
+        //     return_vec.try_push(page.clone())?;
+        // }
+        // pages.clear();
+        // Ok(return_vec)
+        Ok(return_tree)
     }
 
-    /// Deletes the last page in the file from the index and returns it
-    fn delete(&self) -> Result<DataPageInfo> {
-        let pages = Arc::clone(&self.pages);
-        let mut pages = pages.lock();
-        pages.pop().ok_or(EINVAL)
-    }
+    // /// Deletes the last page in the file from the index and returns it
+    // fn delete(&self) -> Result<DataPageInfo> {
+    //     let pages = Arc::clone(&self.pages);
+    //     let mut pages = pages.lock();
+    //     pages.pop().ok_or(EINVAL)
+    // }
 }
 
 /// maps dir inodes to info about their pages
@@ -255,14 +256,14 @@ pub(crate) trait InoDirPageMap {
     fn insert<'a, State: Initialized>(&self, page: &DirPageWrapper<'a, Clean, State>)
         -> Result<()>;
     fn find_page_with_free_dentry(&self, sbi: &SbInfo) -> Result<Option<DirPageInfo>>;
-    fn remove_all_pages(&self) -> Result<Vec<DirPageInfo>>;
+    fn get_all_pages(&self) -> Result<RBTree<DirPageInfo, ()>>;
     fn delete(&self, page: DirPageInfo) -> Result<()>;
 }
 
 #[repr(C)]
 pub(crate) struct HayleyFsDirInodeInfo {
     ino: InodeNum,
-    pages: Arc<Mutex<Vec<DirPageInfo>>>,
+    pages: Arc<Mutex<RBTree<DirPageInfo, ()>>>,
     dentries: Arc<Mutex<Vec<DentryInfo>>>,
 }
 
@@ -270,19 +271,19 @@ impl HayleyFsDirInodeInfo {
     pub(crate) fn new(ino: InodeNum) -> Result<Self> {
         Ok(Self {
             ino,
-            pages: Arc::try_new(Mutex::new(Vec::new()))?,
+            pages: Arc::try_new(Mutex::new(RBTree::new()))?,
             dentries: Arc::try_new(Mutex::new(Vec::new()))?,
         })
     }
 
     pub(crate) fn new_from_vec(
         ino: InodeNum,
-        page_vec: Vec<DirPageInfo>,
+        page_tree: RBTree<DirPageInfo, ()>,
         dentry_vec: Vec<DentryInfo>,
     ) -> Result<Self> {
         Ok(Self {
             ino,
-            pages: Arc::try_new(Mutex::new(page_vec))?,
+            pages: Arc::try_new(Mutex::new(page_tree))?,
             dentries: Arc::try_new(Mutex::new(dentry_vec))?,
         })
     }
@@ -308,7 +309,7 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
             // owner: self.ino,
             page_no: page.get_page_no(),
         };
-        pages.try_push(page_info)?;
+        pages.try_insert(page_info, ())?;
         Ok(())
     }
 
@@ -318,7 +319,7 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
     fn find_page_with_free_dentry<'a>(&self, sbi: &SbInfo) -> Result<Option<DirPageInfo>> {
         let pages = Arc::clone(&self.pages);
         let pages = pages.lock();
-        for page in &*pages {
+        for page in pages.keys() {
             let p = DirPageWrapper::from_page_no(sbi, page.get_page_no())?;
             if p.has_free_space(sbi)? {
                 return Ok(Some(page.clone()));
@@ -328,16 +329,16 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
         Ok(None)
     }
 
-    fn remove_all_pages(&self) -> Result<Vec<DirPageInfo>> {
+    fn get_all_pages(&self) -> Result<RBTree<DirPageInfo, ()>> {
         let pages = Arc::clone(&self.pages);
-        let mut pages = pages.lock();
-        let mut return_vec = Vec::new();
+        let pages = pages.lock();
+        let mut return_tree = RBTree::new();
         // TODO: can you do this without copying all of the pages?
-        for page in &*pages {
-            return_vec.try_push(page.clone())?;
+        for page in pages.keys() {
+            return_tree.try_insert(page.clone(), ())?;
         }
-        pages.clear();
-        Ok(return_vec)
+        // pages.clear();
+        Ok(return_tree)
     }
 
     // TODO: implement
@@ -396,39 +397,109 @@ pub(crate) trait PageInfo {}
 impl PageInfo for DataPageInfo {}
 impl PageInfo for DirPageInfo {}
 
-pub(crate) struct InoPageTree<T: PageInfo> {
-    tree: Arc<Mutex<RBTree<InodeNum, Vec<T>>>>,
+// pub(crate) struct InoPageTree<T: PageInfo> {
+//     tree: Arc<Mutex<RBTree<InodeNum, Vec<T>>>>,
+// }
+
+// impl<T: PageInfo> InoPageTree<T> {
+//     pub(crate) fn new() -> Result<Self> {
+//         Ok(Self {
+//             tree: Arc::try_new(Mutex::new(RBTree::new()))?,
+//         })
+//     }
+
+//     pub(crate) fn insert_vec(&self, ino: InodeNum, pages: Vec<T>) -> Result<()> {
+//         let tree = Arc::clone(&self.tree);
+//         let mut tree = tree.lock();
+//         tree.try_insert(ino, pages)?;
+//         Ok(())
+//     }
+
+//     pub(crate) fn insert_one(&self, ino: InodeNum, page: T) -> Result<()> {
+//         let tree = Arc::clone(&self.tree);
+//         let mut tree = tree.lock();
+//         let entry = tree.get_mut(&ino);
+//         if let Some(entry) = entry {
+//             entry.try_push(page)?;
+//         } else {
+//             let mut new_vec = Vec::new();
+//             new_vec.try_push(page)?;
+//             tree.try_insert(ino, new_vec)?;
+//         }
+//         Ok(())
+//     }
+
+//     pub(crate) fn remove(&self, ino: InodeNum) -> Option<Vec<T>> {
+//         let tree = Arc::clone(&self.tree);
+//         let mut tree = tree.lock();
+//         tree.remove(&ino)
+//     }
+// }
+
+pub(crate) struct InoDataPageTree {
+    tree: Arc<Mutex<RBTree<InodeNum, RBTree<u64, DataPageInfo>>>>,
 }
 
-impl<T: PageInfo> InoPageTree<T> {
+impl InoDataPageTree {
     pub(crate) fn new() -> Result<Self> {
         Ok(Self {
             tree: Arc::try_new(Mutex::new(RBTree::new()))?,
         })
     }
 
-    pub(crate) fn insert_vec(&self, ino: InodeNum, pages: Vec<T>) -> Result<()> {
+    pub(crate) fn insert_inode(
+        &self,
+        ino: InodeNum,
+        pages: RBTree<u64, DataPageInfo>,
+    ) -> Result<()> {
         let tree = Arc::clone(&self.tree);
         let mut tree = tree.lock();
         tree.try_insert(ino, pages)?;
         Ok(())
     }
 
-    pub(crate) fn insert_one(&self, ino: InodeNum, page: T) -> Result<()> {
+    pub(crate) fn remove(&self, ino: InodeNum) -> Option<RBTree<u64, DataPageInfo>> {
+        let tree = Arc::clone(&self.tree);
+        let mut tree = tree.lock();
+        tree.remove(&ino)
+    }
+}
+
+pub(crate) struct InoDirPageTree {
+    tree: Arc<Mutex<RBTree<InodeNum, RBTree<DirPageInfo, ()>>>>,
+}
+
+impl InoDirPageTree {
+    pub(crate) fn new() -> Result<Self> {
+        Ok(Self {
+            tree: Arc::try_new(Mutex::new(RBTree::new()))?,
+        })
+    }
+
+    pub(crate) fn insert_inode(&self, ino: InodeNum, pages: RBTree<DirPageInfo, ()>) -> Result<()> {
+        let tree = Arc::clone(&self.tree);
+        let mut tree = tree.lock();
+        tree.try_insert(ino, pages)?;
+        Ok(())
+    }
+
+    pub(crate) fn insert_one(&self, ino: InodeNum, page: DirPageInfo) -> Result<()> {
         let tree = Arc::clone(&self.tree);
         let mut tree = tree.lock();
         let entry = tree.get_mut(&ino);
         if let Some(entry) = entry {
-            entry.try_push(page)?;
+            // entry.try_push(page)?;
+            entry.try_insert(page, ())?;
         } else {
-            let mut new_vec = Vec::new();
-            new_vec.try_push(page)?;
-            tree.try_insert(ino, new_vec)?;
+            let mut new_tree = RBTree::new();
+            // new_tree.try_push(page)?;
+            new_tree.try_insert(page, ())?;
+            tree.try_insert(ino, new_tree)?;
         }
         Ok(())
     }
 
-    pub(crate) fn remove(&self, ino: InodeNum) -> Option<Vec<T>> {
+    pub(crate) fn remove(&self, ino: InodeNum) -> Option<RBTree<DirPageInfo, ()>> {
         let tree = Arc::clone(&self.tree);
         let mut tree = tree.lock();
         tree.remove(&ino)
