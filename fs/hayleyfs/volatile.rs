@@ -145,31 +145,21 @@ impl DataPageInfo {
 #[repr(C)]
 pub(crate) struct HayleyFsRegInodeInfo {
     ino: InodeNum,
-    // pages: Arc<Mutex<Vec<DataPageInfo>>>,
     pages: Arc<Mutex<RBTree<u64, DataPageInfo>>>,
-    // num_pages: usize,
 }
 
 impl HayleyFsRegInodeInfo {
     pub(crate) fn new(ino: InodeNum) -> Result<Self> {
         Ok(Self {
             ino,
-            // pages: Arc::try_new(Mutex::new(Vec::new()))?,
             pages: Arc::try_new(Mutex::new(RBTree::new()))?,
-            // num_pages: 0,
         })
     }
 
     pub(crate) fn new_from_tree(ino: InodeNum, tree: RBTree<u64, DataPageInfo>) -> Result<Self> {
-        // let rb_tree = RBTree::new();
-        // for page in vec {
-        //     rb_tree.try_insert(page.offset, page)?;
-        // }
-        // let num_pages = tree.keys().len();
         Ok(Self {
             ino,
             pages: Arc::try_new(Mutex::new(tree))?,
-            // num_pages,
         })
     }
 }
@@ -230,13 +220,6 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         for offset in pages.keys() {
             return_tree.try_insert(*offset, pages.get(offset).unwrap().clone())?;
         }
-        // let mut return_vec = Vec::new();
-        // // TODO: can you do this without copying all of the pages?
-        // for page in &*pages {
-        //     return_vec.try_push(page.clone())?;
-        // }
-        // pages.clear();
-        // Ok(return_vec)
         Ok(return_tree)
     }
 
@@ -306,7 +289,6 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
         let mut pages = pages.lock();
         // TODO: ordering?
         let page_info = DirPageInfo {
-            // owner: self.ino,
             page_no: page.get_page_no(),
         };
         pages.try_insert(page_info, ())?;
@@ -337,7 +319,6 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
         for page in pages.keys() {
             return_tree.try_insert(page.clone(), ())?;
         }
-        // pages.clear();
         Ok(return_tree)
     }
 
@@ -397,45 +378,6 @@ pub(crate) trait PageInfo {}
 impl PageInfo for DataPageInfo {}
 impl PageInfo for DirPageInfo {}
 
-// pub(crate) struct InoPageTree<T: PageInfo> {
-//     tree: Arc<Mutex<RBTree<InodeNum, Vec<T>>>>,
-// }
-
-// impl<T: PageInfo> InoPageTree<T> {
-//     pub(crate) fn new() -> Result<Self> {
-//         Ok(Self {
-//             tree: Arc::try_new(Mutex::new(RBTree::new()))?,
-//         })
-//     }
-
-//     pub(crate) fn insert_vec(&self, ino: InodeNum, pages: Vec<T>) -> Result<()> {
-//         let tree = Arc::clone(&self.tree);
-//         let mut tree = tree.lock();
-//         tree.try_insert(ino, pages)?;
-//         Ok(())
-//     }
-
-//     pub(crate) fn insert_one(&self, ino: InodeNum, page: T) -> Result<()> {
-//         let tree = Arc::clone(&self.tree);
-//         let mut tree = tree.lock();
-//         let entry = tree.get_mut(&ino);
-//         if let Some(entry) = entry {
-//             entry.try_push(page)?;
-//         } else {
-//             let mut new_vec = Vec::new();
-//             new_vec.try_push(page)?;
-//             tree.try_insert(ino, new_vec)?;
-//         }
-//         Ok(())
-//     }
-
-//     pub(crate) fn remove(&self, ino: InodeNum) -> Option<Vec<T>> {
-//         let tree = Arc::clone(&self.tree);
-//         let mut tree = tree.lock();
-//         tree.remove(&ino)
-//     }
-// }
-
 pub(crate) struct InoDataPageTree {
     tree: Arc<Mutex<RBTree<InodeNum, RBTree<u64, DataPageInfo>>>>,
 }
@@ -488,11 +430,9 @@ impl InoDirPageTree {
         let mut tree = tree.lock();
         let entry = tree.get_mut(&ino);
         if let Some(entry) = entry {
-            // entry.try_push(page)?;
             entry.try_insert(page, ())?;
         } else {
             let mut new_tree = RBTree::new();
-            // new_tree.try_push(page)?;
             new_tree.try_insert(page, ())?;
             tree.try_insert(ino, new_tree)?;
         }

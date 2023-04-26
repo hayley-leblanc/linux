@@ -395,9 +395,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         if let Some(pages) = owned_data_pages {
             let pages = build_tree(sbi, live_inode, pages)?;
             sbi.ino_data_page_tree.insert_inode(live_inode, pages)?;
-            // let sorted_pages = sort_by_offset(sbi, live_inode, pages)?;
-            // sbi.ino_data_page_tree
-            //     .insert_inode(live_inode, sorted_pages)?;
         }
 
         processed_live_inodes.try_insert(live_inode, ())?;
@@ -435,36 +432,6 @@ fn build_tree(
 
     Ok(output_tree)
 }
-
-// /// takes a vector of page numbers and converts it into a vector of DataPageInfo
-// /// sorted by offset that can be used directly to look up pages later.
-// /// TODO: this is O(n^2). We might get some non-asymptotic speedup if we do
-// /// binary search instead of just iterating over the output_vec for each
-// /// insertion, but insertion is O(n). The best thing to do would probably be to
-// /// bring the BinaryHeap structure in from std and use that. That would probably
-// /// also save us some memory
-// fn sort_by_offset(
-//     sbi: &SbInfo,
-//     ino: InodeNum,
-//     input_vec: &Vec<PageNum>,
-// ) -> Result<Vec<DataPageInfo>> {
-//     let mut output_vec: Vec<DataPageInfo> = Vec::new();
-
-//     for page_no in input_vec {
-//         let data_page_wrapper = DataPageWrapper::from_page_no(sbi, *page_no)?;
-//         let offset = data_page_wrapper.get_offset();
-//         let page_info = DataPageInfo::new(ino, *page_no, offset);
-//         for i in 0..output_vec.len() {
-//             if i == output_vec.len() - 1
-//                 || (output_vec[i].get_offset() < offset && output_vec[i + 1].get_offset() > offset)
-//             {
-//                 output_vec.try_insert(i, page_info)?;
-//             }
-//         }
-//     }
-
-//     Ok(output_vec)
-// }
 
 pub(crate) trait PmDevice {
     fn get_pm_info(&mut self, sb: &fs::NewSuperBlock<'_, HayleyFs>) -> Result<()>;
