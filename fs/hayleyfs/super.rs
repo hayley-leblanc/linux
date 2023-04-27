@@ -161,6 +161,42 @@ impl fs::Type for HayleyFs {
         Ok(())
     }
 
+    fn dirty_inode(inode: &fs::INode, _flags: i32) {
+        let sb = inode.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+
+        let raw_pi = sbi.get_inode_by_ino(inode.i_ino()).unwrap();
+
+        let inode_type = raw_pi.get_type();
+        // TODO: use a new getter that returns a trait object so that we
+        // don't need the match statement, since the branches are basically identical
+        let atime = unsafe { bindings::current_time(inode.get_inner()) };
+        match inode_type {
+            InodeType::REG => {
+                let (inode, _) = sbi
+                    .get_init_reg_inode_by_vfs_inode(inode.get_inner())
+                    .unwrap();
+                inode.update_atime(atime);
+            }
+            InodeType::DIR => {
+                let (inode, _) = sbi
+                    .get_init_dir_inode_by_vfs_inode(inode.get_inner())
+                    .unwrap();
+                inode.update_atime(atime);
+            }
+            InodeType::NONE => {}
+        }
+
+        // TODO: DO THIS SAFELY WITH WRAPPERS
+        // raw_pi.atime = unsafe { bindings::current_time(inode.get_inner()) };
+        // unsafe { raw_pi.set_atime(bindings::current_time(inode.get_inner())) };
+        flush_buffer(&raw_pi, core::mem::size_of::<HayleyFsInode>(), true);
+    }
+
     fn evict_inode(inode: &fs::INode) {
         init_timing!(evict_inode_full);
         start_timing!(evict_inode_full);

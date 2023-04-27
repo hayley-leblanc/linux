@@ -139,6 +139,10 @@ impl HayleyFsInode {
         self.link_count -= 1
     }
 
+    pub(crate) unsafe fn update_atime(&mut self, atime: bindings::timespec64) {
+        self.atime = atime;
+    }
+
     // TODO: update as fields are added
     pub(crate) fn is_initialized(&self) -> bool {
         self.inode_type != InodeType::NONE && 
@@ -247,11 +251,24 @@ impl<'a, State, Op> InodeWrapper<'a, State, Op, RegInode> {
 }
 
 impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
+    // this is only called in dirty_inode, so it consumes itself
+    pub(crate) fn update_atime(self, atime: bindings::timespec64) {
+        unsafe { self.inode.update_atime(atime) };
+    }
+
     pub(crate) fn inc_link_count(self) -> Result<InodeWrapper<'a, Dirty, IncLink, Type>> {
         if self.inode.get_link_count() == MAX_LINKS {
             Err(EMLINK)
         } else {
             unsafe { self.inode.inc_link_count() };
+            // also update the inode's ctime. the time update may be reordered with the link change 
+            // we make no guarantees about ordering of these two updates
+            if let Some(vfs_inode) = self.vfs_inode {
+                self.inode.ctime = unsafe { bindings::current_time(vfs_inode)};
+            } else {
+                pr_info!("ERROR: no vfs inode for inode {:?} in dec_link_count\n", self.ino);
+                return Err(EINVAL);
+            }
             Ok(Self::new(self))
         }
     }
@@ -282,6 +299,15 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         page: DataPageWrapper<'a, Clean, Written>,
     ) -> (u64, InodeWrapper<'a, Clean, IncSize, Type>) {
         let total_size = bytes_written + page.get_offset();
+        // also update the inode's ctime and mtime. the time update may be reordered with the size change
+        // we make no guarantees about ordering of these two updates
+        if let Some(vfs_inode) = self.vfs_inode {
+            let time = unsafe { bindings::current_time(vfs_inode) };
+            self.inode.ctime = time;
+            self.inode.mtime = time;
+        } else {
+            panic!("ERROR: no vfs inode for inode {:?} in dec_link_count\n", self.ino);
+        }
         if self.inode.size < total_size {
             self.inode.size = total_size;
             flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
