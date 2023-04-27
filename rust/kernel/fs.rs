@@ -303,17 +303,14 @@ impl<T: Type + ?Sized> Tables<T> {
     }
 
     const SUPER_BLOCK: bindings::super_operations = bindings::super_operations {
-        // alloc_inode: Some(Self::alloc_inode_callback),
         alloc_inode: None,
-        // destroy_inode: Some(Self::destroy_inode_callback),
         destroy_inode: None,
         free_inode: None,
-        dirty_inode: None,
+        dirty_inode: Some(Self::dirty_inode_callback),
         write_inode: None,
         drop_inode: None,
         evict_inode: Some(Self::evict_inode_callback),
         put_super: Some(Self::put_super_callback),
-        // put_super: None,
         sync_fs: None,
         freeze_super: None,
         freeze_fs: None,
@@ -361,6 +358,14 @@ impl<T: Type + ?Sized> Tables<T> {
         from_kernel_result! {T::statfs(sb, buf)?; Ok(0)}
     }
 
+    unsafe extern "C" fn dirty_inode_callback(
+        inode: *mut bindings::inode,
+        flags: core::ffi::c_int,
+    ) {
+        let inode = unsafe { &*inode.cast() };
+        T::dirty_inode(inode, flags);
+    }
+
     unsafe extern "C" fn evict_inode_callback(inode: *mut bindings::inode) {
         let inode = unsafe { &*inode.cast() };
         T::evict_inode(inode);
@@ -403,6 +408,9 @@ pub trait Type {
 
     /// Returns metadata about this file system.
     fn statfs(sb: &SuperBlock<Self>, buf: *mut bindings::kstatfs) -> Result<()>;
+
+    /// Called by VFS when an inode is marked dirty.
+    fn dirty_inode(inode: &INode, flags: i32);
 
     /// Called at the last iput() if i_nlink is 0.
     fn evict_inode(inode: &INode);
