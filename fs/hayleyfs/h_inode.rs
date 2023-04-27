@@ -28,24 +28,22 @@ impl AnyInode for DirInode {}
 /// It is always unsafe to access this structure directly
 /// TODO: add the rest of the fields
 #[repr(C)]
-#[derive(Debug)]
 pub(crate) struct HayleyFsInode {
     inode_type: InodeType, // TODO: currently 2 bytes? could be 1
     link_count: u16,
     mode: u16,
     uid: u32,
     gid: u32,
-    ctime: u32,  // TODO: not properly updated right now
-    atime: u32,  // TODO: not properly updated right now
-    mtime: u32,  // TODO: not properly updated right now
-    blocks: u64, // TODO: not properly updated right now
+    ctime: bindings::timespec64,
+    atime: bindings::timespec64,
+    mtime: bindings::timespec64,
+    blocks: u64, // TODO: not properly updated right now. do we even need to store this persistently?
     size: u64,
     ino: InodeNum,
     _padding: u64,
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
 pub(crate) struct InodeWrapper<'a, State, Op, Type> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
@@ -81,7 +79,7 @@ impl HayleyFsInode {
         root_ino.blocks = 0;
         root_ino.mode = sbi.mode | bindings::S_IFDIR as u16;
 
-        let time = unsafe { bindings::cpu_to_le32(bindings::current_time(inode).tv_sec.try_into()?) };
+        let time = unsafe { bindings::current_time(inode) };
         root_ino.ctime = time;
         root_ino.atime = time;
         root_ino.mtime = time;
@@ -117,15 +115,15 @@ impl HayleyFsInode {
         self.gid
     }
 
-    pub(crate) fn get_mtime(&self) -> u32 {
+    pub(crate) fn get_mtime(&self) -> bindings::timespec64 {
         self.mtime
     }
 
-    pub(crate) fn get_ctime(&self) -> u32 {
+    pub(crate) fn get_ctime(&self) -> bindings::timespec64 {
         self.ctime
     }
 
-    pub(crate) fn get_atime(&self) -> u32 {
+    pub(crate) fn get_atime(&self) -> bindings::timespec64 {
         self.atime
     }
 
@@ -159,9 +157,12 @@ impl HayleyFsInode {
         self.mode == 0 &&
         self.uid == 0 &&
         self.gid == 0 &&
-        self.ctime == 0 &&
-        self.atime == 0 &&
-        self.mtime == 0 &&
+        self.ctime.tv_sec == 0 &&
+        self.ctime.tv_nsec == 0 &&
+        self.atime.tv_sec == 0 &&
+        self.atime.tv_nsec == 0 &&
+        self.atime.tv_sec == 0 &&
+        self.atime.tv_nsec == 0 &&
         self.blocks == 0 &&
         self.size == 0 &&
         self.ino == 0
@@ -185,15 +186,15 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
         self.inode.get_gid()
     }
 
-    pub(crate) fn get_mtime(&self) -> u32 {
+    pub(crate) fn get_mtime(&self) -> bindings::timespec64 {
         self.inode.get_mtime()
     }
 
-    pub(crate) fn get_ctime(&self) -> u32 {
+    pub(crate) fn get_ctime(&self) -> bindings::timespec64 {
         self.inode.get_ctime()
     }
 
-    pub(crate) fn get_atime(&self) -> u32 {
+    pub(crate) fn get_atime(&self) -> bindings::timespec64 {
         self.inode.get_atime()
     }
 
@@ -261,6 +262,14 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
             Err(ENOENT)
         } else {
             unsafe { self.inode.dec_link_count() };
+            // also update the inode's ctime. the time update may be reordered with the link change 
+            // we make no guarantees about ordering of these two updates
+            if let Some(vfs_inode) = self.vfs_inode {
+                self.inode.ctime = unsafe { bindings::current_time(vfs_inode)};
+            } else {
+                pr_info!("ERROR: no vfs inode for inode {:?} in dec_link_count\n", self.ino);
+                return Err(EINVAL);
+            }
             Ok(Self::new(self))
         }
     }
@@ -340,9 +349,12 @@ impl<'a> InodeWrapper<'a, Clean, Dealloc, RegInode> {
         self.inode.mode = 0;
         self.inode.uid = 0;
         self.inode.gid = 0;
-        self.inode.ctime = 0;
-        self.inode.atime = 0;
-        self.inode.mtime = 0;
+        self.inode.ctime.tv_sec = 0;
+        self.inode.ctime.tv_nsec = 0;
+        self.inode.atime.tv_sec = 0;
+        self.inode.atime.tv_nsec = 0;
+        self.inode.mtime.tv_sec = 0;
+        self.inode.mtime.tv_nsec = 0;
         self.inode.blocks = 0;
         self.inode.size = 0;
         self.inode.ino = 0;
@@ -390,13 +402,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
         self.inode.blocks = 0;
         self.inode.uid = unsafe { bindings::cpu_to_le32(bindings::from_kuid(mnt_userns, sbi.uid)) };
         self.inode.gid = unsafe { bindings::cpu_to_le32(bindings::from_kgid(mnt_userns, sbi.gid)) };
-        let time = unsafe {
-            bindings::cpu_to_le32(
-                bindings::current_time(inode.get_inner())
-                    .tv_sec
-                    .try_into()?,
-            )
-        };
+        let time = unsafe { bindings::current_time(inode.get_inner()) };
         self.inode.ctime = time;
         self.inode.atime = time;
         self.inode.mtime = time;
@@ -436,13 +442,7 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
         self.inode.mode = mode | bindings::S_IFDIR as u16;
         self.inode.uid = unsafe { bindings::cpu_to_le32(bindings::from_kuid(mnt_userns, sbi.uid)) };
         self.inode.gid = unsafe { bindings::cpu_to_le32(bindings::from_kgid(mnt_userns, sbi.gid)) };
-        let time = unsafe {
-            bindings::cpu_to_le32(
-                bindings::current_time(parent.get_inner())
-                    .tv_sec
-                    .try_into()?,
-            )
-        };
+        let time = unsafe { bindings::current_time(parent.get_inner()) };
         self.inode.ctime = time;
         self.inode.atime = time;
         self.inode.mtime = time;

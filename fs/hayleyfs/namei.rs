@@ -194,12 +194,9 @@ pub(crate) fn hayleyfs_iget(
         // TODO: https://elixir.bootlin.com/linux/latest/source/fs/ext2/inode.c#L1395 ?
         bindings::i_uid_write(inode, uid);
         bindings::i_gid_write(inode, gid);
-        (*inode).i_atime.tv_sec = bindings::le32_to_cpu(pi.get_atime()).try_into()?;
-        (*inode).i_ctime.tv_sec = bindings::le32_to_cpu(pi.get_ctime()).try_into()?;
-        (*inode).i_mtime.tv_sec = bindings::le32_to_cpu(pi.get_mtime()).try_into()?;
-        (*inode).i_atime.tv_nsec = 0;
-        (*inode).i_ctime.tv_nsec = 0;
-        (*inode).i_mtime.tv_nsec = 0;
+        (*inode).i_atime = pi.get_atime();
+        (*inode).i_ctime = pi.get_ctime();
+        (*inode).i_mtime = pi.get_mtime();
         (*inode).i_blkbits = bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()?;
         // TODO: set the rest of the fields!
     }
@@ -315,13 +312,9 @@ fn new_vfs_inode<'a, Type>(
         InodeType::NONE => panic!("Inode type is none"),
     }
 
-    // let current_time = unsafe { bindings::current_time(vfs_inode) };
-    vfs_inode.i_mtime.tv_sec = new_inode.get_mtime().try_into()?;
-    vfs_inode.i_ctime.tv_sec = new_inode.get_ctime().try_into()?;
-    vfs_inode.i_atime.tv_sec = new_inode.get_atime().try_into()?;
-    vfs_inode.i_mtime.tv_nsec = 0;
-    vfs_inode.i_atime.tv_nsec = 0;
-    vfs_inode.i_mtime.tv_nsec = 0;
+    vfs_inode.i_mtime = new_inode.get_mtime();
+    vfs_inode.i_ctime = new_inode.get_ctime();
+    vfs_inode.i_atime = new_inode.get_atime();
     vfs_inode.i_size = new_inode.get_size().try_into()?;
     vfs_inode.i_blocks = new_inode.get_blocks();
     vfs_inode.i_blkbits = unsafe { bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()? };

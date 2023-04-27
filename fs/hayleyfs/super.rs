@@ -126,12 +126,9 @@ impl fs::Type for HayleyFs {
                 // TODO: https://elixir.bootlin.com/linux/latest/source/fs/ext2/inode.c#L1395 ?
                 bindings::i_uid_write(inode, uid);
                 bindings::i_gid_write(inode, gid);
-                (*inode).i_atime.tv_sec = bindings::le32_to_cpu(pi.get_atime()).try_into()?;
-                (*inode).i_ctime.tv_sec = bindings::le32_to_cpu(pi.get_ctime()).try_into()?;
-                (*inode).i_mtime.tv_sec = bindings::le32_to_cpu(pi.get_mtime()).try_into()?;
-                (*inode).i_atime.tv_nsec = 0;
-                (*inode).i_ctime.tv_nsec = 0;
-                (*inode).i_mtime.tv_nsec = 0;
+                (*inode).i_atime = pi.get_atime();
+                (*inode).i_ctime = pi.get_ctime();
+                (*inode).i_mtime = pi.get_mtime();
                 (*inode).i_blkbits =
                     bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()?;
                 // TODO: set the rest of the fields!
@@ -273,12 +270,9 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
         // TODO: https://elixir.bootlin.com/linux/latest/source/fs/ext2/inode.c#L1395 ?
         bindings::i_uid_write(inode, uid);
         bindings::i_gid_write(inode, gid);
-        (*inode).i_atime.tv_sec = bindings::le32_to_cpu(pi.get_atime()).try_into()?;
-        (*inode).i_ctime.tv_sec = bindings::le32_to_cpu(pi.get_ctime()).try_into()?;
-        (*inode).i_mtime.tv_sec = bindings::le32_to_cpu(pi.get_mtime()).try_into()?;
-        (*inode).i_atime.tv_nsec = 0;
-        (*inode).i_ctime.tv_nsec = 0;
-        (*inode).i_mtime.tv_nsec = 0;
+        (*inode).i_atime = pi.get_atime();
+        (*inode).i_ctime = pi.get_ctime();
+        (*inode).i_mtime = pi.get_mtime();
         (*inode).i_blkbits = bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()?;
         // TODO: set the rest of the fields!
 
