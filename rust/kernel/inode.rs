@@ -46,7 +46,7 @@ impl<T: Operations> OperationsVtable<T> {
     }
 
     unsafe extern "C" fn create_callback(
-        mnt_userns: *mut bindings::user_namespace,
+        mnt_idmap: *mut bindings::mnt_idmap,
         dir: *mut bindings::inode,
         dentry: *mut bindings::dentry,
         umode: bindings::umode_t,
@@ -57,7 +57,7 @@ impl<T: Operations> OperationsVtable<T> {
             // TODO: safety notes
             let dir = unsafe { &*dir.cast() };
             let dentry = unsafe { &mut *dentry.cast()};
-            T::create(mnt_userns, dir, dentry, umode, excl)
+            T::create(mnt_idmap, dir, dentry, umode, excl)
         }
     }
 
@@ -75,7 +75,7 @@ impl<T: Operations> OperationsVtable<T> {
     }
 
     unsafe extern "C" fn mkdir_callback(
-        mnt_userns: *mut bindings::user_namespace,
+        mnt_idmap: *mut bindings::mnt_idmap,
         dir: *mut bindings::inode,
         dentry: *mut bindings::dentry,
         umode: bindings::umode_t,
@@ -84,12 +84,12 @@ impl<T: Operations> OperationsVtable<T> {
             // TODO: safety notes
             let dir = unsafe { &mut *dir.cast() };
             let dentry = unsafe { &mut *dentry.cast()};
-            T::mkdir(mnt_userns, dir, dentry, umode)
+            T::mkdir(mnt_idmap, dir, dentry, umode)
         }
     }
 
     unsafe extern "C" fn rename_callback(
-        mnt_userns: *mut bindings::user_namespace,
+        mnt_idmap: *mut bindings::mnt_idmap,
         old_dir: *mut bindings::inode,
         old_dentry: *mut bindings::dentry,
         new_dir: *mut bindings::inode,
@@ -102,7 +102,7 @@ impl<T: Operations> OperationsVtable<T> {
             let old_dentry = unsafe { &mut *old_dentry.cast() };
             let new_dir = unsafe { &mut *new_dir.cast() };
             let new_dentry = unsafe { &mut *new_dentry.cast() };
-            T::rename(mnt_userns, old_dir, old_dentry, new_dir, new_dentry, flags)?;
+            T::rename(mnt_idmap, old_dir, old_dentry, new_dir, new_dentry, flags)?;
             Ok(0)
         }
     }
@@ -169,7 +169,7 @@ pub trait Operations {
         -> Result<Option<*mut bindings::inode>>;
     /// Corresponds to the `create` function pointer in `struct inode_operations`.
     fn create(
-        mnt_userns: *mut bindings::user_namespace,
+        mnt_idmap: *mut bindings::mnt_idmap,
         dir: &INode,
         dentry: &DEntry,
         umode: bindings::umode_t,
@@ -177,7 +177,7 @@ pub trait Operations {
     ) -> Result<i32>;
     /// Corresponds to the `mkdir` function pointer in `struct inode_operations`.
     fn mkdir(
-        mnt_userns: *mut bindings::user_namespace,
+        mnt_idmap: *mut bindings::mnt_idmap,
         dir: &mut INode,
         dentry: &DEntry,
         umode: bindings::umode_t,
@@ -186,7 +186,7 @@ pub trait Operations {
     fn link(old_dentry: &DEntry, dir: &mut INode, dentry: &DEntry) -> Result<i32>;
     /// Corresponds to the `rename` function pointer in `struct inode_operations`
     fn rename(
-        mnt_userns: *const bindings::user_namespace,
+        mnt_idmap: *const bindings::mnt_idmap,
         old_dir: &INode,
         old_dentry: &DEntry,
         new_dir: &INode,
