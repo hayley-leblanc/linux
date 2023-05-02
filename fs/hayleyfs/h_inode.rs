@@ -416,8 +416,6 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
 
     pub(crate) fn allocate_file_inode(
         self,
-        sbi: &SbInfo,
-        mnt_userns: *mut bindings::user_namespace,
         inode: &fs::INode,
         mode: u16,
     ) -> Result<InodeWrapper<'a, Dirty, Alloc, RegInode>> {
@@ -426,8 +424,8 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
         self.inode.inode_type = InodeType::REG;
         self.inode.mode = mode;
         self.inode.blocks = 0;
-        self.inode.uid = unsafe { bindings::cpu_to_le32(bindings::from_kuid(mnt_userns, sbi.uid)) };
-        self.inode.gid = unsafe { bindings::cpu_to_le32(bindings::from_kgid(mnt_userns, sbi.gid)) };
+        self.inode.uid = unsafe { (*inode.get_inner()).i_uid.val };
+        self.inode.gid = unsafe { (*inode.get_inner()).i_gid.val };
         let time = unsafe { bindings::current_time(inode.get_inner()) };
         self.inode.ctime = time;
         self.inode.atime = time;
@@ -456,8 +454,6 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
 
     pub(crate) fn allocate_dir_inode(
         self,
-        sbi: &SbInfo,
-        mnt_userns: *mut bindings::user_namespace,
         parent: &fs::INode,
         mode: u16,
     ) -> Result<InodeWrapper<'a, Dirty, Alloc, DirInode>> {
@@ -466,8 +462,8 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
         self.inode.blocks = 0;
         self.inode.inode_type = InodeType::DIR;
         self.inode.mode = mode | bindings::S_IFDIR as u16;
-        self.inode.uid = unsafe { bindings::cpu_to_le32(bindings::from_kuid(mnt_userns, sbi.uid)) };
-        self.inode.gid = unsafe { bindings::cpu_to_le32(bindings::from_kgid(mnt_userns, sbi.gid)) };
+        self.inode.uid = unsafe { (*parent.get_inner()).i_uid.val };
+        self.inode.gid = unsafe { (*parent.get_inner()).i_gid.val };
         let time = unsafe { bindings::current_time(parent.get_inner()) };
         self.inode.ctime = time;
         self.inode.atime = time;

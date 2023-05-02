@@ -51,7 +51,7 @@ impl inode::Operations for InodeOps {
     }
 
     fn create(
-        mnt_userns: *mut bindings::user_namespace,
+        mnt_idmap: *mut bindings::mnt_idmap,
         dir: &fs::INode,
         dentry: &fs::DEntry,
         umode: bindings::umode_t,
@@ -64,9 +64,9 @@ impl inode::Operations for InodeOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        let (_new_dentry, new_inode) = hayleyfs_create(sbi, mnt_userns, dir, dentry, umode, excl)?;
+        let (_new_dentry, new_inode) = hayleyfs_create(sbi, dir, dentry, umode, excl)?;
 
-        new_vfs_inode(sb, sbi, mnt_userns, dir, dentry, new_inode, umode)?;
+        new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, new_inode, umode)?;
         Ok(0)
     }
 
@@ -102,7 +102,7 @@ impl inode::Operations for InodeOps {
     }
 
     fn mkdir(
-        mnt_userns: *mut bindings::user_namespace,
+        mnt_idmap: *mut bindings::mnt_idmap,
         dir: &mut fs::INode,
         dentry: &fs::DEntry,
         umode: bindings::umode_t,
@@ -114,17 +114,16 @@ impl inode::Operations for InodeOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        let (_new_dentry, _parent_inode, new_inode) =
-            hayleyfs_mkdir(sbi, mnt_userns, dir, dentry, umode)?;
+        let (_new_dentry, _parent_inode, new_inode) = hayleyfs_mkdir(sbi, dir, dentry, umode)?;
 
         dir.inc_nlink();
 
-        new_vfs_inode(sb, sbi, mnt_userns, dir, dentry, new_inode, umode)?;
+        new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, new_inode, umode)?;
         Ok(0)
     }
 
     fn rename(
-        _mnt_userns: *const bindings::user_namespace,
+        _mnt_idmap: *const bindings::mnt_idmap,
         _old_dir: &fs::INode,
         _old_dentry: &fs::DEntry,
         _new_dir: &fs::INode,
@@ -257,7 +256,7 @@ pub(crate) fn hayleyfs_iget(
 fn new_vfs_inode<'a, Type>(
     sb: *mut bindings::super_block,
     sbi: &SbInfo,
-    mnt_userns: *mut bindings::user_namespace,
+    mnt_idmap: *mut bindings::mnt_idmap,
     dir: &fs::INode,
     dentry: &fs::DEntry,
     new_inode: InodeWrapper<'a, Clean, Complete, Type>,
@@ -270,7 +269,7 @@ fn new_vfs_inode<'a, Type>(
 
     // TODO: could this be moved out to the callback?
     unsafe {
-        bindings::inode_init_owner(mnt_userns, vfs_inode, dir.get_inner(), umode);
+        bindings::inode_init_owner(mnt_idmap, vfs_inode, dir.get_inner(), umode);
     }
 
     let ino = new_inode.get_ino();
@@ -343,7 +342,6 @@ fn new_vfs_inode<'a, Type>(
 
 fn hayleyfs_create<'a>(
     sbi: &'a SbInfo,
-    mnt_userns: *mut bindings::user_namespace,
     dir: &fs::INode,
     dentry: &fs::DEntry,
     umode: bindings::umode_t,
@@ -358,7 +356,7 @@ fn hayleyfs_create<'a>(
         sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
-    let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, mnt_userns, dir, pd, umode)?;
+    let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, dir, pd, umode)?;
     dentry.index(parent_inode_info)?;
 
     Ok((dentry, inode))
@@ -400,7 +398,6 @@ fn hayleyfs_link<'a>(
 
 fn hayleyfs_mkdir<'a>(
     sbi: &'a SbInfo,
-    mnt_userns: *mut bindings::user_namespace,
     dir: &fs::INode,
     dentry: &fs::DEntry,
     mode: u16,
@@ -413,8 +410,7 @@ fn hayleyfs_mkdir<'a>(
     let parent_inode = parent_inode.inc_link_count()?.flush().fence();
     let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
-    let (dentry, parent, inode) =
-        init_dentry_with_new_dir_inode(sbi, mnt_userns, dir, pd, parent_inode, mode)?;
+    let (dentry, parent, inode) = init_dentry_with_new_dir_inode(sbi, dir, pd, parent_inode, mode)?;
     dentry.index(parent_inode_info)?;
     Ok((dentry, parent, inode))
 }
@@ -557,7 +553,6 @@ fn alloc_page_for_dentry<'a>(
 
 fn init_dentry_with_new_reg_inode<'a>(
     sbi: &'a SbInfo,
-    mnt_userns: *mut bindings::user_namespace,
     dir: &fs::INode,
     dentry: DentryWrapper<'a, Clean, Alloc>,
     mode: u16,
@@ -568,10 +563,7 @@ fn init_dentry_with_new_reg_inode<'a>(
     // set up the new inode
     let new_ino = sbi.inode_allocator.alloc_ino()?;
     let inode = InodeWrapper::get_free_reg_inode_by_ino(sbi, new_ino)?;
-    let inode = inode
-        .allocate_file_inode(sbi, mnt_userns, dir, mode)?
-        .flush()
-        .fence();
+    let inode = inode.allocate_file_inode(dir, mode)?.flush().fence();
     sbi.inc_inodes_in_use();
 
     // set the ino in the dentry
@@ -583,7 +575,6 @@ fn init_dentry_with_new_reg_inode<'a>(
 
 fn init_dentry_with_new_dir_inode<'a>(
     sbi: &'a SbInfo,
-    mnt_userns: *mut bindings::user_namespace,
     inode: &fs::INode,
     dentry: DentryWrapper<'a, Clean, Alloc>,
     parent_inode: InodeWrapper<'a, Clean, IncLink, DirInode>,
@@ -596,10 +587,7 @@ fn init_dentry_with_new_dir_inode<'a>(
     // set up the new inode
     let new_ino = sbi.inode_allocator.alloc_ino()?;
     let new_inode = InodeWrapper::get_free_dir_inode_by_ino(sbi, new_ino)?;
-    let new_inode = new_inode
-        .allocate_dir_inode(sbi, mnt_userns, inode, mode)?
-        .flush()
-        .fence();
+    let new_inode = new_inode.allocate_dir_inode(inode, mode)?.flush().fence();
 
     // set the ino in the dentry
     let (dentry, new_inode, parent_inode) = dentry.set_dir_ino(new_inode, parent_inode);
