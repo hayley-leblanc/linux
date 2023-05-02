@@ -35,6 +35,7 @@
 #include <linux/netdevice.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
+#include <linux/refcount.h>
 #include <linux/sched/signal.h>
 #include <linux/security.h>
 #include <linux/skbuff.h>

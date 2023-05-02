@@ -19,5 +19,7 @@ Architecture  Level of support  Constraints
 ``arm64``     Maintained        None.
 ``powerpc``   Maintained        ``ppc64le`` only.
 ``riscv``     Maintained        ``riscv64`` only.
+``um``        Maintained        ``x86_64`` only.
 ``x86``       Maintained        ``x86_64`` only.
 ============  ================  ==============================================
+

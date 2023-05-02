@@ -38,15 +38,17 @@ pub mod virt {
         /// The possible flags are a combination of the constants in [`flags`].
         pub fn flags(&self) -> usize {
             // SAFETY: `self.vma` is valid by the type invariants.
-            unsafe { (*self.vma).vm_flags as _ }
+            unsafe { (*self.vma).__bindgen_anon_1.vm_flags as _ }
         }
 
         /// Sets the flags associated with the virtual memory area.
         ///
         /// The possible flags are a combination of the constants in [`flags`].
         pub fn set_flags(&mut self, flags: usize) {
+            // TODO: use the new wrapper functions, see commit bc292ab00f6c
+            // ("mm: introduce vma->vm_flags wrapper functions").
             // SAFETY: `self.vma` is valid by the type invariants.
-            unsafe { (*self.vma).vm_flags = flags as _ };
+            unsafe { (*self.vma).__bindgen_anon_1.__vm_flags = flags as _ };
         }
 
         /// Returns the start address of the virtual memory area.
