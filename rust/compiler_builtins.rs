@@ -28,7 +28,7 @@ macro_rules! define_panicking_intrinsics(
     ($reason: tt, { $($ident: ident, )* }) => {
         $(
             #[doc(hidden)]
-            #[no_mangle]
+            #[export_name = concat!("__rust", stringify!($ident))]
             pub extern "C" fn $ident() {
                 panic!($reason);
             }
@@ -77,3 +77,6 @@ define_panicking_intrinsics!("`f64` should not be used", {
 define_panicking_intrinsics!("`u64` division/modulo should not be used", {
     __aeabi_uldivmod,
 });
+
+// NOTE: if you are adding a new intrinsic here, you should also add it to
+// `redirect-intrinsics` in `rust/Makefile`.
