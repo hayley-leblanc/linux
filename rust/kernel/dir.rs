@@ -18,6 +18,15 @@ pub struct OperationsVtable<T: Operations>(marker::PhantomData<T>);
 
 #[allow(dead_code)]
 impl<T: Operations> OperationsVtable<T> {
+    unsafe extern "C" fn read_callback(
+        file: *mut bindings::file,
+        buf: *mut core::ffi::c_char,
+        siz: usize,
+        ppos: *mut core::ffi::c_long,
+    ) -> isize {
+        unsafe { bindings::generic_read_dir(file, buf, siz, ppos) }
+    }
+
     unsafe extern "C" fn unlocked_ioctl_callback(
         file: *mut bindings::file,
         cmd: core::ffi::c_uint,
@@ -50,7 +59,11 @@ impl<T: Operations> OperationsVtable<T> {
     const VTABLE: bindings::file_operations = bindings::file_operations {
         open: None,
         release: None,
-        read: None,
+        read: if T::HAS_READ {
+            Some(Self::read_callback)
+        } else {
+            None
+        },
         write: None,
         llseek: None,
         check_flags: None,
@@ -111,6 +124,16 @@ pub trait Operations {
 
     /// The type of the context data passed to [`Operations::open`].
     type OpenData: Sync = ();
+
+    /// Read a directory file.
+    fn read(
+        _file: *mut bindings::file,
+        _buf: *mut core::ffi::c_char,
+        _siz: core::ffi::c_uint,
+        _ppos: *mut core::ffi::c_long,
+    ) -> Result<isize> {
+        Err(EINVAL)
+    }
 
     /// Performs IO control operations that are specific to the file.
     ///

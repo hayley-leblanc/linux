@@ -84,7 +84,7 @@ impl fs::Type for HayleyFs {
 
             // let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ROOT_INO))?;
             // root_ino.i_private = inode_info.into_foreign() as *mut _;
-
+            pr_info!("initializing root from inode\n");
             sb.init_root_from_inode(inode)?
         } else {
             // remount
@@ -136,6 +136,7 @@ impl fs::Type for HayleyFs {
 
             sb.init_root_from_inode(inode)?
         };
+        pr_info!("fill_super done\n");
 
         Ok(sb)
     }
@@ -340,7 +341,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let inode_table = sbi.get_inode_table()?;
 
     for inode in inode_table {
-        if !inode.is_free() {
+        if !inode.is_free() && inode.get_ino() != 0 {
             alloc_inode_vec.try_push(inode.get_ino())?;
             sbi.inc_inodes_in_use();
         }
