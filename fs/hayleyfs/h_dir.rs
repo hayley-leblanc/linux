@@ -238,8 +238,17 @@ pub(crate) fn hayleyfs_readdir(
 ) -> Result<u32> {
     // get all dentries currently in this inode
     // TODO: need to start at the specified position
+
     let (_parent_inode, parent_inode_info) =
         sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+
+    let dentries = sbi.ino_dentry_tree.remove(parent_inode_info.get_ino());
+    let _dir_pages = sbi.ino_dir_page_tree.remove(parent_inode_info.get_ino());
+
+    if let Some(dentries) = dentries {
+        parent_inode_info.insert_dentries(dentries)?;
+    }
+
     let dentries = parent_inode_info.get_all_dentries()?;
     let num_dentries: i64 = dentries.len().try_into()?;
     unsafe {
@@ -250,7 +259,7 @@ pub(crate) fn hayleyfs_readdir(
     for dentry in dentries {
         let name =
             unsafe { CStr::from_char_ptr(dentry.get_name().as_ptr() as *const core::ffi::c_char) };
-        let file_type = bindings::DT_UNKNOWN; // TODO: get the actual type
+        let file_type = bindings::DT_REG; // TODO: get the actual type
         let result = unsafe {
             bindings::dir_emit(
                 ctx,

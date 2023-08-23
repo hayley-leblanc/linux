@@ -27,6 +27,14 @@ impl<T: Operations> OperationsVtable<T> {
         unsafe { bindings::generic_read_dir(file, buf, siz, ppos) }
     }
 
+    unsafe extern "C" fn llseek_callback(
+        file: *mut bindings::file,
+        offset: core::ffi::c_long,
+        whence: core::ffi::c_int,
+    ) -> core::ffi::c_long {
+        unsafe { bindings::generic_file_llseek(file, offset, whence) }
+    }
+
     unsafe extern "C" fn unlocked_ioctl_callback(
         file: *mut bindings::file,
         cmd: core::ffi::c_uint,
@@ -59,13 +67,9 @@ impl<T: Operations> OperationsVtable<T> {
     const VTABLE: bindings::file_operations = bindings::file_operations {
         open: None,
         release: None,
-        read: if T::HAS_READ {
-            Some(Self::read_callback)
-        } else {
-            None
-        },
+        read: Some(Self::read_callback),
         write: None,
-        llseek: None,
+        llseek: Some(Self::llseek_callback),
         check_flags: None,
         compat_ioctl: None,
         copy_file_range: None,
@@ -76,12 +80,8 @@ impl<T: Operations> OperationsVtable<T> {
         flush: None,
         fsync: None,
         get_unmapped_area: None,
-        iterate: if T::HAS_ITERATE {
-            Some(Self::iterate_callback)
-        } else {
-            None
-        },
-        iterate_shared: None,
+        iterate: Some(Self::iterate_callback),
+        iterate_shared: Some(Self::iterate_callback),
         iopoll: None,
         lock: None,
         mmap: None,

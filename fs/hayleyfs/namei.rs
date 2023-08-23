@@ -562,6 +562,7 @@ fn init_dentry_with_new_reg_inode<'a>(
 )> {
     // set up the new inode
     let new_ino = sbi.inode_allocator.alloc_ino()?;
+    pr_info!("allocated inode {:?}\n", new_ino);
     let inode = InodeWrapper::get_free_reg_inode_by_ino(sbi, new_ino)?;
     let inode = inode.allocate_file_inode(dir, mode)?.flush().fence();
     sbi.inc_inodes_in_use();

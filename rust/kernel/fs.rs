@@ -802,7 +802,8 @@ impl<'a, T: Type + ?Sized> NewSuperBlock<'a, T, NeedsRoot> {
         // SAFETY: `simple_dir_operations` never changes, it's safe to reference it.
 
         unsafe {
-            (*inode).__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+            // (*inode).__bindgen_anon_3.i_fop = &bindings::simple_dir_operations;
+            (*inode).__bindgen_anon_3.i_fop = dir::OperationsVtable::<T::DirOps>::build();
 
             // TODO: safety
             (*inode).i_op = inode::OperationsVtable::<T::InodeOps>::build();

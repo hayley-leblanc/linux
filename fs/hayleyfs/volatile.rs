@@ -238,6 +238,10 @@ pub(crate) trait InoDirPageMap {
         Self: Sized;
     fn insert<'a, State: Initialized>(&self, page: &DirPageWrapper<'a, Clean, State>)
         -> Result<()>;
+    fn insert_page_infos<'a, State: Initialized>(
+        &self,
+        new_pages: RBTree<DirPageInfo, ()>,
+    ) -> Result<()>;
     fn find_page_with_free_dentry(&self, sbi: &SbInfo) -> Result<Option<DirPageInfo>>;
     fn get_all_pages(&self) -> Result<RBTree<DirPageInfo, ()>>;
     fn delete(&self, page: DirPageInfo) -> Result<()>;
@@ -287,11 +291,24 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
     ) -> Result<()> {
         let pages = Arc::clone(&self.pages);
         let mut pages = pages.lock();
-        // TODO: ordering?
+        // TODO: sort?
         let page_info = DirPageInfo {
             page_no: page.get_page_no(),
         };
         pages.try_insert(page_info, ())?;
+        Ok(())
+    }
+
+    fn insert_page_infos<'a, State: Initialized>(
+        &self,
+        new_pages: RBTree<DirPageInfo, ()>,
+    ) -> Result<()> {
+        let pages = Arc::clone(&self.pages);
+        let mut pages = pages.lock();
+        // TODO: sort?
+        for (key, value) in new_pages.iter() {
+            pages.try_insert(*key, *value)?;
+        }
         Ok(())
     }
 
@@ -330,6 +347,7 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
 
 pub(crate) trait InoDentryMap {
     fn insert_dentry(&self, dentry: DentryInfo) -> Result<()>;
+    fn insert_dentries(&self, new_dentries: Vec<DentryInfo>) -> Result<()>;
     fn lookup_dentry(&self, name: &CStr) -> Option<DentryInfo>;
     fn get_all_dentries(&self) -> Result<Vec<DentryInfo>>;
     fn delete_dentry(&self, dentry: DentryInfo) -> Result<()>;
@@ -340,6 +358,16 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
         let dentries = Arc::clone(&self.dentries);
         let mut dentries = dentries.lock();
         dentries.try_push(dentry)?;
+        Ok(())
+    }
+
+    fn insert_dentries(&self, mut new_dentries: Vec<DentryInfo>) -> Result<()> {
+        let dentries = Arc::clone(&self.dentries);
+        let mut dentries = dentries.lock();
+        // TODO: use append - it isn't defined properly for use here right now
+        for new_dentry in new_dentries.drain(..) {
+            dentries.try_push(new_dentry)?;
+        }
         Ok(())
     }
 
