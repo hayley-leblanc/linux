@@ -23,7 +23,7 @@ You can create your own VM setup or use a pre-existing image. Details are below.
 2. Download Ubuntu 22.04 and boot the VM: `qemu-system-x86_64 -boot d -cdrom <path to ubuntu ISO> -m 8G -hda <image name> -enable-kvm`. 
 3. Follow the instructions to install Ubuntu on the VM.
 4. Quit the VM and boot it again using `qemu-system-x86_64 -boot c -m 8G -hda <image name> -enable-kvm`.
-5. Open a terminal in the graphical VM and run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang-11 zstd lld-11 llvm-11`
+5. Open a terminal in the graphical VM and run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang-14 zstd lld-14 llvm-14`
 6. The VM can now be booted using `qemu-system-x86_64 -boot c -m 8G -hda <image name> -enable-kvm -net nic -net user,hostfwd=tcp::2222-:22 -cpu host -nographic -smp <cores>` and accessed via ssh over port 2222.
 
 ### Option 2 (pre-existing image)
@@ -37,7 +37,7 @@ You can create your own VM setup or use a pre-existing image. Details are below.
 Follow these instructions to install the kernel on a baremetal Chameleon Cloud machine.
 
 1. Create a baremetal Chameleon cloud instance with their Ubuntu22.04 image. 
-2. On the instance, run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang-11 zstd lld-11 llvm-11`.
+2. On the instance, run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang-14 zstd lld-14 llvm-14`.
 3. Clone this repository onto the instance. 
 4. Follow the kernel setup instructions below. EXXCEPT, instead of using `defconfig`, use `olddefconfig`. This will use the current kernel's .config file as the basis for configuration, and will use default settings for any new options. This creates a larger kernel but will ensure that it has the correct drivers to run on the baremetal instance. You will still need to check that the configuration options listed below are set properly. 
 
@@ -71,7 +71,7 @@ TODO: add instructions for building on host and using direct boot.
         10. Set `CONFIG_FS_DAX` to Y
         11. Set `CONFIG_HAYLEY_FS` to M
         12. Set `CONFIG_DEBUG_PREEMPTION` to N
-5. Build the kernel with `make LLVM=-11 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
+5. Build the kernel with `make LLVM=-14 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
     - Note: while building the kernel, it may prompt you to select some configuration options interactively.
     - Select the first option (i.e. 1,2,3 => choose 1 OR N/y => choose N)
 6. Edit the `/etc/default/grub` file on the VM by updating `GRUB_CMDLINE_LINUX` to `GRUB_CMDLINE_LINUX="memmap=1G!4G`. This reserves the region 4GB-5GB for PM. 
@@ -82,7 +82,7 @@ TODO: add instructions for building on host and using direct boot.
 11. Check that everything was set up properly. `uname -r` should return a kernel version number starting with `6.1.0` and followed by a long string of numbers and letters. The output for `lsblk` should include a device called `pmem0` - this is the emulated PM device we created in step 6.
 
 The above steps only need to be followed the first time after cloning the kernel. The steps for subsequent builds of the entire kernel are:
-1. `make LLVM=1 LLVM_SUFFIX=-14 -j <number of cores>`
+1. `make LLVM=-14 -j <number of cores>`
 2. `sudo make modules_install install`
 3. Reboot
 
