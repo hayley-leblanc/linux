@@ -517,4 +517,4 @@ pub(crate) static mut TIMING_STATS: [AtomicI64; TimingCategory::TimingNum as usi
     [ATOMIC_ZERO_I64; TimingCategory::TimingNum as usize];
 pub(crate) static mut COUNT_STATS: [AtomicU64; TimingCategory::TimingNum as usize] =
     [ATOMIC_ZERO_U64; TimingCategory::TimingNum as usize];
-pub(crate) const TIMING: bool = true; // TODO: compiler directive
+pub(crate) const TIMING: bool = false; // TODO: compiler directive
