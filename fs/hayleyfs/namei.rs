@@ -37,6 +37,7 @@ impl inode::Operations for InodeOps {
 
         let (_parent_inode, parent_inode_info) =
             sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+        move_dir_inode_tree_to_map(sbi, parent_inode_info)?;
         let result = parent_inode_info.lookup_dentry(dentry.d_name());
         // let result = sbi
         //     .ino_dentry_map

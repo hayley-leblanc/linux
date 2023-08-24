@@ -242,12 +242,7 @@ pub(crate) fn hayleyfs_readdir(
     let (_parent_inode, parent_inode_info) =
         sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
 
-    let dentries = sbi.ino_dentry_tree.remove(parent_inode_info.get_ino());
-    let _dir_pages = sbi.ino_dir_page_tree.remove(parent_inode_info.get_ino());
-
-    if let Some(dentries) = dentries {
-        parent_inode_info.insert_dentries(dentries)?;
-    }
+    move_dir_inode_tree_to_map(sbi, parent_inode_info)?;
 
     let dentries = parent_inode_info.get_all_dentries()?;
     let num_dentries: i64 = dentries.len().try_into()?;

@@ -238,10 +238,7 @@ pub(crate) trait InoDirPageMap {
         Self: Sized;
     fn insert<'a, State: Initialized>(&self, page: &DirPageWrapper<'a, Clean, State>)
         -> Result<()>;
-    fn insert_page_infos<'a, State: Initialized>(
-        &self,
-        new_pages: RBTree<DirPageInfo, ()>,
-    ) -> Result<()>;
+    fn insert_page_infos(&self, new_pages: RBTree<DirPageInfo, ()>) -> Result<()>;
     fn find_page_with_free_dentry(&self, sbi: &SbInfo) -> Result<Option<DirPageInfo>>;
     fn get_all_pages(&self) -> Result<RBTree<DirPageInfo, ()>>;
     fn delete(&self, page: DirPageInfo) -> Result<()>;
@@ -299,10 +296,7 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
         Ok(())
     }
 
-    fn insert_page_infos<'a, State: Initialized>(
-        &self,
-        new_pages: RBTree<DirPageInfo, ()>,
-    ) -> Result<()> {
+    fn insert_page_infos(&self, new_pages: RBTree<DirPageInfo, ()>) -> Result<()> {
         let pages = Arc::clone(&self.pages);
         let mut pages = pages.lock();
         // TODO: sort?
@@ -472,4 +466,21 @@ impl InoDirPageTree {
         let mut tree = tree.lock();
         tree.remove(&ino)
     }
+}
+
+pub(crate) fn move_dir_inode_tree_to_map(
+    sbi: &SbInfo,
+    parent_inode_info: &HayleyFsDirInodeInfo,
+) -> Result<()> {
+    let ino = parent_inode_info.get_ino();
+    let dentries = sbi.ino_dentry_tree.remove(ino);
+    let dir_pages = sbi.ino_dir_page_tree.remove(ino);
+
+    if let Some(dentries) = dentries {
+        parent_inode_info.insert_dentries(dentries)?;
+    }
+    if let Some(dir_pages) = dir_pages {
+        parent_inode_info.insert_page_infos(dir_pages)?;
+    }
+    Ok(())
 }
