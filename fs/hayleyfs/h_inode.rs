@@ -296,9 +296,10 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
     pub(crate) fn inc_size(
         self,
         bytes_written: u64,
-        page: DataPageWrapper<'a, Clean, Written>,
+        current_offset: u64,
+        _page: DataPageWrapper<'a, Clean, Written>,
     ) -> (u64, InodeWrapper<'a, Clean, IncSize, Type>) {
-        let total_size = bytes_written + page.get_offset();
+        let total_size = bytes_written + current_offset;
         // also update the inode's ctime and mtime. the time update may be reordered with the size change
         // we make no guarantees about ordering of these two updates
         if let Some(vfs_inode) = self.vfs_inode {

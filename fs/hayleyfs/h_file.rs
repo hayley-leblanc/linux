@@ -194,8 +194,7 @@ fn hayleyfs_write<'a>(
             to_write
         );
     }
-
-    let (inode_size, pi) = pi.inc_size(bytes_written.try_into()?, data_page);
+    let (inode_size, pi) = pi.inc_size(bytes_written.try_into()?, offset, data_page);
 
     // update the VFS inode's size
     inode.i_size_write(inode_size.try_into()?);
