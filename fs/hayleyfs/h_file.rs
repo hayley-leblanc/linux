@@ -227,7 +227,7 @@ fn hayleyfs_read(
     if offset >= size {
         return Ok(0);
     }
-    let bytes_left_in_file = size - offset; // # of bytes that can be read
+    let mut bytes_left_in_file = size - offset; // # of bytes that can be read
 
     let mut bytes_read = 0;
 
@@ -235,11 +235,13 @@ fn hayleyfs_read(
         let page_offset = page_offset(offset)?;
 
         let offset_in_page = offset - page_offset;
-        let bytes_after_offset = if bytes_left_in_file < HAYLEYFS_PAGESIZE {
-            bytes_left_in_file - offset_in_page
+        let bytes_left_in_page = HAYLEYFS_PAGESIZE - offset_in_page;
+        let bytes_after_offset = if bytes_left_in_file <= bytes_left_in_page {
+            bytes_left_in_file
         } else {
-            HAYLEYFS_PAGESIZE - offset_in_page
+            bytes_left_in_page
         };
+
         // either read the rest of the count or write to the end of the page
         let to_read = if count < bytes_after_offset {
             count
@@ -263,6 +265,7 @@ fn hayleyfs_read(
             bytes_read += read;
             offset += read;
             count -= read;
+            bytes_left_in_file -= read;
         } else {
             init_timing!(read_page);
             start_timing!(read_page);
@@ -271,6 +274,7 @@ fn hayleyfs_read(
             bytes_read += to_read;
             offset += to_read;
             count -= to_read;
+            bytes_left_in_file -= to_read;
         }
     }
     end_timing!(FullRead, full_read);
