@@ -17,13 +17,26 @@ rustup component add clippy
 
 sudo apt update
 echo "y" | sudo apt install build-essential libncurses-dev bison flex libssl-dev \
-    libelf-dev git openssh-server curl clang-14 zstd lld-14 llvm-14
+    libelf-dev git openssh-server curl clang-14 zstd lld-14 llvm-14 numactl \
+    libdw-dev libnewt-dev libaudit-dev libiberty-dev libunwind-dev libcap-dev \
+    libzstd-dev libnuma-dev libssl-dev python3-dev python3-setuptools binutils-dev \
+    gcc-multilib liblzma-dev
 
 cp CC_CONFIG .config
 make LLVM=-14 -j $1
 sudo make modules_install install
+PYTHON=python3 make -C tools/perf install
+cd ../../
 
-cd ..
+sudo groupadd perf_users
+sudo usermod -a -G perf_users $(whoami)
+sudo chown root ~/bin/perf
+sudo chgrp perf_users ~/bin/perf
+sudo chmod 550 ~/bin/perf
+sudo setcap "cap_ipc_lock,cap_sys_ptrace,cap_sys_admin,cap_syslog=ep" ~/bin/perf
+
+wget https://github.com/janestreet/magic-trace/releases/download/v1.1.0/magic-trace
+chmod +x magic-trace
 git clone git@github.com:hayley-leblanc/fs-tests.git
 git clone git@github.com:hayley-leblanc/filebench.git
 cd filebench
