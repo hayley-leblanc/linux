@@ -242,7 +242,7 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
 }
 
 impl<'a, State, Op> InodeWrapper<'a, State, Op, RegInode> {
-    fn get_inode_info(&self) -> Result<&HayleyFsRegInodeInfo> {
+    pub(crate) fn get_inode_info(&self) -> Result<&HayleyFsRegInodeInfo> {
         match self.vfs_inode {
             Some(vfs_inode) => unsafe {Ok(<Box::<HayleyFsRegInodeInfo> as ForeignOwnable>::borrow((*vfs_inode).i_private))},
             None => {pr_info!("ERROR: inode is uninitialized\n"); Err(EPERM)}
@@ -323,6 +323,39 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
                 ino: self.ino,
                 inode: self.inode,
             },
+        )
+    }
+}
+
+impl<'a> InodeWrapper<'a, Clean, Alloc, RegInode> {
+    // TODO: this must be modeled in Alloy - not clear if it is safe to 
+    // do this or not. Basically we can set an allocated inode's size
+    // to something other than zero if we write to a page
+    // 
+    // Taking reference to the page is potentially risky because the page's typestate 
+    // does not change. Maybe you could use a page-based transition that calls 
+    // the inode set_size method? ensure both of them end up in the correct state
+    pub(crate) fn set_size(
+        self,
+        bytes_written: u64,
+        current_offset: u64,
+        _page: &DataPageWrapper<'a, Clean, Written>,
+    ) -> (u64, InodeWrapper<'a, Clean, Alloc, RegInode>) {
+        let total_size = bytes_written + current_offset;
+        if self.inode.size < total_size {
+            self.inode.size = total_size;
+            flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+        }
+        (
+            self.inode.size,
+            InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                vfs_inode: self.vfs_inode,
+                ino: self.ino,
+                inode: self.inode,
+            }
         )
     }
 }

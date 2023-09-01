@@ -12,7 +12,10 @@ use crate::{
 
 use core::sync::atomic::Ordering;
 use kernel::prelude::*;
-use kernel::{bindings, dir, error, file, fs, inode, ForeignOwnable};
+use kernel::{
+    bindings, dir, error, file, fs, inode, io_buffer::IoBufferReader, user_ptr::UserSlicePtr,
+    ForeignOwnable,
+};
 
 // TODO: should use .borrow() to get the SbInfo structure out?
 
@@ -67,7 +70,8 @@ impl inode::Operations for InodeOps {
 
         let (_new_dentry, new_inode) = hayleyfs_create(sbi, dir, dentry, umode, excl)?;
 
-        new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, new_inode, umode)?;
+        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode)?;
+        unsafe { insert_vfs_inode(vfs_inode, dentry)? };
         Ok(0)
     }
 
@@ -119,7 +123,8 @@ impl inode::Operations for InodeOps {
 
         dir.inc_nlink();
 
-        new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, new_inode, umode)?;
+        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode)?;
+        unsafe { insert_vfs_inode(vfs_inode, dentry)? };
         Ok(0)
     }
 
@@ -153,12 +158,34 @@ impl inode::Operations for InodeOps {
     }
 
     fn symlink(
-        _mnt_idmap: *mut bindings::mnt_idmap,
-        _dir: &fs::INode,
-        _dentry: &fs::DEntry,
-        _symname: *const core::ffi::c_char,
+        mnt_idmap: *mut bindings::mnt_idmap,
+        dir: &fs::INode,
+        dentry: &fs::DEntry,
+        symname: *const core::ffi::c_char,
     ) -> Result<()> {
-        unimplemented!();
+        let sb = dir.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+
+        let perm: u16 = 0777;
+        let flag: u16 = bindings::S_IFLNK.try_into().unwrap();
+        let mode: u16 = flag | perm; // TODO: correct mode
+
+        let result = hayleyfs_symlink(sbi, dir, dentry, symname, mode);
+        if let Err(e) = result {
+            return Err(e);
+        } else if let Ok((new_inode, _, new_page)) = result {
+            let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, mode)?;
+            let pi_info = new_inode.get_inode_info()?;
+            pi_info.insert(&new_page)?;
+            unsafe { insert_vfs_inode(vfs_inode, dentry)? };
+            Ok(())
+        } else {
+            unreachable!();
+        }
     }
 }
 
@@ -268,10 +295,10 @@ fn new_vfs_inode<'a, Type>(
     sbi: &SbInfo,
     mnt_idmap: *mut bindings::mnt_idmap,
     dir: &fs::INode,
-    dentry: &fs::DEntry,
-    new_inode: InodeWrapper<'a, Clean, Complete, Type>,
+    _dentry: &fs::DEntry,
+    new_inode: &InodeWrapper<'a, Clean, Complete, Type>,
     umode: bindings::umode_t,
-) -> Result<()> {
+) -> Result<*mut bindings::inode> {
     init_timing!(full_vfs_inode);
     start_timing!(full_vfs_inode);
     // set up VFS structures
@@ -335,6 +362,25 @@ fn new_vfs_inode<'a, Type>(
         bindings::i_uid_write(vfs_inode, uid);
         bindings::i_gid_write(vfs_inode, gid);
 
+        // let ret = bindings::insert_inode_locked(vfs_inode);
+        // if ret < 0 {
+        //     // TODO: from_kernel_errno should really only be pub(crate)
+        //     // probably because you aren't supposed to directly call C fxns from modules
+        //     // but there's no good code to call this stuff from the kernel yet
+        //     // once there is, return from_kernel_errno to pub(crate)
+        //     return Err(error::Error::from_kernel_errno(ret));
+        // }
+        // bindings::d_instantiate(dentry.get_inner(), vfs_inode);
+        // bindings::unlock_new_inode(vfs_inode);
+    }
+    end_timing!(FullVfsInode, full_vfs_inode);
+    Ok(vfs_inode)
+}
+
+unsafe fn insert_vfs_inode(vfs_inode: *mut bindings::inode, dentry: &fs::DEntry) -> Result<()> {
+    // TODO: check that the inode is fully set up and doesn't already exist
+    // until then this is unsafe
+    unsafe {
         let ret = bindings::insert_inode_locked(vfs_inode);
         if ret < 0 {
             // TODO: from_kernel_errno should really only be pub(crate)
@@ -346,7 +392,6 @@ fn new_vfs_inode<'a, Type>(
         bindings::d_instantiate(dentry.get_inner(), vfs_inode);
         bindings::unlock_new_inode(vfs_inode);
     }
-    end_timing!(FullVfsInode, full_vfs_inode);
     Ok(())
 }
 
@@ -381,6 +426,7 @@ fn hayleyfs_link<'a>(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
+    // TODO: why do we do this twice...??
     let (_parent_inode, parent_inode_info) =
         sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
@@ -521,6 +567,62 @@ fn hayleyfs_unlink<'a>(
     } else {
         Err(ENOENT)
     }
+}
+
+fn hayleyfs_symlink<'a>(
+    sbi: &'a SbInfo,
+    dir: &fs::INode,
+    _dentry: &fs::DEntry,
+    symname: *const core::ffi::c_char,
+    mode: u16,
+) -> Result<(
+    InodeWrapper<'a, Clean, Complete, RegInode>,
+    DentryWrapper<'a, Clean, Complete>,
+    DataPageWrapper<'a, Clean, Written>,
+)> {
+    // obtain and allocate a new persistent dentry
+    let (_parent_inode, parent_inode_info) =
+        sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
+    let name = unsafe { CStr::from_char_ptr(symname) };
+    let pd = pd.set_name(name)?.flush().fence();
+
+    // obtain and allocate an inode for the symlink
+    let pi = sbi.inode_allocator.alloc_ino()?;
+    let pi = InodeWrapper::get_free_reg_inode_by_ino(sbi, pi)?;
+
+    let pi = pi.allocate_file_inode(dir, mode)?.flush().fence();
+    sbi.inc_inodes_in_use();
+
+    // allocate a page for the symlink
+    let page = DataPageWrapper::alloc_data_page(sbi, 0)?.flush().fence();
+    sbi.inc_blocks_in_use();
+
+    // set data page backpointer - at this point, inode and page are still orphaned
+    let page = page.set_data_page_backpointer(&pi).flush().fence();
+    // let pi_info = pi.get_inode_info()?;
+    // pi_info.insert(&page)?;
+
+    // need to set file size also which will require writing to the page I think
+
+    // Safety: symname has to temporarily be cast to a mutable raw pointer in order to create
+    // the reader. This is safe because 1) a UserSlicePtrReader does not provide any methods
+    // that mutate the buffer, 2) we immediately convert the UserSlicePtr into a UserSlicePtrReader,
+    // and 3) the UserSlicePtr constructor does not mutate the buffer.
+    let mut name_reader =
+        unsafe { UserSlicePtr::new(symname as *mut core::ffi::c_void, name.len()).reader() };
+    let name_len: u64 = name_reader.len().try_into()?;
+    let (bytes_written, page) = page.write_to_page(sbi, &mut name_reader, 0, name_len)?;
+    let page = page.fence();
+
+    // set the file size. we'll create the VFS inode based on the persistent inode after
+    // this method returns
+    let (_size, pi) = pi.set_size(bytes_written, 0, &page);
+
+    let (pd, pi) = pd.set_file_ino(pi);
+    let pd = pd.flush().fence();
+
+    Ok((pi, pd, page))
 }
 
 fn get_free_dentry<'a>(

@@ -1026,9 +1026,9 @@ impl<'a> DataPageWrapper<'a, Clean, Alloc> {
     /// will not actually need to be modified here. when they do, this method
     /// flushes and fences
     #[allow(dead_code)]
-    pub(crate) fn set_data_page_backpointer(
+    pub(crate) fn set_data_page_backpointer<S: AddPage>(
         mut self,
-        inode: &InodeWrapper<'a, Clean, Start, RegInode>,
+        inode: &InodeWrapper<'a, Clean, S, RegInode>,
     ) -> DataPageWrapper<'a, Dirty, Writeable> {
         match &mut self.page {
             Some(page) => page.ino = inode.get_ino(),
