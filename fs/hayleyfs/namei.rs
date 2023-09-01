@@ -151,6 +151,15 @@ impl inode::Operations for InodeOps {
 
         Ok(())
     }
+
+    fn symlink(
+        _mnt_idmap: *mut bindings::mnt_idmap,
+        _dir: &fs::INode,
+        _dentry: &fs::DEntry,
+        _symname: *const core::ffi::c_char,
+    ) -> Result<()> {
+        unimplemented!();
+    }
 }
 
 // TODO: shouldn't really be generic but HayleyFs isn't accessible here
