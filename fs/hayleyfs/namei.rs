@@ -177,8 +177,9 @@ impl inode::Operations for InodeOps {
         let result = hayleyfs_symlink(sbi, dir, dentry, symname, mode);
         if let Err(e) = result {
             return Err(e);
-        } else if let Ok((new_inode, _, new_page)) = result {
+        } else if let Ok((mut new_inode, _, new_page)) = result {
             let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, mode)?;
+            new_inode.set_vfs_inode(vfs_inode)?;
             let pi_info = new_inode.get_inode_info()?;
             pi_info.insert(&new_page)?;
             unsafe { insert_vfs_inode(vfs_inode, dentry)? };
@@ -280,6 +281,9 @@ pub(crate) fn hayleyfs_iget(
             }
             end_timing!(InitDirInode, init_dir_inode);
         },
+        InodeType::SYMLINK => {
+            unimplemented!();
+        }
         InodeType::NONE => panic!("Inode type is NONE"),
     }
     unsafe { bindings::unlock_new_inode(inode) };
@@ -299,6 +303,7 @@ fn new_vfs_inode<'a, Type>(
     new_inode: &InodeWrapper<'a, Clean, Complete, Type>,
     umode: bindings::umode_t,
 ) -> Result<*mut bindings::inode> {
+    pr_info!("new vfs inode\n");
     init_timing!(full_vfs_inode);
     start_timing!(full_vfs_inode);
     // set up VFS structures
@@ -344,6 +349,13 @@ fn new_vfs_inode<'a, Type>(
                 bindings::set_nlink(vfs_inode, 2);
             }
             end_timing!(InitDirVfsInode, init_dir_vfs_inode);
+        }
+        InodeType::SYMLINK => {
+            pr_info!("symlink\n");
+            vfs_inode.i_mode = umode;
+            // initialize the DRAM info and save it in the private pointer
+            let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
+            vfs_inode.i_private = inode_info.into_foreign() as *mut _;
         }
         InodeType::NONE => panic!("Inode type is none"),
     }
@@ -591,7 +603,7 @@ fn hayleyfs_symlink<'a>(
     let pi = sbi.inode_allocator.alloc_ino()?;
     let pi = InodeWrapper::get_free_reg_inode_by_ino(sbi, pi)?;
 
-    let pi = pi.allocate_file_inode(dir, mode)?.flush().fence();
+    let pi = pi.allocate_symlink_inode(dir, mode)?.flush().fence();
     sbi.inc_inodes_in_use();
 
     // allocate a page for the symlink

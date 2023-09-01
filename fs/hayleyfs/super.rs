@@ -189,6 +189,9 @@ impl fs::Type for HayleyFs {
                     .unwrap();
                 inode.update_atime(atime);
             }
+            InodeType::SYMLINK => {
+                pr_info!("TODO: handle symlink in dirty_inode\n");
+            }
             InodeType::NONE => {}
         }
 

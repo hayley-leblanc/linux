@@ -466,6 +466,26 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
         self.inode.mtime = time;
         Ok(Self::new(self))
     }
+
+    // TODO: should symlinks have their own ghost type?
+    pub(crate) fn allocate_symlink_inode(
+        self,
+        inode: &fs::INode,
+        mode: u16
+    ) -> Result<InodeWrapper<'a, Dirty, Alloc, RegInode>> {
+        self.inode.link_count = 1;
+        self.inode.ino = self.ino;
+        self.inode.inode_type = InodeType::SYMLINK;
+        self.inode.mode = mode;
+        self.inode.blocks = 0;
+        self.inode.uid = unsafe { (*inode.get_inner()).i_uid.val };
+        self.inode.gid = unsafe { (*inode.get_inner()).i_gid.val };
+        let time = unsafe { bindings::current_time(inode.get_inner()) };
+        self.inode.ctime = time;
+        self.inode.atime = time;
+        self.inode.mtime = time;
+        Ok(Self::new(self))
+    }
 }
 
 impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
@@ -503,6 +523,21 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
         self.inode.atime = time;
         self.inode.mtime = time;
         Ok(Self::new(self))
+    }
+}
+
+impl<'a> InodeWrapper<'a, Clean, Complete, RegInode> {
+    /// In symlink, we need to create a VFS inode **before** inserting pages into the index.
+    /// This function allows us to set the VFS inode after allocation only if the inode 
+    /// is in a complete state and otherwise has no inode (which should only happen in symlink)
+    pub(crate) fn set_vfs_inode(&mut self, vfs_inode: *mut bindings::inode) -> Result<()>{
+        if self.vfs_inode.is_none() {
+            self.vfs_inode = Some(vfs_inode);
+            Ok(())
+        } else {
+            pr_info!("ERROR: inode {:?} already has a VFS inode\n", self.ino);
+            Err(EPERM)
+        }
     }
 }
 

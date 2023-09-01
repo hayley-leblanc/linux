@@ -63,6 +63,7 @@ pub(crate) enum InodeType {
     NONE = 0,
     REG,
     DIR,
+    SYMLINK,
 }
 
 #[derive(Copy, Clone, Debug)]
