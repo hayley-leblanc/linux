@@ -3,6 +3,7 @@ use crate::defs::*;
 use crate::h_dir::*;
 use crate::h_file::*;
 use crate::h_inode::*;
+use crate::h_symlink::*;
 use crate::pm::*;
 use crate::typestate::*;
 use crate::volatile::*;
@@ -13,8 +14,8 @@ use crate::{
 use core::sync::atomic::Ordering;
 use kernel::prelude::*;
 use kernel::{
-    bindings, dir, error, file, fs, inode, io_buffer::IoBufferReader, user_ptr::UserSlicePtr,
-    ForeignOwnable,
+    bindings, dir, error, file, fs, inode, io_buffer::IoBufferReader, symlink,
+    user_ptr::UserSlicePtr, ForeignOwnable,
 };
 
 // TODO: should use .borrow() to get the SbInfo structure out?
@@ -281,9 +282,20 @@ pub(crate) fn hayleyfs_iget(
             }
             end_timing!(InitDirInode, init_dir_inode);
         },
-        InodeType::SYMLINK => {
-            unimplemented!();
-        }
+        InodeType::SYMLINK => unsafe {
+            // unimplemented!();
+            (*inode).i_op = symlink::OperationsVtable::<SymlinkOps>::build();
+            let pages = sbi.ino_data_page_tree.remove(ino);
+            // if the inode has any pages associated with it, remove them from the
+            // global tree and put them in this inode's i_private
+            if let Some(pages) = pages {
+                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_tree(ino, pages))?;
+                (*inode).i_private = inode_info.into_foreign() as *mut _;
+            } else {
+                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
+                (*inode).i_private = inode_info.into_foreign() as *mut _;
+            }
+        },
         InodeType::NONE => panic!("Inode type is NONE"),
     }
     unsafe { bindings::unlock_new_inode(inode) };
@@ -351,11 +363,13 @@ fn new_vfs_inode<'a, Type>(
             end_timing!(InitDirVfsInode, init_dir_vfs_inode);
         }
         InodeType::SYMLINK => {
-            pr_info!("symlink\n");
             vfs_inode.i_mode = umode;
             // initialize the DRAM info and save it in the private pointer
             let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
             vfs_inode.i_private = inode_info.into_foreign() as *mut _;
+            unsafe {
+                vfs_inode.i_op = symlink::OperationsVtable::<SymlinkOps>::build();
+            }
         }
         InodeType::NONE => panic!("Inode type is none"),
     }
@@ -584,7 +598,7 @@ fn hayleyfs_unlink<'a>(
 fn hayleyfs_symlink<'a>(
     sbi: &'a SbInfo,
     dir: &fs::INode,
-    _dentry: &fs::DEntry,
+    dentry: &fs::DEntry,
     symname: *const core::ffi::c_char,
     mode: u16,
 ) -> Result<(
@@ -597,7 +611,7 @@ fn hayleyfs_symlink<'a>(
         sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let pd = get_free_dentry(sbi, dir, parent_inode_info)?;
     let name = unsafe { CStr::from_char_ptr(symname) };
-    let pd = pd.set_name(name)?.flush().fence();
+    let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     // obtain and allocate an inode for the symlink
     let pi = sbi.inode_allocator.alloc_ino()?;
@@ -633,6 +647,7 @@ fn hayleyfs_symlink<'a>(
 
     let (pd, pi) = pd.set_file_ino(pi);
     let pd = pd.flush().fence();
+    pd.index(parent_inode_info)?;
 
     Ok((pi, pd, page))
 }

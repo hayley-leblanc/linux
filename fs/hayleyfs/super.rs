@@ -18,6 +18,7 @@ mod defs;
 mod h_dir;
 mod h_file;
 mod h_inode;
+mod h_symlink;
 mod ioctl;
 mod namei;
 mod pm;
@@ -190,7 +191,10 @@ impl fs::Type for HayleyFs {
                 inode.update_atime(atime);
             }
             InodeType::SYMLINK => {
-                pr_info!("TODO: handle symlink in dirty_inode\n");
+                let (inode, _) = sbi
+                    .get_init_reg_inode_by_vfs_inode(inode.get_inner())
+                    .unwrap();
+                inode.update_atime(atime);
             }
             InodeType::NONE => {}
         }

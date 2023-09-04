@@ -316,7 +316,7 @@ impl SbInfo {
         let pi_info =
             unsafe { <Box<HayleyFsRegInodeInfo> as ForeignOwnable>::borrow((*inode).i_private) };
 
-        if pi.get_type() != InodeType::REG {
+        if pi.get_type() != InodeType::REG && pi.get_type() != InodeType::SYMLINK {
             pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
             return Err(EPERM);
         }
