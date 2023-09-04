@@ -885,6 +885,19 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         Ok(len)
     }
 
+    // TODO: define an internal implementation of IoBufferWriter that does not use
+    // user-compatible functions to read data
+    pub(crate) fn read_from_page_raw(&self, sbi: &SbInfo, offset: u64, len: u64) -> Result<&[u8]> {
+        if len + offset > HAYLEYFS_PAGESIZE {
+            Err(ENOSPC)
+        } else {
+            // TODO: safety notes
+            let ptr = self.get_page_addr(sbi)? as *mut u8;
+            let ptr = unsafe { ptr.offset(offset.try_into()?) };
+            Ok(unsafe { slice::from_raw_parts(ptr, len.try_into()?) })
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn write_to_page(
         mut self,
@@ -1026,9 +1039,9 @@ impl<'a> DataPageWrapper<'a, Clean, Alloc> {
     /// will not actually need to be modified here. when they do, this method
     /// flushes and fences
     #[allow(dead_code)]
-    pub(crate) fn set_data_page_backpointer(
+    pub(crate) fn set_data_page_backpointer<S: AddPage>(
         mut self,
-        inode: &InodeWrapper<'a, Clean, Start, RegInode>,
+        inode: &InodeWrapper<'a, Clean, S, RegInode>,
     ) -> DataPageWrapper<'a, Dirty, Writeable> {
         match &mut self.page {
             Some(page) => page.ino = inode.get_ino(),

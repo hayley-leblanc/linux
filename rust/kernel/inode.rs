@@ -120,6 +120,21 @@ impl<T: Operations> OperationsVtable<T> {
         }
     }
 
+    unsafe extern "C" fn symlink_callback(
+        mnt_idmap: *mut bindings::mnt_idmap,
+        dir: *mut bindings::inode,
+        dentry: *mut bindings::dentry,
+        symname: *const ffi::c_char,
+    ) -> ffi::c_int {
+        from_kernel_result! {
+            // TODO: safety notes
+            let dir = unsafe { &mut *dir.cast() };
+            let dentry = unsafe { &mut *dentry.cast() };
+            T::symlink(mnt_idmap, dir, dentry, symname)?;
+            Ok(0)
+        }
+    }
+
     const VTABLE: bindings::inode_operations = bindings::inode_operations {
         lookup: Some(Self::lookup_callback),
         get_link: None,
@@ -130,7 +145,7 @@ impl<T: Operations> OperationsVtable<T> {
         create: Some(Self::create_callback),
         link: Some(Self::link_callback),
         unlink: Some(Self::unlink_callback),
-        symlink: None,
+        symlink: Some(Self::symlink_callback),
         mkdir: Some(Self::mkdir_callback),
         rmdir: None,
         mknod: None,
@@ -195,4 +210,11 @@ pub trait Operations {
     ) -> Result<()>;
     /// Corresponds to the `unlink` function pointer in `struct inode_operations`
     fn unlink(dir: &INode, dentry: &DEntry) -> Result<()>;
+    /// Corresponds to the `symlink` function pointer in `struct inode_operations`
+    fn symlink(
+        mnt_idmap: *mut bindings::mnt_idmap,
+        dir: &INode,
+        dentry: &DEntry,
+        symname: *const ffi::c_char,
+    ) -> Result<()>;
 }

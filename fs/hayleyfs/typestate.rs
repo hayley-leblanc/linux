@@ -24,6 +24,7 @@ pub(crate) struct ToUnmap {}
 pub(crate) trait Initialized {}
 impl Initialized for Init {}
 impl Initialized for Start {}
+impl Initialized for Complete {}
 impl Initialized for Written {}
 impl Initialized for Writeable {} // FIXME: potential issue - new pages could be added to the index before they are written to
                                   // but the typestates are tricky especially during remount so making writeable pages indexable
@@ -32,3 +33,7 @@ impl Initialized for Writeable {} // FIXME: potential issue - new pages could be
 pub(crate) trait AddLink {}
 impl AddLink for Alloc {}
 impl AddLink for IncLink {}
+
+pub(crate) trait AddPage {}
+impl AddPage for Start {}
+impl AddPage for Alloc {}

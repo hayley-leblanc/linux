@@ -242,7 +242,7 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
 }
 
 impl<'a, State, Op> InodeWrapper<'a, State, Op, RegInode> {
-    fn get_inode_info(&self) -> Result<&HayleyFsRegInodeInfo> {
+    pub(crate) fn get_inode_info(&self) -> Result<&HayleyFsRegInodeInfo> {
         match self.vfs_inode {
             Some(vfs_inode) => unsafe {Ok(<Box::<HayleyFsRegInodeInfo> as ForeignOwnable>::borrow((*vfs_inode).i_private))},
             None => {pr_info!("ERROR: inode is uninitialized\n"); Err(EPERM)}
@@ -323,6 +323,39 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
                 ino: self.ino,
                 inode: self.inode,
             },
+        )
+    }
+}
+
+impl<'a> InodeWrapper<'a, Clean, Alloc, RegInode> {
+    // TODO: this must be modeled in Alloy - not clear if it is safe to 
+    // do this or not. Basically we can set an allocated inode's size
+    // to something other than zero if we write to a page
+    // 
+    // Taking reference to the page is potentially risky because the page's typestate 
+    // does not change. Maybe you could use a page-based transition that calls 
+    // the inode set_size method? ensure both of them end up in the correct state
+    pub(crate) fn set_size(
+        self,
+        bytes_written: u64,
+        current_offset: u64,
+        _page: &DataPageWrapper<'a, Clean, Written>,
+    ) -> (u64, InodeWrapper<'a, Clean, Alloc, RegInode>) {
+        let total_size = bytes_written + current_offset;
+        if self.inode.size < total_size {
+            self.inode.size = total_size;
+            flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+        }
+        (
+            self.inode.size,
+            InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                vfs_inode: self.vfs_inode,
+                ino: self.ino,
+                inode: self.inode,
+            }
         )
     }
 }
@@ -433,6 +466,26 @@ impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
         self.inode.mtime = time;
         Ok(Self::new(self))
     }
+
+    // TODO: should symlinks have their own ghost type?
+    pub(crate) fn allocate_symlink_inode(
+        self,
+        inode: &fs::INode,
+        mode: u16
+    ) -> Result<InodeWrapper<'a, Dirty, Alloc, RegInode>> {
+        self.inode.link_count = 1;
+        self.inode.ino = self.ino;
+        self.inode.inode_type = InodeType::SYMLINK;
+        self.inode.mode = mode;
+        self.inode.blocks = 0;
+        self.inode.uid = unsafe { (*inode.get_inner()).i_uid.val };
+        self.inode.gid = unsafe { (*inode.get_inner()).i_gid.val };
+        let time = unsafe { bindings::current_time(inode.get_inner()) };
+        self.inode.ctime = time;
+        self.inode.atime = time;
+        self.inode.mtime = time;
+        Ok(Self::new(self))
+    }
 }
 
 impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
@@ -470,6 +523,21 @@ impl<'a> InodeWrapper<'a, Clean, Free, DirInode> {
         self.inode.atime = time;
         self.inode.mtime = time;
         Ok(Self::new(self))
+    }
+}
+
+impl<'a> InodeWrapper<'a, Clean, Complete, RegInode> {
+    /// In symlink, we need to create a VFS inode **before** inserting pages into the index.
+    /// This function allows us to set the VFS inode after allocation only if the inode 
+    /// is in a complete state and otherwise has no inode (which should only happen in symlink)
+    pub(crate) fn set_vfs_inode(&mut self, vfs_inode: *mut bindings::inode) -> Result<()>{
+        if self.vfs_inode.is_none() {
+            self.vfs_inode = Some(vfs_inode);
+            Ok(())
+        } else {
+            pr_info!("ERROR: inode {:?} already has a VFS inode\n", self.ino);
+            Err(EPERM)
+        }
     }
 }
 
