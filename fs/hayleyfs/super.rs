@@ -152,6 +152,9 @@ impl fs::Type for HayleyFs {
             (*buf).f_type = SUPER_MAGIC;
             (*buf).f_bsize = sbi.blocksize.try_into()?;
             (*buf).f_blocks = sbi.num_blocks;
+            if sbi.num_blocks < sbi.get_pages_in_use() {
+                pr_info!("WARNING: {:?} total blocks but {:?} blocks in use\n", sbi.num_blocks, sbi.get_pages_in_use());
+            }
             (*buf).f_bfree = sbi.num_blocks - sbi.get_pages_in_use();
             (*buf).f_bavail = sbi.num_blocks - sbi.get_pages_in_use();
             (*buf).f_files = NUM_INODES;
