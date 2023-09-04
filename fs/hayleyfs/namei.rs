@@ -315,7 +315,6 @@ fn new_vfs_inode<'a, Type>(
     new_inode: &InodeWrapper<'a, Clean, Complete, Type>,
     umode: bindings::umode_t,
 ) -> Result<*mut bindings::inode> {
-    pr_info!("new vfs inode\n");
     init_timing!(full_vfs_inode);
     start_timing!(full_vfs_inode);
     // set up VFS structures
