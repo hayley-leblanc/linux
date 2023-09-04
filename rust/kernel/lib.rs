@@ -74,6 +74,7 @@ pub mod pages;
 pub mod power;
 pub mod revocable;
 pub mod security;
+pub mod symlink;
 pub mod task;
 pub mod workqueue;
 
