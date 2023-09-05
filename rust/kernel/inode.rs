@@ -135,6 +135,19 @@ impl<T: Operations> OperationsVtable<T> {
         }
     }
 
+    unsafe extern "C" fn setattr_callback(
+        mnt_idmap: *mut bindings::mnt_idmap,
+        dentry: *mut bindings::dentry,
+        iattr: *mut bindings::iattr,
+    ) -> ffi::c_int {
+        from_kernel_result! {
+            // TODO: safety notes
+            let dentry = unsafe { &mut *dentry.cast() };
+            T::setattr(mnt_idmap, dentry, iattr)?;
+            Ok(0)
+        }
+    }
+
     const VTABLE: bindings::inode_operations = bindings::inode_operations {
         lookup: Some(Self::lookup_callback),
         get_link: None,
@@ -150,7 +163,7 @@ impl<T: Operations> OperationsVtable<T> {
         rmdir: None,
         mknod: None,
         rename: Some(Self::rename_callback),
-        setattr: None,
+        setattr: Some(Self::setattr_callback),
         getattr: None,
         listxattr: None,
         fiemap: None,
@@ -216,5 +229,11 @@ pub trait Operations {
         dir: &INode,
         dentry: &DEntry,
         symname: *const ffi::c_char,
+    ) -> Result<()>;
+    /// Corresponds to the `setattr` function pointer in `struct inode_operations`
+    fn setattr(
+        mnt_idmap: *mut bindings::mnt_idmap,
+        dentry: &DEntry,
+        iattr: *mut bindings::iattr,
     ) -> Result<()>;
 }
