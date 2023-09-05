@@ -12,7 +12,7 @@ use kernel::{bindings, dir, file, fs};
 pub(crate) struct HayleyFsDentry {
     ino: InodeNum,
     name: [u8; MAX_FILENAME_LEN],
-    rename_ptr: *mut HayleyFsDentry,
+    rename_ptr: u64,
 }
 
 impl HayleyFsDentry {
@@ -22,7 +22,8 @@ impl HayleyFsDentry {
     }
 
     pub(crate) fn is_rename_ptr_null(&self) -> bool {
-        self.rename_ptr.is_null()
+        // self.rename_ptr.is_null()
+        self.rename_ptr == 0
     }
 
     pub(crate) fn has_name(&self) -> bool {
@@ -52,6 +53,22 @@ pub(crate) struct DentryWrapper<'a, State, Op> {
 }
 
 impl<'a, State, Op> PmObjWrapper for DentryWrapper<'a, State, Op> {}
+
+impl<'a, State, Op> DentryWrapper<'a, State, Op> {
+    fn get_dentry_offset(&self, sbi: &'a SbInfo) -> u64 {
+        let dentry_virtual_addr = self.dentry as *const HayleyFsDentry as u64;
+        let device_virtual_addr = sbi.get_virt_addr() as u64;
+        dentry_virtual_addr - device_virtual_addr
+    }
+
+    pub(crate) fn get_dentry_info(&self) -> DentryInfo {
+        DentryInfo::new(
+            self.dentry.ino,
+            self.dentry as *const _ as *const ffi::c_void,
+            self.dentry.name,
+        )
+    }
+}
 
 impl<'a> DentryWrapper<'a, Clean, Free> {
     /// Safety
@@ -126,6 +143,32 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
             InodeWrapper::new(parent_inode),
         )
     }
+
+    // TODO: this will also have to be defined for initialized dst dentries
+    pub(crate) fn set_rename_pointer(
+        self,
+        sbi: &'a SbInfo,
+        src_dentry: DentryWrapper<'a, Clean, Start>,
+    ) -> (
+        DentryWrapper<'a, Dirty, SetRenamePointer>,
+        DentryWrapper<'a, Clean, Renaming>,
+    ) {
+        // set self's rename pointer to the PHYSICAL offset of the src dentry in the device
+        let src_dentry_offset = src_dentry.get_dentry_offset(sbi);
+        self.dentry.rename_ptr = src_dentry_offset;
+        (
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: self.dentry,
+            },
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: src_dentry.dentry,
+            },
+        )
+    }
 }
 
 impl<'a, Op> DentryWrapper<'a, Clean, Op> {
@@ -153,8 +196,59 @@ impl<'a> DentryWrapper<'a, Clean, Start> {
         })
     }
 
+    // pub(crate) fn clear_ino(self) -> DentryWrapper<'a, Dirty, ClearIno> {
+    //     self.dentry.ino = 0;
+    //     DentryWrapper {
+    //         state: PhantomData,
+    //         op: PhantomData,
+    //         dentry: self.dentry,
+    //     }
+    // }
+}
+
+impl<'a, Op: DeletableDentry> DentryWrapper<'a, Clean, Op> {
     pub(crate) fn clear_ino(self) -> DentryWrapper<'a, Dirty, ClearIno> {
         self.dentry.ino = 0;
+        DentryWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            dentry: self.dentry,
+        }
+    }
+}
+
+impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
+    pub(crate) fn init_rename_pointer(
+        self,
+        src_dentry: DentryWrapper<'a, Clean, Renaming>,
+    ) -> (
+        DentryWrapper<'a, Dirty, InitRenamePointer>,
+        DentryWrapper<'a, Clean, Renamed>,
+    ) {
+        // set self's inode to the renamed dentry's inode
+        self.dentry.ino = src_dentry.get_ino();
+        (
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: self.dentry,
+            },
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: src_dentry.dentry,
+            },
+        )
+    }
+}
+
+impl<'a> DentryWrapper<'a, Clean, InitRenamePointer> {
+    pub(crate) fn clear_rename_pointer(
+        self,
+        _src_dentry: &DentryWrapper<'a, Clean, ClearIno>,
+        // ) -> DentryWrapper<'a, Dirty, ClearRenamePointer> {
+    ) -> DentryWrapper<'a, Dirty, Complete> {
+        self.dentry.rename_ptr = 0;
         DentryWrapper {
             state: PhantomData,
             op: PhantomData,
@@ -254,6 +348,7 @@ pub(crate) fn hayleyfs_readdir(
     for dentry in dentries {
         let name =
             unsafe { CStr::from_char_ptr(dentry.get_name().as_ptr() as *const core::ffi::c_char) };
+        pr_info!("dentry name {:?}\n", name);
         let file_type = bindings::DT_REG; // TODO: get the actual type
         let result = unsafe {
             bindings::dir_emit(

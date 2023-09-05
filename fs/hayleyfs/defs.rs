@@ -297,6 +297,14 @@ impl SbInfo {
         Ok(inode)
     }
 
+    pub(crate) fn check_inode_type_by_dentry(
+        &self,
+        inode: *mut bindings::inode,
+    ) -> Result<InodeType> {
+        let pi = unsafe { self.get_inode_by_ino((*inode).i_ino)? };
+        Ok(pi.get_type())
+    }
+
     // TODO: this should be in h_inode.rs
     pub(crate) fn get_init_reg_inode_by_vfs_inode<'a>(
         &self,
