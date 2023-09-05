@@ -348,6 +348,7 @@ pub(crate) fn hayleyfs_readdir(
     for dentry in dentries {
         let name =
             unsafe { CStr::from_char_ptr(dentry.get_name().as_ptr() as *const core::ffi::c_char) };
+        pr_info!("dentry name {:?}\n", name);
         let file_type = bindings::DT_REG; // TODO: get the actual type
         let result = unsafe {
             bindings::dir_emit(
