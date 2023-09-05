@@ -43,9 +43,6 @@ impl inode::Operations for InodeOps {
             sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
         move_dir_inode_tree_to_map(sbi, parent_inode_info)?;
         let result = parent_inode_info.lookup_dentry(dentry.d_name());
-        // let result = sbi
-        //     .ino_dentry_map
-        //     .lookup_dentry(&dir.i_ino(), dentry.d_name());
         if let Some(dentry_info) = result {
             // the dentry exists in the specified directory
             Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino())?))
@@ -131,13 +128,24 @@ impl inode::Operations for InodeOps {
 
     fn rename(
         _mnt_idmap: *const bindings::mnt_idmap,
-        _old_dir: &fs::INode,
-        _old_dentry: &fs::DEntry,
-        _new_dir: &fs::INode,
-        _new_dentry: &fs::DEntry,
-        _flags: u32,
+        old_dir: &fs::INode,
+        old_dentry: &fs::DEntry,
+        new_dir: &fs::INode,
+        new_dentry: &fs::DEntry,
+        flags: u32,
     ) -> Result<()> {
-        unimplemented!();
+        let sb = old_dir.i_sb();
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+
+        let result = hayleyfs_rename(sbi, old_dir, old_dentry, new_dir, new_dentry, flags);
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     // TODO: if this unlink results in its dir page being emptied, we should
@@ -188,6 +196,23 @@ impl inode::Operations for InodeOps {
         } else {
             unreachable!();
         }
+    }
+
+    fn setattr(
+        mnt_idmap: *mut bindings::mnt_idmap,
+        dentry: &fs::DEntry,
+        iattr: *mut bindings::iattr,
+    ) -> Result<()> {
+        let inode = dentry.d_inode();
+
+        unsafe {
+            let ret = bindings::setattr_prepare(mnt_idmap, dentry.get_inner(), iattr);
+            if ret < 0 {
+                return Err(error::Error::from_kernel_errno(ret));
+            }
+            bindings::setattr_copy(mnt_idmap, inode, iattr);
+        }
+        Ok(())
     }
 }
 
@@ -500,6 +525,132 @@ fn hayleyfs_mkdir<'a>(
     Ok((dentry, parent, inode))
 }
 
+fn hayleyfs_rename<'a>(
+    sbi: &'a SbInfo,
+    old_dir: &fs::INode,
+    old_dentry: &fs::DEntry,
+    new_dir: &fs::INode,
+    new_dentry: &fs::DEntry,
+    _flags: u32,
+) -> Result<(
+    DentryWrapper<'a, Clean, Complete>,
+    DentryWrapper<'a, Clean, Free>,
+)> {
+    pr_info!(
+        "rename {:} to {:?}\n",
+        old_dentry.d_name(),
+        new_dentry.d_name()
+    );
+    pr_info!("old parent: {:?}\n", old_dir.i_ino());
+    pr_info!("new_parent: {:?}\n", new_dir.i_ino());
+    let old_name = old_dentry.d_name();
+    let _new_name = new_dentry.d_name();
+
+    let (_parent_inode, parent_inode_info) =
+        sbi.get_init_dir_inode_by_vfs_inode(old_dir.get_inner())?;
+    let old_dentry_info = parent_inode_info.lookup_dentry(old_name);
+    match old_dentry_info {
+        None => Err(ENOENT),
+        Some(old_dentry_info) => {
+            // not cross dir
+            if old_dir.i_ino() == new_dir.i_ino() {
+                single_dir_rename(
+                    sbi,
+                    &old_dentry_info,
+                    old_dentry,
+                    new_dentry,
+                    old_dir,
+                    new_dir,
+                    parent_inode_info,
+                )
+            } else {
+                pr_info!("ERROR: cross-directory rename not supported\n");
+                unimplemented!()
+            }
+        }
+    }
+}
+
+fn single_dir_rename<'a>(
+    sbi: &'a SbInfo,
+    old_dentry_info: &DentryInfo,
+    old_dentry: &fs::DEntry,
+    new_dentry: &fs::DEntry,
+    old_dir: &fs::INode,
+    _new_dir: &fs::INode,
+    parent_inode_info: &HayleyFsDirInodeInfo,
+) -> Result<(
+    DentryWrapper<'a, Clean, Complete>,
+    DentryWrapper<'a, Clean, Free>,
+)> {
+    let _old_name = old_dentry.d_name();
+    let new_name = new_dentry.d_name();
+    let _old_inode = old_dentry.d_inode();
+    let _new_inode = new_dentry.d_inode();
+    // does the new directory entry already exist?
+
+    let new_dentry_info = parent_inode_info.lookup_dentry(new_name);
+    match new_dentry_info {
+        Some(_new_dentry_info) => {
+            pr_info!("ERROR: overwriting an existing file not supported\n");
+            unimplemented!()
+        }
+        None => {
+            let inode_type = sbi.check_inode_type_by_dentry(old_dentry.d_inode());
+            match inode_type {
+                Ok(InodeType::REG) | Ok(InodeType::SYMLINK) => {
+                    // allocate new persistent dentry
+                    let dst_dentry = get_free_dentry(sbi, old_dir, parent_inode_info)?;
+                    let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
+                    let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
+
+                    // set and initialize rename pointer to atomically switch the live dentry
+                    let (dst_dentry, src_dentry) = dst_dentry.set_rename_pointer(sbi, src_dentry);
+                    let dst_dentry = dst_dentry.flush().fence();
+                    let (dst_dentry, src_dentry) = dst_dentry.init_rename_pointer(src_dentry);
+                    let dst_dentry = dst_dentry.flush().fence();
+
+                    // clear src dentry's inode
+                    let src_dentry = src_dentry.clear_ino().flush().fence();
+
+                    // // decrement the link count of the new inode
+                    // // at this point,
+                    // let (old_pi, _) = sbi.get_init_reg_inode_by_vfs_inode(old_inode)?;
+                    // let old_pi = old_pi.dec_link_count(&src_dentry)?.flush();
+
+                    // clear the rename pointer, using the invalid src dentry as proof that it is
+                    // safe to do so
+                    let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush().fence();
+
+                    // deallocate the src dentry
+                    // this fully deallocates the dentry - it can now be used again
+                    let src_dentry = src_dentry.dealloc_dentry().flush().fence();
+
+                    // atomically update the volatile index
+                    parent_inode_info.atomic_add_and_delete_dentry(&dst_dentry, &src_dentry)?;
+
+                    // since we are creating a new dentry, there is no inode to deallocate
+
+                    // let _old_pi = finish_unlink(sbi, old_inode, old_pi)?;
+
+                    Ok((dst_dentry, src_dentry))
+                }
+                Ok(InodeType::DIR) => {
+                    pr_info!("ERROR: directory rename not supported\n");
+                    unimplemented!()
+                }
+                Ok(InodeType::NONE) => {
+                    pr_info!("ERROR: inode has type None\n");
+                    Err(ENOENT)
+                }
+                Err(e) => Err(e),
+            }
+        }
+    }
+    // pr_info!("{:?}\n", new_dentry_info);
+    // Err(EPERM)
+}
+
 #[allow(dead_code)]
 fn hayleyfs_unlink<'a>(
     sbi: &'a SbInfo,
@@ -546,55 +697,65 @@ fn hayleyfs_unlink<'a>(
 
         let (pi, pd) = fence_all!(pi, pd);
 
-        let result = pi.try_complete_unlink(sbi)?;
         end_timing!(DecLinkCount, dec_link_count);
 
-        if let Ok(result) = result {
-            unsafe {
-                bindings::drop_nlink(inode);
-            }
-            end_timing!(UnlinkFullDecLink, unlink_full_declink);
-            Ok((result, pd))
-        } else if let Err((pi, mut pages)) = result {
-            // go through each page and deallocate it
-            // we can drain the vector since missing a page will result in
-            // a runtime panic
-            init_timing!(dealloc_pages);
-            start_timing!(dealloc_pages);
-            let mut to_dealloc = Vec::new();
+        let pi = finish_unlink(sbi, inode, pi)?;
 
-            for page in pages.drain(..) {
-                // the pages have already been removed from the inode's page vector
-                let page = page.unmap().flush();
-                to_dealloc.try_push(page)?;
-            }
-            let mut to_dealloc = fence_all_vecs!(to_dealloc);
-            let mut deallocated = Vec::new();
-            for page in to_dealloc.drain(..) {
-                let page = page.dealloc().flush();
-                deallocated.try_push(page)?;
-            }
-            let deallocated = fence_all_vecs!(deallocated);
-            for page in &deallocated {
-                sbi.page_allocator.dealloc_data_page(page)?;
-            }
-            let freed_pages = DataPageWrapper::mark_pages_free(deallocated)?;
+        end_timing!(UnlinkFullDecLink, unlink_full_declink);
 
-            unsafe {
-                bindings::drop_nlink(inode);
-            }
-
-            // pages are now deallocated and we can use the freed pages vector
-            // to deallocate the inode.
-            let pi = pi.dealloc(freed_pages).flush().fence();
-            end_timing!(DeallocPages, dealloc_pages);
-            end_timing!(UnlinkFullDelete, unlink_full_delete);
-            Ok((pi, pd))
-        } else {
-            Err(EINVAL)
-        }
+        Ok((pi, pd))
     } else {
         Err(ENOENT)
+    }
+}
+
+fn finish_unlink<'a>(
+    sbi: &'a SbInfo,
+    inode: *mut bindings::inode,
+    pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
+) -> Result<InodeWrapper<'a, Clean, Complete, RegInode>> {
+    let result = pi.try_complete_unlink(sbi)?;
+    if let Ok(result) = result {
+        unsafe {
+            bindings::drop_nlink(inode);
+        }
+        Ok(result)
+    } else if let Err((pi, mut pages)) = result {
+        // go through each page and deallocate it
+        // we can drain the vector since missing a page will result in
+        // a runtime panic
+        init_timing!(dealloc_pages);
+        start_timing!(dealloc_pages);
+        let mut to_dealloc = Vec::new();
+
+        for page in pages.drain(..) {
+            // the pages have already been removed from the inode's page vector
+            let page = page.unmap().flush();
+            to_dealloc.try_push(page)?;
+        }
+        let mut to_dealloc = fence_all_vecs!(to_dealloc);
+        let mut deallocated = Vec::new();
+        for page in to_dealloc.drain(..) {
+            let page = page.dealloc().flush();
+            deallocated.try_push(page)?;
+        }
+        let deallocated = fence_all_vecs!(deallocated);
+        for page in &deallocated {
+            sbi.page_allocator.dealloc_data_page(page)?;
+        }
+        let freed_pages = DataPageWrapper::mark_pages_free(deallocated)?;
+
+        unsafe {
+            bindings::drop_nlink(inode);
+        }
+
+        // pages are now deallocated and we can use the freed pages vector
+        // to deallocate the inode.
+        let pi = pi.dealloc(freed_pages).flush().fence();
+        end_timing!(DeallocPages, dealloc_pages);
+        Ok(pi)
+    } else {
+        Err(EINVAL)
     }
 }
 
