@@ -1,13 +1,16 @@
 /// Zero-sized types for persistence state
 pub(crate) struct Dirty {}
 pub(crate) struct InFlight {}
+#[derive(Debug)]
 pub(crate) struct Clean {}
 
 // TODO: maybe have op-specific complete states?
 
 /// Zero-sized types for operation state
+#[derive(Debug)]
 pub(crate) struct Start {}
 pub(crate) struct Free {}
+#[derive(Debug)]
 pub(crate) struct Alloc {}
 pub(crate) struct Init {}
 pub(crate) struct IncLink {}
@@ -19,6 +22,11 @@ pub(crate) struct ClearIno {}
 pub(crate) struct DecLink {}
 pub(crate) struct Dealloc {}
 pub(crate) struct ToUnmap {}
+pub(crate) struct SetRenamePointer {}
+pub(crate) struct InitRenamePointer {}
+// pub(crate) struct ClearRenamePointer {}
+pub(crate) struct Renaming {}
+pub(crate) struct Renamed {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}
@@ -37,3 +45,7 @@ impl AddLink for IncLink {}
 pub(crate) trait AddPage {}
 impl AddPage for Start {}
 impl AddPage for Alloc {}
+
+pub(crate) trait DeletableDentry {}
+impl DeletableDentry for Start {}
+impl DeletableDentry for Renamed {}
