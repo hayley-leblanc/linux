@@ -56,7 +56,7 @@ impl DentryInfo {
 
 #[allow(dead_code)]
 pub(crate) struct InoDentryTree {
-    map: Arc<Mutex<RBTree<InodeNum, Vec<DentryInfo>>>>,
+    map: Arc<Mutex<RBTree<InodeNum, RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>>>>,
 }
 
 impl InoDentryTree {
@@ -70,35 +70,23 @@ impl InoDentryTree {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
         if let Some(ref mut node) = map.get_mut(&ino) {
-            node.try_push(dentry)?;
+            node.try_insert(dentry.name, dentry)?;
         } else {
-            let mut vec = Vec::new();
-            vec.try_push(dentry)?;
-            map.try_insert(ino, vec)?;
+            let mut tree = RBTree::new();
+            tree.try_insert(dentry.name, dentry)?;
+            map.try_insert(ino, tree)?;
         }
         Ok(())
     }
 
-    pub(crate) fn remove(&self, ino: InodeNum) -> Option<Vec<DentryInfo>> {
+    pub(crate) fn remove(
+        &self,
+        ino: InodeNum,
+    ) -> Option<RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>> {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
         map.remove(&ino)
     }
-}
-
-fn str_equals(str1: &CStr, str2: &CStr) -> bool {
-    if str1.len_with_nul() != str2.len_with_nul() {
-        return false;
-    }
-    let len = str1.len_with_nul();
-    let str1 = str1.as_bytes_with_nul();
-    let str2 = str2.as_bytes_with_nul();
-    for i in 0..len {
-        if str1[i] != str2[i] {
-            return false;
-        }
-    }
-    return true;
 }
 
 #[derive(Debug, Copy, Clone, PartialOrd, Eq, PartialEq, Ord)]
@@ -248,7 +236,7 @@ pub(crate) trait InoDirPageMap {
 pub(crate) struct HayleyFsDirInodeInfo {
     ino: InodeNum,
     pages: Arc<Mutex<RBTree<DirPageInfo, ()>>>,
-    dentries: Arc<Mutex<Vec<DentryInfo>>>,
+    dentries: Arc<Mutex<RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>>>, // dentries: Arc<Mutex<Vec<DentryInfo>>>,
 }
 
 impl HayleyFsDirInodeInfo {
@@ -256,19 +244,19 @@ impl HayleyFsDirInodeInfo {
         Ok(Self {
             ino,
             pages: Arc::try_new(Mutex::new(RBTree::new()))?,
-            dentries: Arc::try_new(Mutex::new(Vec::new()))?,
+            dentries: Arc::try_new(Mutex::new(RBTree::new()))?,
         })
     }
 
-    pub(crate) fn new_from_vec(
+    pub(crate) fn new_from_tree(
         ino: InodeNum,
         page_tree: RBTree<DirPageInfo, ()>,
-        dentry_vec: Vec<DentryInfo>,
+        dentry_tree: RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>,
     ) -> Result<Self> {
         Ok(Self {
             ino,
             pages: Arc::try_new(Mutex::new(page_tree))?,
-            dentries: Arc::try_new(Mutex::new(dentry_vec))?,
+            dentries: Arc::try_new(Mutex::new(dentry_tree))?,
         })
     }
 
@@ -341,7 +329,10 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
 
 pub(crate) trait InoDentryMap {
     fn insert_dentry(&self, dentry: DentryInfo) -> Result<()>;
-    fn insert_dentries(&self, new_dentries: Vec<DentryInfo>) -> Result<()>;
+    fn insert_dentries(
+        &self,
+        new_dentries: RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>,
+    ) -> Result<()>;
     fn lookup_dentry(&self, name: &CStr) -> Option<DentryInfo>;
     fn get_all_dentries(&self) -> Result<Vec<DentryInfo>>;
     fn delete_dentry(&self, dentry: DentryInfo) -> Result<()>;
@@ -351,16 +342,22 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
     fn insert_dentry(&self, dentry: DentryInfo) -> Result<()> {
         let dentries = Arc::clone(&self.dentries);
         let mut dentries = dentries.lock();
-        dentries.try_push(dentry)?;
+        dentries.try_insert(dentry.name, dentry)?;
         Ok(())
     }
 
-    fn insert_dentries(&self, mut new_dentries: Vec<DentryInfo>) -> Result<()> {
+    fn insert_dentries(
+        &self,
+        new_dentries: RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>,
+    ) -> Result<()> {
         let dentries = Arc::clone(&self.dentries);
         let mut dentries = dentries.lock();
-        // TODO: use append - it isn't defined properly for use here right now
-        for new_dentry in new_dentries.drain(..) {
-            dentries.try_push(new_dentry)?;
+        for name in new_dentries.keys() {
+            // janky hack to fill in the tree. ideally we could do this
+            // without iterating.
+            // it is safe to unwrap because we know name is a key and we have
+            // ownership of new_dentries
+            dentries.try_insert(*name, *new_dentries.get(name).unwrap())?;
         }
         Ok(())
     }
@@ -368,22 +365,21 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
     fn lookup_dentry(&self, name: &CStr) -> Option<DentryInfo> {
         let dentries = Arc::clone(&self.dentries);
         let dentries = dentries.lock();
-        for dentry in &*dentries {
-            let dentry_name = unsafe { CStr::from_char_ptr(dentry.name.as_ptr() as *const i8) };
-            if str_equals(name, dentry_name) {
-                return Some(dentry.clone());
-            }
-        }
-        None
+        // TODO: can you do this without creating the array?
+        let mut full_filename = [0; MAX_FILENAME_LEN];
+        full_filename[..name.len()].copy_from_slice(name.as_bytes());
+        let dentry = dentries.get(&full_filename);
+        dentry.copied()
     }
 
     fn get_all_dentries(&self) -> Result<Vec<DentryInfo>> {
         let dentries = Arc::clone(&self.dentries);
         let dentries = dentries.lock();
         let mut return_vec = Vec::new();
-        // TODO: don't clone all of the dentries to return?
-        for dentry in &*dentries {
-            return_vec.try_push(dentry.clone())?
+
+        // TODO: use an iterator method
+        for d in dentries.values() {
+            return_vec.try_push(d.clone())?;
         }
         Ok(return_vec)
     }
@@ -391,7 +387,7 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
     fn delete_dentry(&self, dentry: DentryInfo) -> Result<()> {
         let dentries = Arc::clone(&self.dentries);
         let mut dentries = dentries.lock();
-        dentries.retain(|x| x.virt_addr != dentry.virt_addr);
+        dentries.remove(&dentry.name);
         Ok(())
     }
 }

@@ -489,20 +489,47 @@ struct DirPage<'a> {
 impl DirPage<'_> {
     pub(crate) fn get_dentry_info_from_dentries(self) -> Result<Vec<DentryInfo>> {
         let mut dentry_vec = Vec::new();
-        let live_dentries = self.dentries.iter().filter_map(|d| {
+        for d in self.dentries.iter() {
             let ino = d.get_ino();
             if ino != 0 {
                 let name = d.get_name();
+                // // janky hack to get an owned string we can use in index
+                // let name_str: String = unsafe {
+                //     CStr::from_char_ptr(name.as_ptr() as *const core::ffi::c_char)
+                //         .to_str()?
+                //         .try_to_owned()?
+                // };
+                // let name_str2: Vec<u8> = unsafe {
+                //     CString::new(
+                //         CStr::from_char_ptr(name.as_ptr() as *const core::ffi::c_char).to_str()?,
+                //     )
+                //     // .into_bytes()
+                // };
                 let virt_addr = d as *const HayleyFsDentry as *const ffi::c_void;
-                Some(DentryInfo::new(ino, virt_addr, name))
-            } else {
-                None
+                dentry_vec.try_push(DentryInfo::new(ino, virt_addr, name))?;
             }
-        });
-        // TODO: a more efficient way? kernel doesn't provide collect()
-        for d in live_dentries {
-            dentry_vec.try_push(d)?;
         }
+        // let live_dentries = self.dentries.iter().filter_map(|d| {
+        //     let ino = d.get_ino();
+        //     if ino != 0 {
+        //         let name = d.get_name();
+        //         let name_cstr: &str = unsafe {
+        //             CStr::from_char_ptr(name.as_ptr() as *const core::ffi::c_char)
+        //                 .to_str()?
+        //                 .try_to_owned()?
+        //         };
+        //         // let name_slice: &[u8] = &name[..];
+        //         // let name_vec: Vec<u8> = name_slice.try_into()?;
+        //         let virt_addr = d as *const HayleyFsDentry as *const ffi::c_void;
+        //         Some(DentryInfo::new(ino, virt_addr, name))
+        //     } else {
+        //         None
+        //     }
+        // });
+        // // TODO: a more efficient way? kernel doesn't provide collect()
+        // for d in live_dentries {
+        //     dentry_vec.try_push(d)?;
+        // }
         Ok(dentry_vec)
     }
 }

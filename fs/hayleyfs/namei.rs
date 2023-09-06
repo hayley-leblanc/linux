@@ -14,7 +14,7 @@ use crate::{
 use core::sync::atomic::Ordering;
 use kernel::prelude::*;
 use kernel::{
-    bindings, dir, error, file, fs, inode, io_buffer::IoBufferReader, symlink,
+    bindings, dir, error, file, fs, inode, io_buffer::IoBufferReader, rbtree::RBTree, symlink,
     user_ptr::UserSlicePtr, ForeignOwnable,
 };
 
@@ -271,9 +271,13 @@ pub(crate) fn hayleyfs_iget(
             if let Some(pages) = pages {
                 let dentries = sbi.ino_dentry_tree.remove(ino);
                 let inode_info = if let Some(dentries) = dentries {
-                    Box::try_new(HayleyFsDirInodeInfo::new_from_vec(ino, pages, dentries))?
+                    Box::try_new(HayleyFsDirInodeInfo::new_from_tree(ino, pages, dentries))?
                 } else {
-                    Box::try_new(HayleyFsDirInodeInfo::new_from_vec(ino, pages, Vec::new()))?
+                    Box::try_new(HayleyFsDirInodeInfo::new_from_tree(
+                        ino,
+                        pages,
+                        RBTree::new(),
+                    ))?
                 };
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             } else {
