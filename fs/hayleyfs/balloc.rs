@@ -1066,7 +1066,7 @@ impl<'a> DataPageWrapper<'a, Clean, Alloc> {
     /// will not actually need to be modified here. when they do, this method
     /// flushes and fences
     #[allow(dead_code)]
-    pub(crate) fn set_data_page_backpointer<S: AddPage>(
+    pub(crate) fn set_data_page_backpointer<S: StartOrAlloc>(
         mut self,
         inode: &InodeWrapper<'a, Clean, S, RegInode>,
     ) -> DataPageWrapper<'a, Dirty, Writeable> {

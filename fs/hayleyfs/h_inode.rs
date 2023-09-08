@@ -291,6 +291,24 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         }
     }
 
+    // TODO: combine with regular dec link count
+    pub(crate) fn dec_link_count_rename(self, _dentry: &DentryWrapper<'a, Clean, InitRenamePointer>) -> Result<InodeWrapper<'a, Dirty, DecLink, Type>> {
+        if self.inode.get_link_count() == 0 {
+            Err(ENOENT)
+        } else {
+            unsafe { self.inode.dec_link_count() };
+            // also update the inode's ctime. the time update may be reordered with the link change 
+            // we make no guarantees about ordering of these two updates
+            if let Some(vfs_inode) = self.vfs_inode {
+                self.inode.ctime = unsafe { bindings::current_time(vfs_inode)};
+            } else {
+                pr_info!("ERROR: no vfs inode for inode {:?} in dec_link_count\n", self.ino);
+                return Err(EINVAL);
+            }
+            Ok(Self::new(self))
+        }
+    }
+
     // TODO: get the number of bytes written from the page itself, somehow?
     #[allow(dead_code)]
     pub(crate) fn inc_size(
