@@ -340,7 +340,7 @@ pub(crate) trait InoDentryMap {
     fn atomic_add_and_delete_dentry<'a>(
         &self,
         new_dentry: &DentryWrapper<'a, Clean, Complete>,
-        old_dentry: &DentryWrapper<'a, Clean, Free>,
+        old_dentry: &[u8; MAX_FILENAME_LEN],
     ) -> Result<()>;
 }
 
@@ -400,14 +400,17 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
     fn atomic_add_and_delete_dentry<'a>(
         &self,
         new_dentry: &DentryWrapper<'a, Clean, Complete>,
-        old_dentry: &DentryWrapper<'a, Clean, Free>,
+        // old_dentry: &DentryWrapper<'a, Clean, Free>,
+        old_dentry_name: &[u8; MAX_FILENAME_LEN], // can't use actual dentry because it no longer has a name
     ) -> Result<()> {
         let new_dentry_info = new_dentry.get_dentry_info();
-        let old_dentry_info = old_dentry.get_dentry_info();
+        // let old_dentry_info = old_dentry.get_dentry_info();
         let dentries = Arc::clone(&self.dentries);
         let mut dentries = dentries.lock();
+        pr_info!("inserting {:?}\n", new_dentry_info);
+        // pr_info!("removing {:?}\n", old_dentry_info);
         dentries.try_insert(new_dentry_info.name, new_dentry_info)?;
-        dentries.remove(&old_dentry_info.name);
+        dentries.remove(old_dentry_name);
         Ok(())
     }
 }

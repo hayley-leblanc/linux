@@ -68,6 +68,10 @@ impl<'a, State, Op> DentryWrapper<'a, State, Op> {
             self.dentry.name,
         )
     }
+
+    pub(crate) fn get_name(&self) -> [u8; MAX_FILENAME_LEN] {
+        self.dentry.name.clone()
+    }
 }
 
 impl<'a> DentryWrapper<'a, Clean, Free> {
@@ -143,7 +147,9 @@ impl<'a> DentryWrapper<'a, Clean, Alloc> {
             InodeWrapper::new(parent_inode),
         )
     }
+}
 
+impl<'a, S: StartOrAlloc> DentryWrapper<'a, Clean, S> {
     // TODO: this will also have to be defined for initialized dst dentries
     pub(crate) fn set_rename_pointer(
         self,

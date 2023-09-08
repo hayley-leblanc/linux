@@ -1,5 +1,6 @@
 /// Zero-sized types for persistence state
 pub(crate) struct Dirty {}
+#[derive(Debug)]
 pub(crate) struct InFlight {}
 #[derive(Debug)]
 pub(crate) struct Clean {}
@@ -9,11 +10,13 @@ pub(crate) struct Clean {}
 /// Zero-sized types for operation state
 #[derive(Debug)]
 pub(crate) struct Start {}
+#[derive(Debug)]
 pub(crate) struct Free {}
 #[derive(Debug)]
 pub(crate) struct Alloc {}
 pub(crate) struct Init {}
 pub(crate) struct IncLink {}
+#[derive(Debug)]
 pub(crate) struct Complete {}
 pub(crate) struct Writeable {}
 pub(crate) struct Written {}
@@ -42,9 +45,12 @@ pub(crate) trait AddLink {}
 impl AddLink for Alloc {}
 impl AddLink for IncLink {}
 
-pub(crate) trait AddPage {}
-impl AddPage for Start {}
-impl AddPage for Alloc {}
+// undescriptive name because this is used in multiple unrelated places
+// 1. setting a rename pointer
+// 2. setting a data page backpointer
+pub(crate) trait StartOrAlloc {}
+impl StartOrAlloc for Start {}
+impl StartOrAlloc for Alloc {}
 
 pub(crate) trait DeletableDentry {}
 impl DeletableDentry for Start {}
