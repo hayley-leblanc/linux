@@ -18,6 +18,44 @@ pub struct OperationsVtable<T: Operations>(marker::PhantomData<T>);
 
 #[allow(dead_code)]
 impl<T: Operations> OperationsVtable<T> {
+    unsafe extern "C" fn read_callback(
+        file: *mut bindings::file,
+        buf: *mut core::ffi::c_char,
+        siz: usize,
+        ppos: *mut core::ffi::c_long,
+    ) -> isize {
+        unsafe { bindings::generic_read_dir(file, buf, siz, ppos) }
+    }
+
+    unsafe extern "C" fn llseek_callback(
+        file: *mut bindings::file,
+        offset: core::ffi::c_long,
+        whence: core::ffi::c_int,
+    ) -> core::ffi::c_long {
+        unsafe { bindings::generic_file_llseek(file, offset, whence) }
+    }
+
+    unsafe extern "C" fn fsync_callback(
+        file: *mut bindings::file,
+        start: bindings::loff_t,
+        end: bindings::loff_t,
+        datasync: core::ffi::c_int,
+    ) -> core::ffi::c_int {
+        from_kernel_result! {
+            let start = start.try_into()?;
+            let end = end.try_into()?;
+            let datasync = datasync != 0;
+            // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
+            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
+            // `release` callback, which the C API guarantees that will be called only when all
+            // references to `file` have been released, so we know it can't be called while this
+            // function is running.
+            let f = unsafe { T::Data::borrow((*file).private_data) };
+            let res = T::fsync(f, unsafe { File::from_ptr(file) }, start, end, datasync)?;
+            Ok(res.try_into().unwrap())
+        }
+    }
+
     unsafe extern "C" fn unlocked_ioctl_callback(
         file: *mut bindings::file,
         cmd: core::ffi::c_uint,
@@ -61,7 +99,7 @@ impl<T: Operations> OperationsVtable<T> {
         fasync: None,
         flock: None,
         flush: None,
-        fsync: None,
+        fsync: Some(Self::fsync_callback),
         get_unmapped_area: None,
         iterate: if T::HAS_ITERATE {
             Some(Self::iterate_callback)
@@ -111,6 +149,29 @@ pub trait Operations {
 
     /// The type of the context data passed to [`Operations::open`].
     type OpenData: Sync = ();
+
+    /// Read a directory file.
+    fn read(
+        _file: *mut bindings::file,
+        _buf: *mut core::ffi::c_char,
+        _siz: core::ffi::c_uint,
+        _ppos: *mut core::ffi::c_long,
+    ) -> Result<isize> {
+        Err(EINVAL)
+    }
+
+    /// Syncs pending changes to this file.
+    ///
+    /// Corresponds to the `fsync` function pointer in `struct file_operations`.
+    fn fsync(
+        _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
+        _file: &File,
+        _start: u64,
+        _end: u64,
+        _datasync: bool,
+    ) -> Result<u32> {
+        Err(EINVAL)
+    }
 
     /// Performs IO control operations that are specific to the file.
     ///
