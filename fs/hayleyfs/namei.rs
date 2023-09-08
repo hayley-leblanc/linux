@@ -585,15 +585,12 @@ fn single_dir_rename<'a>(
     let new_inode = new_dentry.d_inode();
 
     let new_dentry_info = parent_inode_info.lookup_dentry(new_name);
-    // let new_name_exists = new_dentry_info.is_some();
-    // pr_info!("new name exists: {:?}\n", new_name_exists);
     let inode_type = sbi.check_inode_type_by_dentry(old_dentry.d_inode());
     match inode_type {
         Ok(InodeType::REG) | Ok(InodeType::SYMLINK) => {
             // TODO: refactor - there is some repeated code here
             let (dst_dentry, src_dentry) = match new_dentry_info {
                 Some(new_dentry_info) => {
-                    // TODO: need to get dst dentry and do the rename pointers
                     let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
                     let dst_dentry = DentryWrapper::get_init_dentry(new_dentry_info)?;
                     let old_dentry_name = src_dentry.get_name();
@@ -610,12 +607,10 @@ fn single_dir_rename<'a>(
                     let (old_pi, _) = sbi.get_init_reg_inode_by_vfs_inode(new_inode)?;
                     let old_pi = old_pi.dec_link_count_rename(&dst_dentry)?.flush();
                     let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
-                    pr_info!("dst dentry {:?}\n", dst_dentry);
                     let (old_pi, dst_dentry) = fence_all!(old_pi, dst_dentry);
                     // deallocate the src dentry
                     // this fully deallocates the dentry - it can now be used again
                     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
-                    pr_info!("src dentry {:?}\n", src_dentry);
                     // atomically update the volatile index
                     parent_inode_info
                         .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
