@@ -28,7 +28,7 @@ pub(crate) const MAX_LINKS: u16 = u16::MAX;
 pub(crate) const DENTRIES_PER_PAGE: usize = 32; // TODO: update with true dentry size
 pub(crate) const INODE_TABLE_SIZE: u64 = 1024 * 1024 * 64; // 2MB
 pub(crate) const NUM_INODE_PAGES: u64 = INODE_TABLE_SIZE / HAYLEYFS_PAGESIZE;
-pub(crate) const DESCRIPTOR_TABLE_SIZE: u64 = 1024 * 1024 * 64; // 2MB
+pub(crate) const DESCRIPTOR_TABLE_SIZE: u64 = 1024 * 1024 * 256; // 2MB
 pub(crate) const NUM_DESCRIPTOR_TABLE_PAGES: u64 = DESCRIPTOR_TABLE_SIZE / HAYLEYFS_PAGESIZE;
 pub(crate) const NUM_PAGE_DESCRIPTORS: u64 = DESCRIPTOR_TABLE_SIZE / PAGE_DESCRIPTOR_SIZE;
 
