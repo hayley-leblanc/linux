@@ -590,23 +590,7 @@ fn single_dir_rename<'a>(
     let inode_type = sbi.check_inode_type_by_dentry(old_dentry.d_inode());
     match inode_type {
         Ok(InodeType::REG) | Ok(InodeType::SYMLINK) => {
-            // // allocate new persistent dentry
-            // let dst_dentry = get_free_dentry(sbi, old_dir, parent_inode_info)?;
-            // let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
-            // let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
-            // let old_dentry_name = src_dentry.get_name();
-
-            // // set and initialize rename pointer to atomically switch the live dentry
-            // let (dst_dentry, src_dentry) = dst_dentry.set_rename_pointer(sbi, src_dentry);
-            // let dst_dentry = dst_dentry.flush().fence();
-            // let (dst_dentry, src_dentry) = dst_dentry.init_rename_pointer(src_dentry);
-            // let dst_dentry = dst_dentry.flush().fence();
-
-            // // clear src dentry's inode
-            // let src_dentry = src_dentry.clear_ino().flush().fence();
-
             // TODO: refactor - there is some repeated code here
-            // let (dst_dentry, src_dentry) = if new_name_exists {
             let (dst_dentry, src_dentry) = match new_dentry_info {
                 Some(new_dentry_info) => {
                     // TODO: need to get dst dentry and do the rename pointers
@@ -685,10 +669,6 @@ fn single_dir_rename<'a>(
         }
         Err(e) => Err(e),
     }
-    // }
-    // }
-    // pr_info!("{:?}\n", new_dentry_info);
-    // Err(EPERM)
 }
 
 #[allow(dead_code)]
