@@ -536,13 +536,6 @@ fn hayleyfs_rename<'a>(
     DentryWrapper<'a, Clean, Complete>,
     DentryWrapper<'a, Clean, Free>,
 )> {
-    pr_info!(
-        "rename {:} to {:?}\n",
-        old_dentry.d_name(),
-        new_dentry.d_name()
-    );
-    pr_info!("old parent: {:?}\n", old_dir.i_ino());
-    pr_info!("new_parent: {:?}\n", new_dir.i_ino());
     let old_name = old_dentry.d_name();
     let _new_name = new_dentry.d_name();
 
