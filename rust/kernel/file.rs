@@ -598,11 +598,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         fasync: None,
         flock: None,
         flush: None,
-        fsync: if T::HAS_FSYNC {
-            Some(Self::fsync_callback)
-        } else {
-            None
-        },
+        fsync: Some(Self::fsync_callback),
         get_unmapped_area: None,
         iterate: None,
         iterate_shared: None,

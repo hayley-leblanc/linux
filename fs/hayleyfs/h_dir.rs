@@ -320,6 +320,16 @@ impl dir::Operations for DirOps {
         }
     }
 
+    fn fsync(
+        _data: (),
+        _file: &file::File,
+        _start: u64,
+        _end: u64,
+        _datasync: bool,
+    ) -> Result<u32> {
+        Ok(0)
+    }
+
     fn ioctl(data: (), file: &file::File, cmd: &mut file::IoctlCommand) -> Result<i32> {
         cmd.dispatch::<Self>(data, file)
     }
