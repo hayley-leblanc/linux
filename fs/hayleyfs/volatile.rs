@@ -410,6 +410,20 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
         dentries.retain(|x| x.virt_addr != old_dentry_info.virt_addr);
         Ok(())
     }
+
+    fn atomic_add_and_delete_dentry<'a>(
+        &self,
+        new_dentry: &DentryWrapper<'a, Clean, Complete>,
+        old_dentry: &DentryWrapper<'a, Clean, Free>,
+    ) -> Result<()> {
+        let new_dentry_info = new_dentry.get_dentry_info();
+        let old_dentry_info = old_dentry.get_dentry_info();
+        let dentries = Arc::clone(&self.dentries);
+        let mut dentries = dentries.lock();
+        dentries.try_push(new_dentry_info)?;
+        dentries.retain(|x| x.virt_addr != old_dentry_info.virt_addr);
+        Ok(())
+    }
 }
 
 pub(crate) trait PageInfo {}
