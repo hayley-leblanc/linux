@@ -342,7 +342,7 @@ pub(crate) trait InoDentryMap {
         new_dentry: &DentryWrapper<'a, Clean, Complete>,
         old_dentry: &[u8; MAX_FILENAME_LEN],
     ) -> Result<()>;
-    fn is_empty(&self) -> bool;
+    fn has_dentries(&self) -> bool;
 }
 
 impl InoDentryMap for HayleyFsDirInodeInfo {
@@ -411,7 +411,7 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
         Ok(())
     }
 
-    fn is_empty(&self) -> bool {
+    fn has_dentries(&self) -> bool {
         let dentries = Arc::clone(&self.dentries);
         let dentries = dentries.lock();
         let mut keys = dentries.keys().peekable();

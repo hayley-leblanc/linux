@@ -297,7 +297,7 @@ impl SbInfo {
         Ok(inode)
     }
 
-    pub(crate) fn check_inode_type_by_dentry(
+    pub(crate) fn check_inode_type_by_vfs_inode(
         &self,
         inode: *mut bindings::inode,
     ) -> Result<InodeType> {

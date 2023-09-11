@@ -561,7 +561,7 @@ fn hayleyfs_rmdir<'a>(
         Some(dentry_info) => {
             // check if the directory we are trying to delete is empty
             let (pi, delete_dir_info) = sbi.get_init_dir_inode_by_vfs_inode(inode)?;
-            if !delete_dir_info.is_empty() {
+            if delete_dir_info.has_dentries() {
                 return Err(ENOTEMPTY);
             }
             // if it is, start deleting
@@ -726,18 +726,30 @@ fn single_dir_rename<'a>(
     DentryWrapper<'a, Clean, Complete>,
     DentryWrapper<'a, Clean, Free>,
 )> {
-    let _old_name = old_dentry.d_name();
+    let old_name = old_dentry.d_name();
     let new_name = new_dentry.d_name();
     let old_inode = old_dentry.d_inode();
     let new_inode = new_dentry.d_inode();
 
     let new_dentry_info = parent_inode_info.lookup_dentry(new_name);
-    let inode_type = sbi.check_inode_type_by_dentry(old_dentry.d_inode());
+    let inode_type = sbi.check_inode_type_by_vfs_inode(old_dentry.d_inode());
     match inode_type {
         Ok(InodeType::REG) | Ok(InodeType::SYMLINK) | Ok(InodeType::DIR) => {
             // TODO: refactor - there is some repeated code here
             match new_dentry_info {
                 Some(new_dentry_info) => {
+                    let new_inode_type = sbi.check_inode_type_by_vfs_inode(new_inode)?;
+
+                    // if overwriting a directory, is that directory empty?
+                    if new_inode_type == InodeType::DIR {
+                        let (_, delete_dir_info) =
+                            sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
+
+                        if delete_dir_info.has_dentries() {
+                            return Err(ENOTEMPTY);
+                        }
+                    }
+
                     // overwriting another file, potentially deleting its inode
                     let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
                     let dst_dentry = DentryWrapper::get_init_dentry(new_dentry_info)?;
@@ -751,40 +763,46 @@ fn single_dir_rename<'a>(
                     // clear src dentry's inode
                     let src_dentry = src_dentry.clear_ino().flush().fence();
 
-                    if let Ok((new_pi, _)) = sbi.get_init_reg_inode_by_vfs_inode(new_inode) {
-                        // decrement link count of the inode whose dentry is being overwritten
-                        let new_pi = new_pi.dec_link_count_rename(&dst_dentry)?.flush();
-                        // clear the rename pointer in the dst dentry, since the src has been invalidated
-                        let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
-                        let (new_pi, dst_dentry) = fence_all!(new_pi, dst_dentry);
-                        // deallocate the src dentry
-                        // this fully deallocates the dentry - it can now be used again
-                        let src_dentry = src_dentry.dealloc_dentry().flush().fence();
-                        // atomically update the volatile index
-                        parent_inode_info
-                            .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
-                        // finish deallocating the old inode and its pages
-                        finish_unlink(sbi, old_inode, new_pi)?;
-                        Ok((dst_dentry, src_dentry))
-                    } else if let Ok((new_pi, delete_dir_info)) =
-                        sbi.get_init_dir_inode_by_vfs_inode(new_inode)
-                    {
-                        // TODO: do we need to check if the directory being overwritten is empty?
-                        // we DO need to decrement the parent link count because a directory is being deleted
-                        // since dst inode is empty, we don't decrement its link count here
-                        let parent_inode = parent_inode.dec_link_count_rename(&dst_dentry)?.flush();
-                        let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
-                        let (_parent_inode, dst_dentry) = fence_all!(parent_inode, dst_dentry);
-                        let new_pi = new_pi.set_unmap_page_state()?;
-                        let freed_pages = rmdir_delete_pages(sbi, &delete_dir_info, &new_pi)?;
-                        let src_dentry = src_dentry.dealloc_dentry().flush().fence();
-                        parent_inode_info
-                            .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
-                        let _new_pi = new_pi.dealloc(freed_pages).flush().fence();
-                        Ok((dst_dentry, src_dentry))
-                    } else {
-                        pr_info!("ERROR: bad inode type\n");
-                        Err(EINVAL)
+                    match new_inode_type {
+                        InodeType::REG | InodeType::SYMLINK => {
+                            let (new_pi, _) = sbi.get_init_reg_inode_by_vfs_inode(new_inode)?;
+                            // decrement link count of the inode whose dentry is being overwritten
+                            let new_pi = new_pi.dec_link_count_rename(&dst_dentry)?.flush();
+                            // clear the rename pointer in the dst dentry, since the src has been invalidated
+                            let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
+                            let (new_pi, dst_dentry) = fence_all!(new_pi, dst_dentry);
+                            // deallocate the src dentry
+                            // this fully deallocates the dentry - it can now be used again
+                            let src_dentry = src_dentry.dealloc_dentry().flush().fence();
+                            // atomically update the volatile index
+                            parent_inode_info
+                                .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
+                            // finish deallocating the old inode and its pages
+                            finish_unlink(sbi, old_inode, new_pi)?;
+                            Ok((dst_dentry, src_dentry))
+                        }
+                        InodeType::DIR => {
+                            let (new_pi, delete_dir_info) =
+                                sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
+                            // TODO: do we need to check if the directory being overwritten is empty?
+                            // we DO need to decrement the parent link count because a directory is being deleted
+                            // since dst inode is empty, we don't decrement its link count here
+                            let parent_inode =
+                                parent_inode.dec_link_count_rename(&dst_dentry)?.flush();
+                            let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
+                            let (_parent_inode, dst_dentry) = fence_all!(parent_inode, dst_dentry);
+                            let new_pi = new_pi.set_unmap_page_state()?;
+                            let freed_pages = rmdir_delete_pages(sbi, &delete_dir_info, &new_pi)?;
+                            let src_dentry = src_dentry.dealloc_dentry().flush().fence();
+                            parent_inode_info
+                                .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
+                            let _new_pi = new_pi.dealloc(freed_pages).flush().fence();
+                            Ok((dst_dentry, src_dentry))
+                        }
+                        _ => {
+                            pr_info!("ERROR: bad inode type\n");
+                            Err(EINVAL)
+                        }
                     }
                 }
                 None => {
