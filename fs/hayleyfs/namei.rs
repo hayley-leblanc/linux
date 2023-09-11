@@ -578,34 +578,36 @@ fn hayleyfs_rmdir<'a>(
             let (parent_pi, _) = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
             let parent_pi = parent_pi.dec_link_count(&pd)?.flush().fence();
 
-            // deallocate pages (if any) belonging to the inode
-            // NOTE: we do this in a series of vectors to reduce the number of
-            // total flushes. Unclear if this saves us time, or if the overhead
-            // of more flushes is less than the time it takes to manage the vecs.
-            // We need to do some evaluation of this
-            let pages = delete_dir_info.get_all_pages()?;
-            let mut unmap_vec = Vec::new();
-            let mut to_dealloc = Vec::new();
-            let mut deallocated = Vec::new();
-            for page in pages.keys() {
-                // the pages have already been removed from the inode's page vector
-                let page = DirPageWrapper::mark_to_unmap(sbi, page)?;
-                unmap_vec.try_push(page)?;
-            }
-            for page in unmap_vec.drain(..) {
-                let page = page.unmap().flush();
-                to_dealloc.try_push(page)?;
-            }
-            let mut to_dealloc = fence_all_vecs!(to_dealloc);
-            for page in to_dealloc.drain(..) {
-                let page = page.dealloc().flush();
-                deallocated.try_push(page)?;
-            }
-            let deallocated = fence_all_vecs!(deallocated);
-            for page in &deallocated {
-                sbi.page_allocator.dealloc_dir_page(page)?;
-            }
-            let freed_pages = DirPageWrapper::mark_pages_free(deallocated)?;
+            // // deallocate pages (if any) belonging to the inode
+            // // NOTE: we do this in a series of vectors to reduce the number of
+            // // total flushes. Unclear if this saves us time, or if the overhead
+            // // of more flushes is less than the time it takes to manage the vecs.
+            // // We need to do some evaluation of this
+            // let pages = delete_dir_info.get_all_pages()?;
+            // let mut unmap_vec = Vec::new();
+            // let mut to_dealloc = Vec::new();
+            // let mut deallocated = Vec::new();
+            // for page in pages.keys() {
+            //     // the pages have already been removed from the inode's page vector
+            //     let page = DirPageWrapper::mark_to_unmap(sbi, page)?;
+            //     unmap_vec.try_push(page)?;
+            // }
+            // for page in unmap_vec.drain(..) {
+            //     let page = page.unmap().flush();
+            //     to_dealloc.try_push(page)?;
+            // }
+            // let mut to_dealloc = fence_all_vecs!(to_dealloc);
+            // for page in to_dealloc.drain(..) {
+            //     let page = page.dealloc().flush();
+            //     deallocated.try_push(page)?;
+            // }
+            // let deallocated = fence_all_vecs!(deallocated);
+            // for page in &deallocated {
+            //     sbi.page_allocator.dealloc_dir_page(page)?;
+            // }
+            // let freed_pages = DirPageWrapper::mark_pages_free(deallocated)?;
+            let pi = pi.set_unmap_page_state()?;
+            let freed_pages = rmdir_delete_pages(sbi, &delete_dir_info, &pi)?;
 
             // deallocate the inode
             // since dir inodes do not have any links other than ./.. and their children,
@@ -627,6 +629,50 @@ fn hayleyfs_rmdir<'a>(
     }
 }
 
+fn rmdir_delete_pages<'a>(
+    sbi: &'a SbInfo,
+    delete_dir_info: &HayleyFsDirInodeInfo,
+    pi: &InodeWrapper<'a, Clean, UnmapPages, DirInode>,
+) -> Result<Vec<DirPageWrapper<'a, Clean, Free>>> {
+    if delete_dir_info.get_ino() != pi.get_ino() {
+        pr_info!(
+            "ERROR: delete_dir_info inode {:?} does not match pi inode {:?}\n",
+            delete_dir_info.get_ino(),
+            pi.get_ino()
+        );
+        return Err(EINVAL);
+    }
+    // deallocate pages (if any) belonging to the inode
+    // NOTE: we do this in a series of vectors to reduce the number of
+    // total flushes. Unclear if this saves us time, or if the overhead
+    // of more flushes is less than the time it takes to manage the vecs.
+    // We need to do some evaluation of this
+    let pages = delete_dir_info.get_all_pages()?;
+    let mut unmap_vec = Vec::new();
+    let mut to_dealloc = Vec::new();
+    let mut deallocated = Vec::new();
+    for page in pages.keys() {
+        // the pages have already been removed from the inode's page vector
+        let page = DirPageWrapper::mark_to_unmap(sbi, page)?;
+        unmap_vec.try_push(page)?;
+    }
+    for page in unmap_vec.drain(..) {
+        let page = page.unmap().flush();
+        to_dealloc.try_push(page)?;
+    }
+    let mut to_dealloc = fence_all_vecs!(to_dealloc);
+    for page in to_dealloc.drain(..) {
+        let page = page.dealloc().flush();
+        deallocated.try_push(page)?;
+    }
+    let deallocated = fence_all_vecs!(deallocated);
+    for page in &deallocated {
+        sbi.page_allocator.dealloc_dir_page(page)?;
+    }
+    let freed_pages = DirPageWrapper::mark_pages_free(deallocated)?;
+    Ok(freed_pages)
+}
+
 fn hayleyfs_rename<'a>(
     sbi: &'a SbInfo,
     old_dir: &fs::INode,
@@ -641,7 +687,7 @@ fn hayleyfs_rename<'a>(
     let old_name = old_dentry.d_name();
     let _new_name = new_dentry.d_name();
 
-    let (_parent_inode, parent_inode_info) =
+    let (parent_inode, parent_inode_info) =
         sbi.get_init_dir_inode_by_vfs_inode(old_dir.get_inner())?;
     let old_dentry_info = parent_inode_info.lookup_dentry(old_name);
     match old_dentry_info {
@@ -656,6 +702,7 @@ fn hayleyfs_rename<'a>(
                     new_dentry,
                     old_dir,
                     new_dir,
+                    parent_inode,
                     parent_inode_info,
                 )
             } else {
@@ -673,6 +720,7 @@ fn single_dir_rename<'a>(
     new_dentry: &fs::DEntry,
     old_dir: &fs::INode,
     _new_dir: &fs::INode,
+    parent_inode: InodeWrapper<'a, Clean, Start, DirInode>,
     parent_inode_info: &HayleyFsDirInodeInfo,
 ) -> Result<(
     DentryWrapper<'a, Clean, Complete>,
@@ -686,10 +734,11 @@ fn single_dir_rename<'a>(
     let new_dentry_info = parent_inode_info.lookup_dentry(new_name);
     let inode_type = sbi.check_inode_type_by_dentry(old_dentry.d_inode());
     match inode_type {
-        Ok(InodeType::REG) | Ok(InodeType::SYMLINK) => {
+        Ok(InodeType::REG) | Ok(InodeType::SYMLINK) | Ok(InodeType::DIR) => {
             // TODO: refactor - there is some repeated code here
-            let (dst_dentry, src_dentry) = match new_dentry_info {
+            match new_dentry_info {
                 Some(new_dentry_info) => {
+                    // overwriting another file, potentially deleting its inode
                     let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
                     let dst_dentry = DentryWrapper::get_init_dentry(new_dentry_info)?;
                     let old_dentry_name = src_dentry.get_name();
@@ -702,23 +751,45 @@ fn single_dir_rename<'a>(
                     // clear src dentry's inode
                     let src_dentry = src_dentry.clear_ino().flush().fence();
 
-                    // decrement the link count of the new inode
-                    let (old_pi, _) = sbi.get_init_reg_inode_by_vfs_inode(new_inode)?;
-                    let old_pi = old_pi.dec_link_count_rename(&dst_dentry)?.flush();
-                    let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
-                    let (old_pi, dst_dentry) = fence_all!(old_pi, dst_dentry);
-                    // deallocate the src dentry
-                    // this fully deallocates the dentry - it can now be used again
-                    let src_dentry = src_dentry.dealloc_dentry().flush().fence();
-                    // atomically update the volatile index
-                    parent_inode_info
-                        .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
-
-                    finish_unlink(sbi, old_inode, old_pi)?;
-
-                    (dst_dentry, src_dentry)
+                    if let Ok((new_pi, _)) = sbi.get_init_reg_inode_by_vfs_inode(new_inode) {
+                        // decrement link count of the inode whose dentry is being overwritten
+                        let new_pi = new_pi.dec_link_count_rename(&dst_dentry)?.flush();
+                        // clear the rename pointer in the dst dentry, since the src has been invalidated
+                        let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
+                        let (new_pi, dst_dentry) = fence_all!(new_pi, dst_dentry);
+                        // deallocate the src dentry
+                        // this fully deallocates the dentry - it can now be used again
+                        let src_dentry = src_dentry.dealloc_dentry().flush().fence();
+                        // atomically update the volatile index
+                        parent_inode_info
+                            .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
+                        // finish deallocating the old inode and its pages
+                        finish_unlink(sbi, old_inode, new_pi)?;
+                        Ok((dst_dentry, src_dentry))
+                    } else if let Ok((new_pi, delete_dir_info)) =
+                        sbi.get_init_dir_inode_by_vfs_inode(new_inode)
+                    {
+                        // TODO: do we need to check if the directory being overwritten is empty?
+                        // we DO need to decrement the parent link count because a directory is being deleted
+                        // since dst inode is empty, we don't decrement its link count here
+                        let parent_inode = parent_inode.dec_link_count_rename(&dst_dentry)?.flush();
+                        let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
+                        let (_parent_inode, dst_dentry) = fence_all!(parent_inode, dst_dentry);
+                        let new_pi = new_pi.set_unmap_page_state()?;
+                        let freed_pages = rmdir_delete_pages(sbi, &delete_dir_info, &new_pi)?;
+                        let src_dentry = src_dentry.dealloc_dentry().flush().fence();
+                        parent_inode_info
+                            .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
+                        let _new_pi = new_pi.dealloc(freed_pages).flush().fence();
+                        Ok((dst_dentry, src_dentry))
+                    } else {
+                        pr_info!("ERROR: bad inode type\n");
+                        Err(EINVAL)
+                    }
                 }
                 None => {
+                    // not overwriting a dentry - allocate a new one
+                    // this is the same regardless of whether we are using a reg or dir inode
                     // allocate new persistent dentry
                     let dst_dentry = get_free_dentry(sbi, old_dir, parent_inode_info)?;
                     let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
@@ -747,15 +818,9 @@ fn single_dir_rename<'a>(
                         .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
 
                     // since we are creating a new dentry, there is no inode to deallocate
-                    (dst_dentry, src_dentry)
+                    Ok((dst_dentry, src_dentry))
                 }
-            };
-
-            Ok((dst_dentry, src_dentry))
-        }
-        Ok(InodeType::DIR) => {
-            pr_info!("ERROR: directory rename not supported\n");
-            unimplemented!()
+            }
         }
         Ok(InodeType::NONE) => {
             pr_info!("ERROR: inode has type None\n");

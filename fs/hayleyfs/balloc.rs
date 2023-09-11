@@ -705,6 +705,7 @@ impl<'a> DirPageWrapper<'a, Clean, ToUnmap> {
         }
     }
 
+    // TODO: this should take a ClearIno dentry or Dealloc inode
     pub(crate) fn mark_to_unmap(sbi: &'a SbInfo, info: &DirPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
         let ph = page_no_to_dir_header(sbi, page_no)?;
@@ -1127,6 +1128,7 @@ impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
         }
     }
 
+    // TODO: this should take a ClearIno dentry or Dealloc inode
     #[allow(dead_code)]
     pub(crate) fn mark_to_unmap(sbi: &'a SbInfo, info: &DataPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();

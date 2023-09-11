@@ -449,7 +449,28 @@ impl<'a> InodeWrapper<'a, Clean, Dealloc, RegInode> {
 }
 
 impl<'a> InodeWrapper<'a, Clean, Start, DirInode> {
+    /// This function checks that an inode's link count is valid for removing pages and then
+    /// puts it in a typestate that allows its pages to be unmapped and deallocated
+    pub(crate) fn set_unmap_page_state(self) -> Result<InodeWrapper<'a, Clean, UnmapPages, DirInode>> {
+        if self.inode.link_count != 2 {
+            pr_info!("ERROR: invalid link count\n");
+            Err(EINVAL)
+        } else {
+            Ok(InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                vfs_inode: self.vfs_inode,
+                ino: self.ino,
+                inode: self.inode,
+            })
+        }
+    }
+}
+
+impl<'a> InodeWrapper<'a, Clean, UnmapPages, DirInode> {
     // NOTE: data page wrappers don't actually need to be free, they just need to be in ClearIno
+    // any state after ClearIno is fine
     pub(crate) fn dealloc(self, _freed_pages: Vec<DirPageWrapper<'a, Clean, Free>>) -> InodeWrapper<'a, Dirty, Complete, DirInode> {
         self.inode.inode_type = InodeType::NONE;
         // link count should 2 for ./.. but we don't store those in durable PM, so it's safe 

@@ -30,6 +30,7 @@ pub(crate) struct InitRenamePointer {}
 // pub(crate) struct ClearRenamePointer {}
 pub(crate) struct Renaming {}
 pub(crate) struct Renamed {}
+pub(crate) struct UnmapPages {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}
@@ -55,3 +56,7 @@ impl StartOrAlloc for Alloc {}
 pub(crate) trait DeletableDentry {}
 impl DeletableDentry for Start {}
 impl DeletableDentry for Renamed {}
+
+pub(crate) trait CanDeletePages {}
+impl CanDeletePages for ClearIno {}
+impl CanDeletePages for Complete {}
