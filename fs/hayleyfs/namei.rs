@@ -684,15 +684,12 @@ fn single_dir_rename<'a>(
     let new_inode = new_dentry.d_inode();
 
     let new_dentry_info = parent_inode_info.lookup_dentry(new_name);
-    // let new_name_exists = new_dentry_info.is_some();
-    // pr_info!("new name exists: {:?}\n", new_name_exists);
     let inode_type = sbi.check_inode_type_by_dentry(old_dentry.d_inode());
     match inode_type {
         Ok(InodeType::REG) | Ok(InodeType::SYMLINK) => {
             // TODO: refactor - there is some repeated code here
             let (dst_dentry, src_dentry) = match new_dentry_info {
                 Some(new_dentry_info) => {
-                    // TODO: need to get dst dentry and do the rename pointers
                     let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
                     let dst_dentry = DentryWrapper::get_init_dentry(new_dentry_info)?;
                     let old_dentry_name = src_dentry.get_name();
