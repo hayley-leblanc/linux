@@ -448,6 +448,37 @@ impl<'a> InodeWrapper<'a, Clean, Dealloc, RegInode> {
     }
 }
 
+impl<'a> InodeWrapper<'a, Clean, Start, DirInode> {
+    // NOTE: data page wrappers don't actually need to be free, they just need to be in ClearIno
+    pub(crate) fn dealloc(self, _freed_pages: Vec<DirPageWrapper<'a, Clean, Free>>) -> InodeWrapper<'a, Dirty, Complete, DirInode> {
+        self.inode.inode_type = InodeType::NONE;
+        // link count should 2 for ./.. but we don't store those in durable PM, so it's safe 
+        // to just clear the link count if it is in fact 2
+        assert!(self.inode.link_count == 2);
+        self.inode.mode = 0;
+        self.inode.uid = 0;
+        self.inode.gid = 0;
+        self.inode.ctime.tv_sec = 0;
+        self.inode.ctime.tv_nsec = 0;
+        self.inode.atime.tv_sec = 0;
+        self.inode.atime.tv_nsec = 0;
+        self.inode.mtime.tv_sec = 0;
+        self.inode.mtime.tv_nsec = 0;
+        self.inode.blocks = 0;
+        self.inode.size = 0;
+        self.inode.ino = 0;
+
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            inode_type: PhantomData,
+            vfs_inode: self.vfs_inode,
+            ino: self.ino,
+            inode: self.inode
+        }
+    }
+}
+
 impl<'a> InodeWrapper<'a, Clean, Free, RegInode> {
     pub(crate) fn get_free_reg_inode_by_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
         let raw_inode = unsafe { sbi.get_inode_by_ino_mut(ino)? };

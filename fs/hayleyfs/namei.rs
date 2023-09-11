@@ -126,6 +126,22 @@ impl inode::Operations for InodeOps {
         Ok(0)
     }
 
+    fn rmdir(dir: &mut fs::INode, dentry: &fs::DEntry) -> Result<i32> {
+        let sb = dir.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        // TODO: it's probably not safe to just grab s_fs_info and
+        // get a mutable reference to one of the dram indexes
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+
+        // TODO: is there a nice Result function you could use to remove the match?
+        let result = hayleyfs_rmdir(sbi, dir, dentry);
+        match result {
+            Ok(_) => Ok(0),
+            Err(e) => Err(e),
+        }
+    }
+
     fn rename(
         _mnt_idmap: *const bindings::mnt_idmap,
         old_dir: &fs::INode,
@@ -528,6 +544,89 @@ fn hayleyfs_mkdir<'a>(
     Ok((dentry, parent, inode))
 }
 
+fn hayleyfs_rmdir<'a>(
+    sbi: &'a SbInfo,
+    dir: &mut fs::INode,
+    dentry: &fs::DEntry,
+) -> Result<(
+    InodeWrapper<'a, Clean, Complete, DirInode>, // target
+    InodeWrapper<'a, Clean, DecLink, DirInode>,  // parent
+    DentryWrapper<'a, Clean, Free>,
+)> {
+    let inode = dentry.d_inode();
+    let (_parent_inode, parent_inode_info) =
+        sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name());
+    match dentry_info {
+        Some(dentry_info) => {
+            // check if the directory we are trying to delete is empty
+            let (pi, delete_dir_info) = sbi.get_init_dir_inode_by_vfs_inode(inode)?;
+            if !delete_dir_info.is_empty() {
+                return Err(ENOTEMPTY);
+            }
+            // if it is, start deleting
+            let pd = DentryWrapper::get_init_dentry(dentry_info)?;
+
+            // clear dentry inode
+            parent_inode_info.delete_dentry(dentry_info)?;
+            let pd = pd.clear_ino().flush().fence();
+
+            // decrement parent link count
+            // we should be able to reuse the regular dec_link_count function (it's a different
+            // transition in Alloy). According to Alloy we can wait for the next fence.
+            // but that is hard to coordinate with the vectors, so we just do an extra
+            let (parent_pi, _) = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+            let parent_pi = parent_pi.dec_link_count(&pd)?.flush().fence();
+
+            // deallocate pages (if any) belonging to the inode
+            // NOTE: we do this in a series of vectors to reduce the number of
+            // total flushes. Unclear if this saves us time, or if the overhead
+            // of more flushes is less than the time it takes to manage the vecs.
+            // We need to do some evaluation of this
+            let pages = delete_dir_info.get_all_pages()?;
+            let mut unmap_vec = Vec::new();
+            let mut to_dealloc = Vec::new();
+            let mut deallocated = Vec::new();
+            for page in pages.keys() {
+                // the pages have already been removed from the inode's page vector
+                let page = DirPageWrapper::mark_to_unmap(sbi, page)?;
+                unmap_vec.try_push(page)?;
+            }
+            for page in unmap_vec.drain(..) {
+                let page = page.unmap().flush();
+                to_dealloc.try_push(page)?;
+            }
+            let mut to_dealloc = fence_all_vecs!(to_dealloc);
+            for page in to_dealloc.drain(..) {
+                let page = page.dealloc().flush();
+                deallocated.try_push(page)?;
+            }
+            let deallocated = fence_all_vecs!(deallocated);
+            for page in &deallocated {
+                sbi.page_allocator.dealloc_dir_page(page)?;
+            }
+            let freed_pages = DirPageWrapper::mark_pages_free(deallocated)?;
+
+            // deallocate the inode
+            // since dir inodes do not have any links other than ./.. and their children,
+            // this also handles link count stuff
+            let pi = pi.dealloc(freed_pages).flush();
+
+            // deallocate the dentry
+            let pd = pd.dealloc_dentry().flush();
+
+            let (pi, pd) = fence_all!(pi, pd);
+
+            unsafe {
+                bindings::clear_nlink(inode);
+            }
+
+            Ok((pi, parent_pi, pd))
+        }
+        None => Err(ENOENT),
+    }
+}
+
 fn hayleyfs_rename<'a>(
     sbi: &'a SbInfo,
     old_dir: &fs::INode,
@@ -610,12 +709,10 @@ fn single_dir_rename<'a>(
                     let (old_pi, _) = sbi.get_init_reg_inode_by_vfs_inode(new_inode)?;
                     let old_pi = old_pi.dec_link_count_rename(&dst_dentry)?.flush();
                     let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
-                    pr_info!("dst dentry {:?}\n", dst_dentry);
                     let (old_pi, dst_dentry) = fence_all!(old_pi, dst_dentry);
                     // deallocate the src dentry
                     // this fully deallocates the dentry - it can now be used again
                     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
-                    pr_info!("src dentry {:?}\n", src_dentry);
                     // atomically update the volatile index
                     parent_inode_info
                         .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
@@ -744,6 +841,10 @@ fn finish_unlink<'a>(
         // go through each page and deallocate it
         // we can drain the vector since missing a page will result in
         // a runtime panic
+        // NOTE: we do this in a series of vectors to reduce the number of
+        // total flushes. Unclear if this saves us time, or if the overhead
+        // of more flushes is less than the time it takes to manage the vecs.
+        // We need to do some evaluation of this
         init_timing!(dealloc_pages);
         start_timing!(dealloc_pages);
         let mut to_dealloc = Vec::new();
