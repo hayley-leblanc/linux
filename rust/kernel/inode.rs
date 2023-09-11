@@ -88,6 +88,18 @@ impl<T: Operations> OperationsVtable<T> {
         }
     }
 
+    unsafe extern "C" fn rmdir_callback(
+        dir: *mut bindings::inode,
+        dentry: *mut bindings::dentry,
+    ) -> ffi::c_int {
+        from_kernel_result! {
+            // TODO: safety notes
+            let dir = unsafe { &mut *dir.cast() };
+            let dentry = unsafe { &mut *dentry.cast()};
+            T::rmdir(dir, dentry)
+        }
+    }
+
     unsafe extern "C" fn rename_callback(
         mnt_idmap: *mut bindings::mnt_idmap,
         old_dir: *mut bindings::inode,
@@ -160,7 +172,7 @@ impl<T: Operations> OperationsVtable<T> {
         unlink: Some(Self::unlink_callback),
         symlink: Some(Self::symlink_callback),
         mkdir: Some(Self::mkdir_callback),
-        rmdir: None,
+        rmdir: Some(Self::rmdir_callback),
         mknod: None,
         rename: Some(Self::rename_callback),
         setattr: Some(Self::setattr_callback),
@@ -210,6 +222,8 @@ pub trait Operations {
         dentry: &DEntry,
         umode: bindings::umode_t,
     ) -> Result<i32>;
+    /// Corresponds to the `rmdir` function pointer in `struct inode_operations`.
+    fn rmdir(dir: &mut INode, dentry: &DEntry) -> Result<i32>;
     /// Corresponds to the `link` function pointer in `struct inode_operations`.
     fn link(old_dentry: &DEntry, dir: &mut INode, dentry: &DEntry) -> Result<i32>;
     /// Corresponds to the `rename` function pointer in `struct inode_operations`
