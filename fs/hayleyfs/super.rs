@@ -41,6 +41,20 @@ impl fs::Context<Self> for HayleyFs {
 
     kernel::define_fs_params! {Box<SbInfo>,
         {flag, "init", |s, v| {s.mount_opts.init = Some(v); Ok(())}},
+        // TODO: let the user pass in a string
+        {u64, "write_type", |s, v| {
+            if v == 2 {
+                pr_info!("using write iterator\n");
+                s.mount_opts.write_type = Some(WriteType::Iterator);
+            } else if v == 1 {
+                pr_info!("using runtime checked writes\n");
+                s.mount_opts.write_type = Some(WriteType::RuntimeCheck);
+            } else {
+                pr_info!("using to single page writes\n");
+                s.mount_opts.write_type = Some(WriteType::SinglePage);
+            }
+            Ok(())
+        }}
     }
 
     fn try_new() -> Result<Self::Data> {
@@ -154,7 +168,11 @@ impl fs::Type for HayleyFs {
             (*buf).f_bsize = sbi.blocksize.try_into()?;
             (*buf).f_blocks = sbi.num_blocks;
             if sbi.num_blocks < sbi.get_pages_in_use() {
-                pr_info!("WARNING: {:?} total blocks but {:?} blocks in use\n", sbi.num_blocks, sbi.get_pages_in_use());
+                pr_info!(
+                    "WARNING: {:?} total blocks but {:?} blocks in use\n",
+                    sbi.num_blocks,
+                    sbi.get_pages_in_use()
+                );
             }
             (*buf).f_bfree = sbi.num_blocks - sbi.get_pages_in_use();
             (*buf).f_bavail = sbi.num_blocks - sbi.get_pages_in_use();

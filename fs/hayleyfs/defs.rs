@@ -98,9 +98,17 @@ impl HayleyFsSuperBlock {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum WriteType {
+    SinglePage = 0,
+    RuntimeCheck,
+    Iterator,
+}
+
 #[derive(Default, Debug)]
 pub(crate) struct HayleyfsParams {
     pub(crate) init: Option<bool>,
+    pub(crate) write_type: Option<WriteType>,
 }
 
 /// A volatile structure containing information about the file system superblock.
