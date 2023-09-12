@@ -323,7 +323,7 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
     }
 
     // TODO: implement
-    fn delete(&self, _page: DirPageInfo) -> Result<()> {
+    fn delete(&self, _pge: DirPageInfo) -> Result<()> {
         unimplemented!();
     }
 }
@@ -343,12 +343,18 @@ pub(crate) trait InoDentryMap {
         old_dentry: &[u8; MAX_FILENAME_LEN],
     ) -> Result<()>;
     fn has_dentries(&self) -> bool;
+    fn debug_print_dentries(&self);
 }
 
 impl InoDentryMap for HayleyFsDirInodeInfo {
     fn insert_dentry(&self, dentry: DentryInfo) -> Result<()> {
         let dentries = Arc::clone(&self.dentries);
         let mut dentries = dentries.lock();
+        pr_info!(
+            "inserting dentry {:?} into index for inode {:?}\n",
+            dentry.name,
+            self.ino
+        );
         dentries.try_insert(dentry.name, dentry)?;
         Ok(())
     }
@@ -415,7 +421,15 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
         let dentries = Arc::clone(&self.dentries);
         let dentries = dentries.lock();
         let mut keys = dentries.keys().peekable();
-        keys.peek().is_none()
+        keys.peek().is_some()
+    }
+
+    fn debug_print_dentries(&self) {
+        let dentries = Arc::clone(&self.dentries);
+        let dentries = dentries.lock();
+        for d in dentries.values() {
+            pr_info!("{:?}\n", d);
+        }
     }
 }
 

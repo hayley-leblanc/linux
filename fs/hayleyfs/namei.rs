@@ -726,7 +726,7 @@ fn single_dir_rename<'a>(
     DentryWrapper<'a, Clean, Complete>,
     DentryWrapper<'a, Clean, Free>,
 )> {
-    let old_name = old_dentry.d_name();
+    let _old_name = old_dentry.d_name();
     let new_name = new_dentry.d_name();
     let old_inode = old_dentry.d_inode();
     let new_inode = new_dentry.d_inode();
@@ -784,19 +784,26 @@ fn single_dir_rename<'a>(
                         InodeType::DIR => {
                             let (new_pi, delete_dir_info) =
                                 sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
-                            // TODO: do we need to check if the directory being overwritten is empty?
+                            delete_dir_info.debug_print_dentries();
                             // we DO need to decrement the parent link count because a directory is being deleted
                             // since dst inode is empty, we don't decrement its link count here
                             let parent_inode =
                                 parent_inode.dec_link_count_rename(&dst_dentry)?.flush();
                             let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
                             let (_parent_inode, dst_dentry) = fence_all!(parent_inode, dst_dentry);
+
                             let new_pi = new_pi.set_unmap_page_state()?;
                             let freed_pages = rmdir_delete_pages(sbi, &delete_dir_info, &new_pi)?;
+
                             let src_dentry = src_dentry.dealloc_dentry().flush().fence();
                             parent_inode_info
                                 .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
+
                             let _new_pi = new_pi.dealloc(freed_pages).flush().fence();
+                            unsafe {
+                                bindings::drop_nlink(old_dir.get_inner());
+                            }
+
                             Ok((dst_dentry, src_dentry))
                         }
                         _ => {
