@@ -690,6 +690,20 @@ fn hayleyfs_rename<'a>(
     let (parent_inode, parent_inode_info) =
         sbi.get_init_dir_inode_by_vfs_inode(old_dir.get_inner())?;
     let old_dentry_info = parent_inode_info.lookup_dentry(old_name);
+    // match old_dentry_info {
+    //     Some(old_dentry_info) => single_dir_rename(
+    //         sbi,
+    //         &old_dentry_info,
+    //         old_dentry,
+    //         new_dentry,
+    //         old_dir,
+    //         new_dir,
+    //         parent_inode,
+    //         parent_inode_info,
+    //     ),
+    //     None => Err(ENOENT),
+    // }
+
     match old_dentry_info {
         None => Err(ENOENT),
         Some(old_dentry_info) => {
@@ -706,8 +720,18 @@ fn hayleyfs_rename<'a>(
                     parent_inode_info,
                 )
             } else {
-                pr_info!("ERROR: cross-directory rename not supported\n");
-                unimplemented!()
+                // pr_info!("ERROR: cross-directory rename not supported\n");
+                // unimplemented!()
+                cross_dir_rename(
+                    sbi,
+                    &old_dentry_info,
+                    old_dentry,
+                    new_dentry,
+                    old_dir,
+                    new_dir,
+                    parent_inode,
+                    parent_inode_info,
+                )
             }
         }
     }
@@ -719,25 +743,33 @@ fn single_dir_rename<'a>(
     old_dentry: &fs::DEntry,
     new_dentry: &fs::DEntry,
     old_dir: &fs::INode,
-    _new_dir: &fs::INode,
+    new_dir: &fs::INode,
     parent_inode: InodeWrapper<'a, Clean, Start, DirInode>,
     parent_inode_info: &HayleyFsDirInodeInfo,
 ) -> Result<(
     DentryWrapper<'a, Clean, Complete>,
     DentryWrapper<'a, Clean, Free>,
 )> {
+    pr_info!("rename\n");
     let _old_name = old_dentry.d_name();
     let new_name = new_dentry.d_name();
     let old_inode = old_dentry.d_inode();
     let new_inode = new_dentry.d_inode();
+    let (_, new_parent_inode_info) = sbi.get_init_dir_inode_by_vfs_inode(new_dir.get_inner())?;
 
-    let new_dentry_info = parent_inode_info.lookup_dentry(new_name);
+    // let new_dentry_info = parent_inode_info.lookup_dentry(new_name);
+    let new_dentry_info = if old_dir.i_ino() == new_dir.i_ino() {
+        parent_inode_info.lookup_dentry(new_name)
+    } else {
+        new_parent_inode_info.lookup_dentry(new_name)
+    };
     let inode_type = sbi.check_inode_type_by_vfs_inode(old_dentry.d_inode());
     match inode_type {
         Ok(InodeType::REG) | Ok(InodeType::SYMLINK) | Ok(InodeType::DIR) => {
             // TODO: refactor - there is some repeated code here
             match new_dentry_info {
                 Some(new_dentry_info) => {
+                    pr_info!("overwrite case\n");
                     let new_inode_type = sbi.check_inode_type_by_vfs_inode(new_inode)?;
 
                     // if overwriting a directory, is that directory empty?
@@ -813,6 +845,7 @@ fn single_dir_rename<'a>(
                     }
                 }
                 None => {
+                    pr_info!("non overwrite case\n");
                     // not overwriting a dentry - allocate a new one
                     // this is the same regardless of whether we are using a reg or dir inode
                     // allocate new persistent dentry
@@ -830,6 +863,18 @@ fn single_dir_rename<'a>(
                     // clear src dentry's inode
                     let src_dentry = src_dentry.clear_ino().flush().fence();
 
+                    // // if we are renaming a directory and moving it into a new parent, decrement
+                    // // its parent's link count
+                    // // TODO: do something to make sure this is flushed/fenced by the end
+                    // if old_dir.i_ino() != new_dir.i_ino() && inode_type == Ok(InodeType::DIR) {
+                    //     pr_info!("crossdir rename dir\n");
+                    //     let _parent_inode =
+                    //         parent_inode.dec_link_count(&src_dentry)?.flush().fence();
+                    //     unsafe {
+                    //         bindings::drop_nlink(old_dir.get_inner());
+                    //     }
+                    // }
+
                     // clear the rename pointer, using the invalid src dentry as proof that it is
                     // safe to do so
                     let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush().fence();
@@ -838,9 +883,25 @@ fn single_dir_rename<'a>(
                     // this fully deallocates the dentry - it can now be used again
                     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
 
-                    // atomically update the volatile index
+                    // // atomically update the volatile index
+                    // if old_dir.i_ino() == new_dir.i_ino() {
+                    //     // moving to a new name within the same directory
                     parent_inode_info
                         .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
+                    // } else {
+                    //     pr_info!("crossdir rename 1\n");
+                    //     // let (_, new_parent_inode_info) =
+                    //     //     sbi.get_init_dir_inode_by_vfs_inode(new_dir.get_inner())?;
+                    //     pr_info!("crossdir rename 2\n");
+
+                    //     // cross-directory rename; need to update both parents' indexes
+                    //     parent_inode_info.atomic_crossdir_rename_index_update(
+                    //         &new_parent_inode_info,
+                    //         &dst_dentry,
+                    //         &old_dentry_name,
+                    //     )?;
+                    //     pr_info!("crossdir rename 3\n");
+                    // }
 
                     // since we are creating a new dentry, there is no inode to deallocate
                     Ok((dst_dentry, src_dentry))
@@ -853,6 +914,22 @@ fn single_dir_rename<'a>(
         }
         Err(e) => Err(e),
     }
+}
+
+fn cross_dir_rename<'a>(
+    sbi: &'a SbInfo,
+    old_dentry_info: &DentryInfo,
+    old_dentry: &fs::DEntry,
+    new_dentry: &fs::DEntry,
+    old_dir: &fs::INode,
+    new_dir: &fs::INode,
+    parent_inode: InodeWrapper<'a, Clean, Start, DirInode>,
+    parent_inode_info: &HayleyFsDirInodeInfo,
+) -> Result<()> {
+    // ) -> Result<(
+    //     DentryWrapper<'a, Clean, Complete>,
+    //     DentryWrapper<'a, Clean, Free>,
+    // )> {
 }
 
 #[allow(dead_code)]

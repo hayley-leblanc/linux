@@ -329,6 +329,7 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
 }
 
 pub(crate) trait InoDentryMap {
+    type DentryIndex;
     fn insert_dentry(&self, dentry: DentryInfo) -> Result<()>;
     fn insert_dentries(
         &self,
@@ -342,11 +343,18 @@ pub(crate) trait InoDentryMap {
         new_dentry: &DentryWrapper<'a, Clean, Complete>,
         old_dentry: &[u8; MAX_FILENAME_LEN],
     ) -> Result<()>;
+    fn atomic_crossdir_rename_index_update<'a>(
+        &self,
+        new_parent: &Self::DentryIndex,
+        new_dentry: &DentryWrapper<'a, Clean, Complete>,
+        old_dentry: &[u8; MAX_FILENAME_LEN],
+    ) -> Result<()>;
     fn has_dentries(&self) -> bool;
     fn debug_print_dentries(&self);
 }
 
 impl InoDentryMap for HayleyFsDirInodeInfo {
+    type DentryIndex = HayleyFsDirInodeInfo;
     fn insert_dentry(&self, dentry: DentryInfo) -> Result<()> {
         let dentries = Arc::clone(&self.dentries);
         let mut dentries = dentries.lock();
@@ -414,6 +422,22 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
         let mut dentries = dentries.lock();
         dentries.try_insert(new_dentry_info.name, new_dentry_info)?;
         dentries.remove(old_dentry_name);
+        Ok(())
+    }
+
+    fn atomic_crossdir_rename_index_update<'a>(
+        &self,
+        new_parent: &Self::DentryIndex,
+        new_dentry: &DentryWrapper<'a, Clean, Complete>,
+        old_dentry_name: &[u8; MAX_FILENAME_LEN],
+    ) -> Result<()> {
+        let new_dentry_info = new_dentry.get_dentry_info();
+        let old_dentries = Arc::clone(&self.dentries);
+        let mut old_dentries = old_dentries.lock();
+        let new_dentries = Arc::clone(&new_parent.dentries);
+        let mut new_dentries = new_dentries.lock();
+        new_dentries.try_insert(new_dentry_info.name, new_dentry_info)?;
+        old_dentries.remove(old_dentry_name);
         Ok(())
     }
 
