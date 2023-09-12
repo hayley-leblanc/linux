@@ -323,9 +323,11 @@ source "fs/sysv/Kconfig"
 source "fs/ufs/Kconfig"
 source "fs/erofs/Kconfig"
 source "fs/vboxsf/Kconfig"
-source "fs/hayleyfs/Kconfig"
 
 endif # MISC_FILESYSTEMS
+
+source "fs/hayleyfs/Kconfig"
+source "fs/nova/Kconfig"
 
 menuconfig NETWORK_FILESYSTEMS
 	bool "Network File Systems"

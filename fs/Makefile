@@ -139,3 +139,4 @@ obj-$(CONFIG_EROFS_FS)		+= erofs/
 obj-$(CONFIG_VBOXSF_FS)		+= vboxsf/
 obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
 obj-$(CONFIG_HAYLEY_FS)		+= hayleyfs/
+obj-$(CONFIG_NOVA_FS)		+= nova/
