@@ -269,7 +269,7 @@ int nova_reset_mapping_csum_parity(struct super_block *sb,
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	pgoff_t indices[PAGEVEC_SIZE];
-	struct pagevec pvec;
+	struct folio_batch fbatch;
 	bool done = false;
 	int count = 0;
 	unsigned long start = 0;
@@ -284,17 +284,16 @@ int nova_reset_mapping_csum_parity(struct super_block *sb,
 			__func__, start_pgoff, end_pgoff);
 
 	while (!done) {
-		pvec.nr = find_get_entries_tag(mapping, start_pgoff,
-				PAGECACHE_TAG_DIRTY, PAGEVEC_SIZE,
-				pvec.pages, indices);
+		fbatch.nr = filemap_get_folios_tag(mapping, &start_pgoff, 
+				end_pgoff, PAGECACHE_TAG_DIRTY, &fbatch);
 
-		if (pvec.nr == 0)
+		if (fbatch.nr == 0)
 			break;
 
 		if (count == 0)
 			start = indices[0];
 
-		for (i = 0; i < pvec.nr; i++) {
+		for (i = 0; i < fbatch.nr; i++) {
 			if (indices[i] >= end_pgoff) {
 				done = true;
 				break;
@@ -305,11 +304,11 @@ int nova_reset_mapping_csum_parity(struct super_block *sb,
 						indices[i], 0);
 		}
 
-		count += pvec.nr;
-		if (pvec.nr < PAGEVEC_SIZE)
+		count += fbatch.nr;
+		if (fbatch.nr < PAGEVEC_SIZE)
 			break;
 
-		start_pgoff = indices[pvec.nr - 1] + 1;
+		start_pgoff = indices[fbatch.nr - 1] + 1;
 	}
 
 	if (count)

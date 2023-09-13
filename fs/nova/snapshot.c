@@ -335,7 +335,7 @@ static int nova_initialize_snapshot_info(struct super_block *sb,
 	struct snapshot_info *info;
 	struct snapshot_list *list;
 	int i;
-	int ret;
+	int ret = 0;
 	INIT_TIMING(init_snapshot_time);
 
 	NOVA_START_TIMING(init_snapshot_info_t, init_snapshot_time);
@@ -903,7 +903,7 @@ static int nova_append_snapshot_info_log(struct super_block *sb,
 	return 0;
 }
 
-int nova_create_snapshot(struct super_block *sb)
+int nova_create_snapshot(struct super_block *sb, struct inode *inode)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct snapshot_info *info = NULL;
@@ -931,8 +931,8 @@ int nova_create_snapshot(struct super_block *sb)
 
 
 	ktime_get_coarse_real_ts64(&now);
-	timestamp = timespec64_trunc(now,
-				   sb->s_time_gran).tv_sec;
+	timestamp = timestamp_truncate(now,
+				   inode).tv_sec;
 
 	ret = nova_initialize_snapshot_info(sb, &info, 1, epoch_id);
 	if (ret) {
@@ -958,7 +958,7 @@ int nova_create_snapshot(struct super_block *sb)
 
 	nova_set_vmas_readonly(sb);
 
-	sbi->nova_sb->s_wtime = cpu_to_le32(get_seconds());
+	sbi->nova_sb->s_wtime = cpu_to_le32(ktime_get_real_seconds());
 	sbi->nova_sb->s_epoch_id = cpu_to_le64(epoch_id + 1);
 	nova_update_super_crc(sb);
 

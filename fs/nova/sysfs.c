@@ -289,7 +289,7 @@ ssize_t nova_seq_create_snapshot(struct file *filp, const char __user *buf,
 	struct inode *inode = mapping->host;
 	struct super_block *sb = PDE_DATA(inode);
 
-	nova_create_snapshot(sb);
+	nova_create_snapshot(sb, inode);
 	return len;
 }
 
