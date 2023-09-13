@@ -22,6 +22,11 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/io.h>
+// #include <asm/cacheflush.h>
+// #include <asm/mmu_context.h>
+// #include <linux/mm_types.h>
+// #include <asm/tlbflush.h>
+#include <asm/tlb.h>
 #include "nova.h"
 #include "inode.h"
 
@@ -159,7 +164,7 @@ static int nova_dax_cow_mmap_handler(struct super_block *sb,
 	struct vm_area_struct *vma, struct nova_inode_info_header *sih,
 	u64 begin_tail)
 {
-	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entry = NULL;
 	struct nova_file_write_entry *entryc, entry_copy;
 	u64 curr_p = begin_tail;
 	size_t entry_size = sizeof(struct nova_file_write_entry);
@@ -244,7 +249,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode *pi;
-	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entry = NULL;
 	struct nova_file_write_entry *entryc, entry_copy;
 	struct nova_file_write_entry entry_data;
 	struct nova_inode_update update;
@@ -439,12 +444,13 @@ out:
 
 static int nova_set_vma_read(struct vm_area_struct *vma)
 {
+	struct mmu_gather tlb;
 	struct mm_struct *mm = vma->vm_mm;
 	unsigned long oldflags = vma->vm_flags;
 	unsigned long newflags;
-	pgprot_t new_page_prot;
+	// pgprot_t new_page_prot;
 
-	down_write(&mm->mmap_sem);
+	down_write(&mm->mmap_lock);
 
 	newflags = oldflags & (~VM_WRITE);
 	if (oldflags == newflags)
@@ -454,13 +460,16 @@ static int nova_set_vma_read(struct vm_area_struct *vma)
 				vma, vma->vm_start,
 				vma->vm_end);
 
-	new_page_prot = vm_get_page_prot(newflags);
-	change_protection(vma, vma->vm_start, vma->vm_end,
-				new_page_prot, 0, 0);
-	vma->original_write = 1;
+	// new_page_prot = vm_get_page_prot(newflags);
+	tlb_gather_mmu(&tlb, vma->vm_mm);
+	// change_protection(vma, vma->vm_start, vma->vm_end,
+	// 			new_page_prot, 0, 0);
+	change_protection(&tlb, vma, vma->vm_start, vma->vm_end, MM_CP_UFFD_WP);
+	nova_insert_write_vma(vma);
+	// vma->original_write = 1;
 
 out:
-	up_write(&mm->mmap_sem);
+	up_write(&mm->mmap_lock);
 
 	return 0;
 }

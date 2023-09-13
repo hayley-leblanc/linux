@@ -1046,7 +1046,8 @@ int nova_inode_log_fast_gc(struct super_block *sb,
 	int force_thorough);
 
 /* ioctl.c */
-extern long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+extern long nova_ioctl(struct file *filp, unsigned int cmd, 
+	unsigned long arg);
 #ifdef CONFIG_COMPAT
 extern long nova_compat_ioctl(struct file *file, unsigned int cmd,
 	unsigned long arg);

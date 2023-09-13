@@ -283,7 +283,7 @@ int nova_delete_file_tree(struct super_block *sb,
 	unsigned long last_blocknr, bool delete_nvmm, bool delete_dead,
 	u64 epoch_id)
 {
-	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entry = NULL;
 	struct nova_file_write_entry *entryc, entry_copy;
 	struct nova_file_write_entry *old_entry = NULL;
 	unsigned long pgoff = start_blocknr;
@@ -443,7 +443,7 @@ static int nova_lookup_hole_in_range(struct super_block *sb,
 	unsigned long first_blocknr, unsigned long last_blocknr,
 	int *data_found, int *hole_found, int hole)
 {
-	struct nova_file_write_entry *entry;
+	struct nova_file_write_entry *entry = NULL;
 	struct nova_file_write_entry *entryc, entry_copy;
 	unsigned long blocks = 0;
 	unsigned long pgoff, old_pgoff;
@@ -1053,9 +1053,10 @@ u64 nova_new_nova_inode(struct super_block *sb, u64 *pi_addr)
 	return ino;
 }
 
-struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
-	struct inode *dir, u64 pi_addr, u64 ino, umode_t mode,
-	size_t size, dev_t rdev, const struct qstr *qstr, u64 epoch_id)
+struct inode *nova_new_vfs_inode(struct mnt_idmap* mnt_idmap, 
+	enum nova_new_inode_type type, struct inode *dir, u64 pi_addr, 
+	u64 ino, umode_t mode, size_t size, dev_t rdev, const struct qstr *qstr,
+	u64 epoch_id)
 {
 	struct super_block *sb;
 	struct nova_sb_info *sbi;
@@ -1079,7 +1080,7 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 		goto fail2;
 	}
 
-	inode_init_owner(inode, dir, mode);
+	inode_init_owner(mnt_idmap, inode, dir, mode);
 	inode->i_blocks = inode->i_size = 0;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 
@@ -1285,7 +1286,7 @@ int nova_getattr(struct mnt_idmap *mnt_idmap, const struct path *path, struct ks
 	if (flags & FS_NODUMP_FL)
 		stat->attributes |= STATX_ATTR_NODUMP;
 
-	generic_fillattr(inode, stat);
+	generic_fillattr(mnt_idmap, inode, stat);
 	/* stat->blocks should be the number of 512B blocks */
 	stat->blocks = (inode->i_blocks << inode->i_sb->s_blocksize_bits) >> 9;
 	return 0;
@@ -1310,12 +1311,12 @@ int nova_notify_change(struct mnt_idmap *mnt_idmap, struct dentry *dentry, struc
 		goto out;
 	}
 
-	ret = setattr_prepare(dentry, attr);
+	ret = setattr_prepare(mnt_idmap, dentry, attr);
 	if (ret)
 		goto out;
 
 	/* Update inode with attr except for size */
-	setattr_copy(inode, attr);
+	setattr_copy(mnt_idmap, inode, attr);
 
 	epoch_id = nova_get_epoch_id(sb);
 
@@ -1442,11 +1443,12 @@ static int nova_writepages(struct address_space *mapping,
 	struct writeback_control *wbc)
 {
 	int ret;
+	struct nova_sb_info *sbi = NOVA_SB(mapping->host->i_sb);
 	INIT_TIMING(wp_time);
 
 	NOVA_START_TIMING(write_pages_t, wp_time);
 	ret = dax_writeback_mapping_range(mapping,
-			mapping->host->i_sb->s_bdev, wbc);
+			sbi->s_dax_dev, wbc);
 	NOVA_END_TIMING(write_pages_t, wp_time);
 	return ret;
 }

@@ -117,7 +117,7 @@ static bool curr_page_invalid(struct super_block *sb,
 
 	curr_page = (struct nova_inode_log_page *)
 					nova_get_block(sb, page_head);
-	rc = memcpy_mcsafe(&page_tail, &curr_page->page_tail,
+	rc = copy_mc_fragile(&page_tail, &curr_page->page_tail,
 					sizeof(struct nova_inode_page_tail));
 	if (rc) {
 		/* FIXME: Recover use replica log */
@@ -201,7 +201,7 @@ static int nova_gc_assign_dentry(struct super_block *sb,
 	if (found == 1 && hash == ret_node->hash) {
 		if (ret_node->direntry == old_dentry)
 			ret_node->direntry = new_dentry;
-			nova_update_range_node_checksum(ret_node);    /* update checksum */
+		nova_update_range_node_checksum(ret_node);    /* update checksum */
 	}
 
 	return ret;

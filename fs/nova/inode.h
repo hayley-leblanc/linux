@@ -386,8 +386,9 @@ int nova_delete_file_tree(struct super_block *sb,
 	unsigned long last_blocknr, bool delete_nvmm,
 	bool delete_dead, u64 trasn_id);
 u64 nova_new_nova_inode(struct super_block *sb, u64 *pi_addr);
-extern struct inode *nova_new_vfs_inode(enum nova_new_inode_type,
-	struct inode *dir, u64 pi_addr, u64 ino, umode_t mode,
-	size_t size, dev_t rdev, const struct qstr *qstr, u64 epoch_id);
+extern struct inode *nova_new_vfs_inode(struct mnt_idmap *mnt_idmap, 
+	enum nova_new_inode_type, struct inode *dir, u64 pi_addr, u64 ino, 
+	umode_t mode, size_t size, dev_t rdev, const struct qstr *qstr, 
+	u64 epoch_id);
 
 #endif
