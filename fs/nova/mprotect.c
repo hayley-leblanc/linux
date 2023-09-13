@@ -22,10 +22,6 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/io.h>
-// #include <asm/cacheflush.h>
-// #include <asm/mmu_context.h>
-// #include <linux/mm_types.h>
-// #include <asm/tlbflush.h>
 #include <asm/tlb.h>
 #include "nova.h"
 #include "inode.h"
@@ -448,7 +444,6 @@ static int nova_set_vma_read(struct vm_area_struct *vma)
 	struct mm_struct *mm = vma->vm_mm;
 	unsigned long oldflags = vma->vm_flags;
 	unsigned long newflags;
-	// pgprot_t new_page_prot;
 
 	down_write(&mm->mmap_lock);
 
@@ -460,13 +455,9 @@ static int nova_set_vma_read(struct vm_area_struct *vma)
 				vma, vma->vm_start,
 				vma->vm_end);
 
-	// new_page_prot = vm_get_page_prot(newflags);
 	tlb_gather_mmu(&tlb, vma->vm_mm);
-	// change_protection(vma, vma->vm_start, vma->vm_end,
-	// 			new_page_prot, 0, 0);
 	change_protection(&tlb, vma, vma->vm_start, vma->vm_end, MM_CP_UFFD_WP);
 	nova_insert_write_vma(vma);
-	// vma->original_write = 1;
 
 out:
 	up_write(&mm->mmap_lock);
