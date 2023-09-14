@@ -213,6 +213,10 @@ impl SbInfo {
         self.blocks_in_use.fetch_add(1, Ordering::SeqCst);
     }
 
+    pub(crate) fn add_blocks_in_use(&self, new_blocks: u64) {
+        self.blocks_in_use.fetch_add(new_blocks, Ordering::SeqCst);
+    }
+
     pub(crate) fn get_pages_in_use(&self) -> u64 {
         self.blocks_in_use.load(Ordering::SeqCst)
     }

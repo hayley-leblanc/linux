@@ -238,6 +238,38 @@ fn single_page_write<'a>(
 }
 
 #[allow(dead_code)]
+fn iterator_write<'a>(
+    sbi: &'a SbInfo,
+    pi: &InodeWrapper<'a, Clean, Start, RegInode>,
+    pi_info: &HayleyFsRegInodeInfo,
+    _reader: &mut impl IoBufferReader,
+    count: u64,
+    offset: u64,
+) -> Result<()> {
+    let page_list = DataPageListWrapper::get_data_page_list(pi_info, count, offset)?;
+    let page_list_len = page_list.len()?;
+    let no_pages_to_write = count / HAYLEYFS_PAGESIZE;
+    if page_list_len < no_pages_to_write {
+        // we need to allocate new pages
+        let pages_to_allocate = no_pages_to_write - page_list_len;
+        let page_list = page_list
+            .allocate_pages(
+                sbi,
+                &pi_info,
+                no_pages_to_write.try_into()?,
+                pages_to_allocate,
+            )?
+            .fence();
+        sbi.add_blocks_in_use(pages_to_allocate);
+        // set backpointers for all new pages
+        let page_list = page_list.set_backpointers(sbi, pi.get_ino())?.fence();
+        pi_info.insert_pages(&page_list, no_pages_to_write)?;
+        // TODO FRIDAY
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
 fn hayleyfs_read(
     sbi: &SbInfo,
     // inode: RwSemaphore<&mut fs::INode>,

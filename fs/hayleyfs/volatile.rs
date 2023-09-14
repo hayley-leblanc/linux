@@ -128,6 +128,10 @@ impl DataPageInfo {
     pub(crate) fn get_page_no(&self) -> PageNum {
         self.page_no
     }
+
+    pub(crate) fn get_offset(&self) -> u64 {
+        self.offset
+    }
 }
 
 // TODO: could just be offset and page number - storing whole DataPageInfo is redundant...
@@ -151,6 +155,10 @@ impl HayleyFsRegInodeInfo {
             pages: Arc::try_new(Mutex::new(tree))?,
         })
     }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.ino
+    }
 }
 
 /// maps file inodes to info about their pages
@@ -161,6 +169,11 @@ pub(crate) trait InoDataPageMap {
     fn insert<'a, State: Initialized>(
         &self,
         page: &DataPageWrapper<'a, Clean, State>,
+    ) -> Result<()>;
+    fn insert_pages<'a, State: Initialized>(
+        &self,
+        page_list: &DataPageListWrapper<Clean, State>,
+        pages_added: u64,
     ) -> Result<()>;
     fn find(&self, offset: u64) -> Option<DataPageInfo>;
     fn get_all_pages(&self) -> Result<RBTree<u64, DataPageInfo>>;
@@ -187,6 +200,24 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
                 offset,
             },
         )?;
+        Ok(())
+    }
+
+    fn insert_pages<'a, State: Initialized>(
+        &self,
+        page_list: &DataPageListWrapper<Clean, State>,
+        pages_added: u64,
+    ) -> Result<()> {
+        let pages = Arc::clone(&self.pages);
+        let mut pages = pages.lock();
+        let num_pages = page_list.len()?;
+        for i in (num_pages - pages_added)..num_pages {
+            let page = page_list.get_page(i.try_into()?);
+            match page {
+                Some(page) => pages.try_insert(page.get_offset(), page.clone())?,
+                None => break,
+            };
+        }
         Ok(())
     }
 

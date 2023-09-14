@@ -493,43 +493,10 @@ impl DirPage<'_> {
             let ino = d.get_ino();
             if ino != 0 {
                 let name = d.get_name();
-                // // janky hack to get an owned string we can use in index
-                // let name_str: String = unsafe {
-                //     CStr::from_char_ptr(name.as_ptr() as *const core::ffi::c_char)
-                //         .to_str()?
-                //         .try_to_owned()?
-                // };
-                // let name_str2: Vec<u8> = unsafe {
-                //     CString::new(
-                //         CStr::from_char_ptr(name.as_ptr() as *const core::ffi::c_char).to_str()?,
-                //     )
-                //     // .into_bytes()
-                // };
                 let virt_addr = d as *const HayleyFsDentry as *const ffi::c_void;
                 dentry_vec.try_push(DentryInfo::new(ino, virt_addr, name))?;
             }
         }
-        // let live_dentries = self.dentries.iter().filter_map(|d| {
-        //     let ino = d.get_ino();
-        //     if ino != 0 {
-        //         let name = d.get_name();
-        //         let name_cstr: &str = unsafe {
-        //             CStr::from_char_ptr(name.as_ptr() as *const core::ffi::c_char)
-        //                 .to_str()?
-        //                 .try_to_owned()?
-        //         };
-        //         // let name_slice: &[u8] = &name[..];
-        //         // let name_vec: Vec<u8> = name_slice.try_into()?;
-        //         let virt_addr = d as *const HayleyFsDentry as *const ffi::c_void;
-        //         Some(DentryInfo::new(ino, virt_addr, name))
-        //     } else {
-        //         None
-        //     }
-        // });
-        // // TODO: a more efficient way? kernel doesn't provide collect()
-        // for d in live_dentries {
-        //     dentry_vec.try_push(d)?;
-        // }
         Ok(dentry_vec)
     }
 }
@@ -1275,5 +1242,130 @@ impl<'a, State, Op> Drop for DataPageWrapper<'a, State, Op> {
             DropType::Ok => {}
             DropType::Panic => panic!("ERROR: attempted to drop an undroppable object"),
         };
+    }
+}
+
+/// Represents a typestate-ful section of a file.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) struct DataPageListWrapper<State, Op> {
+    state: PhantomData<State>,
+    op: PhantomData<Op>,
+    offset: u64, // offset at which the contiguous chunk of pages starts
+    // TODO: what structure should we use here? vec has a size limit
+    page_nos: Vec<DataPageInfo>,
+}
+
+impl<State, Op> PmObjWrapper for DataPageListWrapper<State, Op> {}
+
+impl<State, Op> DataPageListWrapper<State, Op> {
+    pub(crate) fn len(&self) -> Result<u64> {
+        Ok(self.page_nos.len().try_into()?)
+    }
+
+    pub(crate) fn get_page(&self, index: usize) -> Option<&DataPageInfo> {
+        self.page_nos.get(index)
+    }
+}
+
+impl DataPageListWrapper<Clean, Start> {
+    /// Obtain a list of pages representing a contiguous section of a file
+    /// starting at offset and with size len
+    pub(crate) fn get_data_page_list<'a>(
+        pi_info: &HayleyFsRegInodeInfo,
+        len: u64,
+        offset: u64,
+    ) -> Result<Self> {
+        let mut bytes = 0;
+        let mut page_nos = Vec::new();
+        while bytes < len {
+            // get offset of the next page in the file
+            let page_offset = page_offset(offset)?;
+            // determine if the file actually has the page
+            let result = pi_info.find(page_offset);
+            let page_no = match result {
+                Some(data_page_info) => data_page_info.get_page_no(),
+                None => break, // if we reach the end of the file, end the loop
+            };
+            page_nos.try_push(DataPageInfo::new(pi_info.get_ino(), page_no, offset))?;
+            bytes += HAYLEYFS_PAGESIZE;
+        }
+        Ok(Self {
+            state: PhantomData,
+            op: PhantomData,
+            offset,
+            page_nos,
+        })
+    }
+
+    // allocates pages to represent a contiguous chunk of a file (the pages
+    // themselves may not be physically contiguous)
+    pub(crate) fn allocate_pages<'a>(
+        mut self,
+        sbi: &'a SbInfo,
+        pi_info: &HayleyFsRegInodeInfo,
+        no_pages: usize,
+        mut offset: u64,
+    ) -> Result<DataPageListWrapper<InFlight, Alloc>> {
+        let mut new_pages = Vec::try_with_capacity(no_pages)?;
+        for _ in 0..no_pages {
+            let page_no = sbi.page_allocator.alloc_page()?;
+            // run this here just to make sure we haven't run out of space in the
+            // page header table
+            // TODO: write an actual check for that
+            let _ph = page_no_to_data_header(sbi, page_no)?;
+            new_pages.try_push(page_no)?;
+        }
+        self.page_nos.try_reserve(no_pages)?;
+        for page_no in new_pages.drain(..) {
+            let ph = page_no_to_data_header(sbi, page_no)?;
+            ph.page_type = PageType::DATA;
+            ph.offset = offset;
+            flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
+            self.page_nos
+                .try_push(DataPageInfo::new(pi_info.get_ino(), page_no, offset))?;
+            offset += HAYLEYFS_PAGESIZE;
+        }
+        Ok(DataPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            offset: self.offset,
+            page_nos: self.page_nos,
+        })
+    }
+}
+
+impl DataPageListWrapper<Clean, Alloc> {
+    pub(crate) fn set_backpointers<'a>(
+        self,
+        sbi: &'a SbInfo,
+        ino: InodeNum,
+    ) -> Result<DataPageListWrapper<InFlight, Writeable>> {
+        for page in &self.page_nos {
+            let mut ph = page_no_to_data_header(sbi, page.get_page_no())?;
+            if ph.get_ino() == 0 {
+                ph.ino = ino;
+                // TODO: only flush the cache line we changed
+                flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
+            }
+        }
+        Ok(DataPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            offset: self.offset,
+            page_nos: self.page_nos,
+        })
+    }
+}
+
+impl<Op> DataPageListWrapper<InFlight, Op> {
+    pub(crate) fn fence(self) -> DataPageListWrapper<Clean, Op> {
+        sfence();
+        DataPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            offset: self.offset,
+            page_nos: self.page_nos,
+        }
     }
 }
