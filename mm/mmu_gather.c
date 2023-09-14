@@ -336,6 +336,7 @@ void tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm)
 {
 	__tlb_gather_mmu(tlb, mm, false);
 }
+EXPORT_SYMBOL(tlb_gather_mmu);
 
 /**
  * tlb_gather_mmu_fullmm - initialize an mmu_gather structure for page-table tear-down

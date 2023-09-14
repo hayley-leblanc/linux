@@ -1363,7 +1363,6 @@ static int failure_thread_func(void *data)
 
 	finished[cpuid] = 1;
 	wake_up_interruptible(&finish_wq);
-	do_exit(ret);
 	return ret;
 }
 

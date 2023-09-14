@@ -556,6 +556,7 @@ long change_protection(struct mmu_gather *tlb,
 
 	return pages;
 }
+EXPORT_SYMBOL(change_protection);
 
 static int prot_none_pte_entry(pte_t *pte, unsigned long addr,
 			       unsigned long next, struct mm_walk *walk)

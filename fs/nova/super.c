@@ -119,27 +119,18 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	pfn_t __pfn_t;
 	long size;
 	struct dax_device *dax_dev;
-	int ret;
+	unsigned long long start_off = 0;
 
-	ret = bdev_dax_supported(sb->s_bdev, PAGE_SIZE);
-	nova_dbg_verbose("%s: dax_supported = %d; bdev->super=0x%p",
-			 __func__, ret, sb->s_bdev->bd_super);
-	if (!ret) {
+	dax_dev = fs_dax_get_by_bdev(sb->s_bdev, &start_off, NULL, NULL);
+	if (!dax_dev) {
 		nova_err(sb, "device does not support DAX\n");
 		return -EINVAL;
 	}
-
 	sbi->s_bdev = sb->s_bdev;
-
-	dax_dev = fs_dax_get_by_host(sb->s_bdev->bd_disk->disk_name);
-	if (!dax_dev) {
-		nova_err(sb, "Couldn't retrieve DAX device.\n");
-		return -EINVAL;
-	}
 	sbi->s_dax_dev = dax_dev;
 
 	size = dax_direct_access(sbi->s_dax_dev, 0, LONG_MAX/PAGE_SIZE,
-				 &virt_addr, &__pfn_t) * PAGE_SIZE;
+				 DAX_ACCESS, &virt_addr, &__pfn_t) * PAGE_SIZE;
 	if (size <= 0) {
 		nova_err(sb, "direct_access failed\n");
 		return -EINVAL;
@@ -366,7 +357,7 @@ inline void nova_update_super_crc(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	u32 crc = 0;
 
-	sbi->nova_sb->s_wtime = cpu_to_le32(get_seconds());
+	sbi->nova_sb->s_wtime = cpu_to_le32(ktime_get_real_seconds());
 	sbi->nova_sb->s_sum = 0;
 	crc = nova_crc32c(~0, (__u8 *)sbi->nova_sb + sizeof(__le32),
 			sizeof(struct nova_super_block) - sizeof(__le32));
@@ -379,7 +370,7 @@ static inline void nova_update_mount_time(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	u64 mnt_write_time;
 
-	mnt_write_time = (get_seconds() & 0xFFFFFFFF);
+	mnt_write_time = (ktime_get_real_seconds() & 0xFFFFFFFF);
 	mnt_write_time = mnt_write_time | (mnt_write_time << 32);
 
 	sbi->nova_sb->s_mtime = cpu_to_le64(mnt_write_time);
@@ -471,7 +462,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	root_i->i_flags = 0;
 	root_i->i_size = cpu_to_le64(sb->s_blocksize);
 	root_i->i_atime = root_i->i_mtime = root_i->i_ctime =
-		cpu_to_le32(get_seconds());
+		cpu_to_le32(ktime_get_real_seconds());
 	root_i->nova_ino = cpu_to_le64(NOVA_ROOT_INO);
 	root_i->valid = 1;
 	/* nova_sync_inode(root_i); */
@@ -514,7 +505,7 @@ static int nova_check_super(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int rc;
 
-	rc = copy_mc_fragile(sbi->nova_sb, ps,
+	rc = copy_mc_to_kernel(sbi->nova_sb, ps,
 				sizeof(struct nova_super_block));
 
 	if (rc < 0)

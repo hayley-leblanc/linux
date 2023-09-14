@@ -328,7 +328,7 @@ static inline int nova_get_reference(struct super_block *sb, u64 block,
 	int rc;
 
 	*nvmm = nova_get_block(sb, block);
-	rc = copy_mc_fragile(dram, *nvmm, size);
+	rc = copy_mc_to_kernel(dram, *nvmm, size);
 	return rc;
 }
 
@@ -378,7 +378,7 @@ static inline int nova_get_head_tail(struct super_block *sb,
 	struct nova_inode fake_pi;
 	int rc;
 
-	rc = copy_mc_fragile(&fake_pi, pi, sizeof(struct nova_inode));
+	rc = copy_mc_to_kernel(&fake_pi, pi, sizeof(struct nova_inode));
 	if (rc)
 		return rc;
 
@@ -556,7 +556,7 @@ static inline unsigned long get_nvmm(struct super_block *sb,
 	struct nova_file_write_entry *entry, unsigned long pgoff)
 {
 	/* entry is already verified before this call and resides in dram
-	 * or we can do copy_mc_fragile here but have to avoid double copy and
+	 * or we can do copy_mc_to_kernel here but have to avoid double copy and
 	 * verification of the entry.
 	 */
 	if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
@@ -596,7 +596,7 @@ static inline u64 nova_find_nvmm_block(struct super_block *sb,
 	 * when called from reset_vma_csum_parity
 	 */
 	entryc = &entry_copy;
-	if (copy_mc_fragile(entryc, entry,
+	if (copy_mc_to_kernel(entryc, entry,
 			sizeof(struct nova_file_write_entry)) < 0)
 		return 0;
 
@@ -641,7 +641,7 @@ static inline u64 next_log_page(struct super_block *sb, u64 curr)
 
 	curr = BLOCK_OFF(curr);
 	curr_page = (struct nova_inode_log_page *)nova_get_block(sb, curr);
-	rc = copy_mc_fragile(&next, &curr_page->page_tail.next_page,
+	rc = copy_mc_to_kernel(&next, &curr_page->page_tail.next_page,
 				sizeof(u64));
 	if (rc)
 		return rc;
@@ -660,7 +660,7 @@ static inline u64 alter_log_page(struct super_block *sb, u64 curr)
 
 	curr = BLOCK_OFF(curr);
 	curr_page = (struct nova_inode_log_page *)nova_get_block(sb, curr);
-	rc = copy_mc_fragile(&next, &curr_page->page_tail.alter_page,
+	rc = copy_mc_to_kernel(&next, &curr_page->page_tail.alter_page,
 				sizeof(u64));
 	if (rc)
 		return rc;
@@ -823,7 +823,7 @@ static inline bool goto_next_page(struct super_block *sb, u64 curr_p)
 		return true;
 
 	addr = nova_get_block(sb, curr_p);
-	rc = copy_mc_fragile(&type, addr, sizeof(u8));
+	rc = copy_mc_to_kernel(&type, addr, sizeof(u8));
 
 	if (rc < 0)
 		return true;

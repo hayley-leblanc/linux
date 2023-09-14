@@ -52,7 +52,7 @@ static inline u8 nova_get_entry_type(void *p)
 	u8 type;
 	int rc;
 
-	rc = copy_mc_fragile(&type, p, sizeof(u8));
+	rc = copy_mc_to_kernel(&type, p, sizeof(u8));
 	if (rc)
 		return rc;
 
