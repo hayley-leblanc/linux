@@ -31,6 +31,11 @@
 #include "pfn.h"
 #include "nd.h"
 
+int readonly = 0;
+
+module_param(readonly, int, S_IRUGO);
+MODULE_PARM_DESC(readonly, "Mount readonly");
+
 static struct device *to_dev(struct pmem_device *pmem)
 {
 	/*
@@ -525,7 +530,11 @@ static int pmem_attach_disk(struct device *dev,
 		pmem->pfn_flags |= PFN_MAP;
 		bb_range = pmem->pgmap.range;
 	} else {
-		addr = devm_memremap(dev, pmem->phys_addr,
+		if (readonly == 0)
+			addr = devm_memremap(dev, pmem->phys_addr,
+				pmem->size, ARCH_MEMREMAP_PMEM);
+		else
+			addr = devm_memremap_ro(dev, pmem->phys_addr,
 				pmem->size, ARCH_MEMREMAP_PMEM);
 		bb_range.start =  res->start;
 		bb_range.end = res->end;

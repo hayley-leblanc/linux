@@ -177,7 +177,8 @@ static void __ioremap_check_mem(resource_size_t addr, unsigned long size,
  */
 static void __iomem *
 __ioremap_caller(resource_size_t phys_addr, unsigned long size,
-		 enum page_cache_mode pcm, void *caller, bool encrypted)
+		 enum page_cache_mode pcm, void *caller, bool encrypted,
+		 int readonly)
 {
 	unsigned long offset, vaddr;
 	resource_size_t last_addr;
@@ -281,6 +282,10 @@ __ioremap_caller(resource_size_t phys_addr, unsigned long size,
 		break;
 	}
 
+	if (readonly) {
+		prot = __pgprot((unsigned long)prot.pgprot & ~_PAGE_RW);
+	}
+
 	/*
 	 * Ok, go for it..
 	 */
@@ -348,7 +353,7 @@ void __iomem *ioremap(resource_size_t phys_addr, unsigned long size)
 	enum page_cache_mode pcm = _PAGE_CACHE_MODE_UC_MINUS;
 
 	return __ioremap_caller(phys_addr, size, pcm,
-				__builtin_return_address(0), false);
+				__builtin_return_address(0), false, 0);
 }
 EXPORT_SYMBOL(ioremap);
 
@@ -381,7 +386,7 @@ void __iomem *ioremap_uc(resource_size_t phys_addr, unsigned long size)
 	enum page_cache_mode pcm = _PAGE_CACHE_MODE_UC;
 
 	return __ioremap_caller(phys_addr, size, pcm,
-				__builtin_return_address(0), false);
+				__builtin_return_address(0), false, 0);
 }
 EXPORT_SYMBOL_GPL(ioremap_uc);
 
@@ -398,7 +403,7 @@ EXPORT_SYMBOL_GPL(ioremap_uc);
 void __iomem *ioremap_wc(resource_size_t phys_addr, unsigned long size)
 {
 	return __ioremap_caller(phys_addr, size, _PAGE_CACHE_MODE_WC,
-					__builtin_return_address(0), false);
+					__builtin_return_address(0), false, 0);
 }
 EXPORT_SYMBOL(ioremap_wc);
 
@@ -415,30 +420,37 @@ EXPORT_SYMBOL(ioremap_wc);
 void __iomem *ioremap_wt(resource_size_t phys_addr, unsigned long size)
 {
 	return __ioremap_caller(phys_addr, size, _PAGE_CACHE_MODE_WT,
-					__builtin_return_address(0), false);
+					__builtin_return_address(0), false, 0);
 }
 EXPORT_SYMBOL(ioremap_wt);
 
 void __iomem *ioremap_encrypted(resource_size_t phys_addr, unsigned long size)
 {
 	return __ioremap_caller(phys_addr, size, _PAGE_CACHE_MODE_WB,
-				__builtin_return_address(0), true);
+				__builtin_return_address(0), true, 0);
 }
 EXPORT_SYMBOL(ioremap_encrypted);
 
 void __iomem *ioremap_cache(resource_size_t phys_addr, unsigned long size)
 {
 	return __ioremap_caller(phys_addr, size, _PAGE_CACHE_MODE_WB,
-				__builtin_return_address(0), false);
+				__builtin_return_address(0), false, 0);
 }
 EXPORT_SYMBOL(ioremap_cache);
+
+void __iomem *ioremap_cache_ro(resource_size_t phys_addr, unsigned long size)
+{
+	return __ioremap_caller(phys_addr, size, _PAGE_CACHE_MODE_WB,
+				__builtin_return_address(0), false, 1);
+}
+EXPORT_SYMBOL(ioremap_cache_ro);
 
 void __iomem *ioremap_prot(resource_size_t phys_addr, unsigned long size,
 				unsigned long prot_val)
 {
 	return __ioremap_caller(phys_addr, size,
 				pgprot2cachemode(__pgprot(prot_val)),
-				__builtin_return_address(0), false);
+				__builtin_return_address(0), false, 0);
 }
 EXPORT_SYMBOL(ioremap_prot);
 

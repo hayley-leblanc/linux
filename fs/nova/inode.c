@@ -969,6 +969,7 @@ out:
 	/* TODO: Since we don't use page-cache, do we really need the following
 	 * call?
 	 */
+	invalidate_inode_buffers(inode);
 	truncate_inode_pages(&inode->i_data, 0);
 
 	clear_inode(inode);

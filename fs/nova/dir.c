@@ -249,13 +249,16 @@ int nova_append_dir_init_entries(struct super_block *sb,
 	nova_flush_buffer(&(pi->log_head), CACHELINE_SIZE, 0);
 	nova_memlock_inode(sb, pi, &irq_flags);
 
-	if (metadata_csum == 0)
+	if (metadata_csum == 0) {
+		iput(inode);
 		return 0;
+	}
 
 	allocated = nova_allocate_inode_log_pages(sb, &sih, 1, &new_block,
 							ANY_CPU, 1);
 	if (allocated != 1) {
 		nova_err(sb, "ERROR: no inode log page available\n");
+		iput(inode);
 		return -ENOMEM;
 	}
 	nova_memunlock_inode(sb, pi, &irq_flags);
@@ -264,6 +267,8 @@ int nova_append_dir_init_entries(struct super_block *sb,
 	de_entry = (struct nova_dentry *)nova_get_block(sb, new_block);
 
 	length = nova_init_dentry(sb, de_entry, inode, parent_ino, epoch_id);
+	
+	iput(inode);
 
 	nova_update_alter_tail(pi, new_block + length);
 	nova_update_alter_pages(sb, pi, pi->log_head,

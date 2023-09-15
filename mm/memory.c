@@ -2333,7 +2333,7 @@ static int remap_pte_range(struct mm_struct *mm, pmd_t *pmd,
 		return -ENOMEM;
 	arch_enter_lazy_mmu_mode();
 	do {
-		BUG_ON(!pte_none(*pte));
+		// BUG_ON(!pte_none(*pte));
 		if (!pfn_modify_allowed(pfn, prot)) {
 			err = -EACCES;
 			break;

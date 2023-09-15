@@ -678,6 +678,16 @@ success:
 
 	change_protection(tlb, vma, start, end, mm_cp_flags);
 
+	/* Update NOVA vma list */
+	if (vma->vm_ops && vma->vm_ops->dax_cow) {
+		if (!(oldflags & VM_WRITE) && (newflags & VM_WRITE)) {
+			vma->vm_ops->open(vma);
+		} else if (!(newflags & VM_WRITE)) {
+			if (vma->original_write || (oldflags & VM_WRITE))
+				vma->vm_ops->close(vma);
+		}
+	}
+
 	/*
 	 * Private VM_LOCKED VMA becoming writable: trigger COW to avoid major
 	 * fault on access.
