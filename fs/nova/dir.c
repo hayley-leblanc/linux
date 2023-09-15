@@ -240,7 +240,7 @@ int nova_append_dir_init_entries(struct super_block *sb,
 
 	de_entry = (struct nova_dentry *)nova_get_block(sb, new_block);
 
-	inode = nova_iget(sb, self_ino);
+	inode = nova_iget(sb, parent_ino);
 
 	length = nova_init_dentry(sb, de_entry, inode, parent_ino, epoch_id);
 
