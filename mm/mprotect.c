@@ -598,7 +598,7 @@ mprotect_fixup(struct vma_iterator *vmi, struct mmu_gather *tlb,
 	pgoff_t pgoff;
 	int error;
 
-	if (newflags == oldflags) {
+	if (newflags == oldflags && vma->original_write == 0) {
 		*pprev = vma;
 		return 0;
 	}

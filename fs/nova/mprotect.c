@@ -444,20 +444,23 @@ static int nova_set_vma_read(struct vm_area_struct *vma)
 	struct mm_struct *mm = vma->vm_mm;
 	unsigned long oldflags = vma->vm_flags;
 	unsigned long newflags;
+	pgprot_t pgprot;
 
 	down_write(&mm->mmap_lock);
 
 	newflags = oldflags & (~VM_WRITE);
 	if (oldflags == newflags)
 		goto out;
+	pgprot = vm_get_page_prot(newflags);
 
 	nova_dbgv("Set vma %p read, start 0x%lx, end 0x%lx\n",
 				vma, vma->vm_start,
 				vma->vm_end);
 
 	tlb_gather_mmu(&tlb, vma->vm_mm);
+	vma->vm_page_prot = pgprot;
 	change_protection(&tlb, vma, vma->vm_start, vma->vm_end, MM_CP_UFFD_WP);
-	nova_insert_write_vma(vma);
+	vma->original_write = 1;
 
 out:
 	up_write(&mm->mmap_lock);
