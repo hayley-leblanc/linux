@@ -381,11 +381,6 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
     fn insert_dentry(&self, dentry: DentryInfo) -> Result<()> {
         let dentries = Arc::clone(&self.dentries);
         let mut dentries = dentries.lock();
-        pr_info!(
-            "inserting dentry {:?} into index for inode {:?}\n",
-            dentry.name,
-            self.ino
-        );
         dentries.try_insert(dentry.name, dentry)?;
         Ok(())
     }
