@@ -143,11 +143,6 @@ fn hayleyfs_write<'a>(
     start_timing!(full_write);
     // TODO: give a way out if reader.len() is 0
     let len: u64 = reader.len().try_into()?;
-    let count = if HAYLEYFS_PAGESIZE < len {
-        HAYLEYFS_PAGESIZE
-    } else {
-        len
-    };
     init_timing!(write_inode_lookup);
     start_timing!(write_inode_lookup);
     let (pi, pi_info) = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
@@ -156,6 +151,11 @@ fn hayleyfs_write<'a>(
     // TODO: update timestamp
     match sbi.mount_opts.write_type {
         Some(WriteType::SinglePage) | None => {
+            let count = if HAYLEYFS_PAGESIZE < len {
+                HAYLEYFS_PAGESIZE
+            } else {
+                len
+            };
             let (data_page, bytes_written) =
                 single_page_write(sbi, &pi, pi_info, reader, count, offset)?;
 
@@ -173,7 +173,7 @@ fn hayleyfs_write<'a>(
         }
         Some(WriteType::Iterator) => {
             let (page_list, bytes_written) =
-                iterator_write(sbi, &pi, pi_info, reader, count, offset)?;
+                iterator_write(sbi, &pi, pi_info, reader, len, offset)?;
             let (inode_size, pi) =
                 pi.inc_size_iterator(bytes_written.try_into()?, offset, page_list);
 
@@ -262,8 +262,9 @@ fn iterator_write<'a>(
             // TODO: does this division round properly?
             let pages_to_write = count / HAYLEYFS_PAGESIZE;
             let pages_left = pages_to_write - page_list.len()?;
+            let allocation_offset = offset + page_list.len()? * HAYLEYFS_PAGESIZE;
             let page_list = page_list
-                .allocate_pages(sbi, &pi_info, pages_to_write.try_into()?, pages_left)?
+                .allocate_pages(sbi, &pi_info, pages_left.try_into()?, allocation_offset)?
                 .fence();
             sbi.add_blocks_in_use(pages_left);
             let page_list = page_list.set_backpointers(sbi, pi.get_ino())?.fence();
@@ -297,15 +298,12 @@ fn hayleyfs_read(
     let (_, pi_info) = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     end_timing!(ReadInodeLookup, read_inode_lookup);
     let size: u64 = inode.i_size_read().try_into()?;
-
     count = if count < size { count } else { size };
     if offset >= size {
         return Ok(0);
     }
     let mut bytes_left_in_file = size - offset; // # of bytes that can be read
-
     let mut bytes_read = 0;
-
     while count > 0 {
         let page_offset = page_offset(offset)?;
 
