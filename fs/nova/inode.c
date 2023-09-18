@@ -971,6 +971,12 @@ out:
 	 */
 	invalidate_inode_buffers(inode);
 	truncate_inode_pages(&inode->i_data, 0);
+	if (!list_empty(&inode->i_data.private_list)) {
+		printk(KERN_ALERT "inode %d list is not empty\n", inode->i_ino);
+	}
+	if (!(inode->i_state & I_FREEING)) {
+		printk(KERN_ALERT "inode %d not in freeing state\n", inode->i_ino);
+	}
 
 	clear_inode(inode);
 	NOVA_END_TIMING(evict_inode_t, evict_time);

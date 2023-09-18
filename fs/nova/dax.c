@@ -1361,7 +1361,7 @@ static void nova_vma_close(struct vm_area_struct *vma)
 		  __func__, __LINE__, vma->vm_start, vma->vm_end,
 		  vma->vm_flags, pgprot_val(vma->vm_page_prot));
 
-//	vma->original_write = 0;
+	// vma->original_write = 0;
 	nova_remove_write_vma(vma);
 }
 
