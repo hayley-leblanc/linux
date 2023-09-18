@@ -1269,35 +1269,6 @@ impl<State, Op> DataPageListWrapper<State, Op> {
 }
 
 impl DataPageListWrapper<Clean, Start> {
-    /// Obtain a list of pages representing a contiguous section of a file
-    /// starting at offset and with size len
-    pub(crate) fn get_data_page_list<'a>(
-        pi_info: &HayleyFsRegInodeInfo,
-        len: u64,
-        offset: u64,
-    ) -> Result<Self> {
-        let mut bytes = 0;
-        let mut page_nos = Vec::new();
-        while bytes < len {
-            // get offset of the next page in the file
-            let page_offset = page_offset(offset)?;
-            // determine if the file actually has the page
-            let result = pi_info.find(page_offset);
-            let page_no = match result {
-                Some(data_page_info) => data_page_info.get_page_no(),
-                None => break, // if we reach the end of the file, end the loop
-            };
-            page_nos.try_push(DataPageInfo::new(pi_info.get_ino(), page_no, offset))?;
-            bytes += HAYLEYFS_PAGESIZE;
-        }
-        Ok(Self {
-            state: PhantomData,
-            op: PhantomData,
-            offset,
-            page_nos,
-        })
-    }
-
     // allocates pages to represent a contiguous chunk of a file (the pages
     // themselves may not be physically contiguous)
     pub(crate) fn allocate_pages<'a>(
@@ -1349,6 +1320,114 @@ impl DataPageListWrapper<Clean, Alloc> {
                 flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
             }
         }
+        Ok(DataPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            offset: self.offset,
+            page_nos: self.page_nos,
+        })
+    }
+}
+
+impl DataPageListWrapper<Clean, Writeable> {
+    /// Obtain a list of pages representing a contiguous section of a file
+    /// starting at offset and with size len
+    pub(crate) fn get_data_page_list<'a>(
+        pi_info: &HayleyFsRegInodeInfo,
+        len: u64,
+        offset: u64,
+    ) -> Result<core::result::Result<Self, DataPageListWrapper<Clean, Start>>> {
+        let mut bytes = 0;
+        let mut page_nos = Vec::new();
+        while bytes < len {
+            // get offset of the next page in the file
+            let page_offset = page_offset(offset)?;
+            // determine if the file actually has the page
+            let result = pi_info.find(page_offset);
+            let page_no = match result {
+                Some(data_page_info) => data_page_info.get_page_no(),
+                None => {
+                    // if we reach the end of the file before getting all of the pages we
+                    // want, use the error case to indicate that the pages are not writeable
+                    return Ok(Err(DataPageListWrapper {
+                        state: PhantomData,
+                        op: PhantomData,
+                        offset,
+                        page_nos,
+                    }));
+                }
+            };
+            page_nos.try_push(DataPageInfo::new(pi_info.get_ino(), page_no, offset))?;
+            bytes += HAYLEYFS_PAGESIZE;
+        }
+        Ok(Ok(Self {
+            state: PhantomData,
+            op: PhantomData,
+            offset,
+            page_nos,
+        }))
+    }
+
+    pub(crate) fn write_pages<'a>(
+        self,
+        sbi: &SbInfo,
+        reader: &mut impl IoBufferReader,
+        len: u64,
+        offset: u64, // the raw offset provided by the user
+    ) -> Result<DataPageListWrapper<InFlight, Written>> {
+        // this is the value of the `offset` field of the page that
+        // we want to write to
+        let mut page_offset = page_offset(offset)?;
+        let offset_within_page = offset - page_offset;
+
+        let mut bytes_written = 0;
+        for page in &self.page_nos {
+            if bytes_written >= len {
+                break;
+            }
+
+            let page_no = page.get_page_no();
+
+            // skip over pages at the head of the list that we are not writing to
+            // this should pretty much never happen so it won't hurt us performance-wise
+            if page.get_offset() < page_offset {
+                continue;
+            }
+            // TODO: safe wrapper
+            let ptr = unsafe { page_no_to_page(sbi, page_no)? };
+            // right now we assume that kernel-level writes succeed and write
+            // the requested number of bytes, so only the first page may have
+            // a non-zero offset
+            let (ptr, offset_within_page) = if page.get_offset() == page_offset {
+                (
+                    unsafe { ptr.offset(offset_within_page.try_into()?) },
+                    offset_within_page,
+                )
+            } else {
+                (ptr, 0)
+            };
+
+            let bytes_to_write = if len < HAYLEYFS_PAGESIZE - offset_within_page {
+                len
+            } else {
+                HAYLEYFS_PAGESIZE - offset_within_page
+            };
+
+            // FIXME: read_raw and read_raw_nt return a Result that does NOT include the
+            // number of bytes actually read. they return an error if all bytes are not
+            // read. this is not the behavior we expect or want here. It does return an
+            // error if all bytes are not written so we can safely return len if
+            // the read does succeed though
+            unsafe {
+                reader.read_raw_nt(ptr, bytes_to_write.try_into()?)?;
+            }
+            unsafe {
+                flush_edge_cachelines(ptr as *mut ffi::c_void, bytes_to_write)?;
+            }
+            bytes_written += bytes_to_write;
+            page_offset += HAYLEYFS_PAGESIZE;
+        }
+
         Ok(DataPageListWrapper {
             state: PhantomData,
             op: PhantomData,

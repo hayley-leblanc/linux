@@ -159,7 +159,8 @@ fn hayleyfs_write<'a>(
             let (data_page, bytes_written) =
                 single_page_write(sbi, &pi, pi_info, reader, count, offset)?;
 
-            let (inode_size, pi) = pi.inc_size(bytes_written.try_into()?, offset, data_page);
+            let (inode_size, pi) =
+                pi.inc_size_single_page(bytes_written.try_into()?, offset, data_page);
 
             // update the VFS inode's size
             inode.i_size_write(inode_size.try_into()?);
@@ -171,8 +172,15 @@ fn hayleyfs_write<'a>(
             Err(EPERM)
         }
         Some(WriteType::Iterator) => {
-            pr_info!("Iterator writes not implemented\n");
-            Err(EPERM)
+            let (page_list, bytes_written) =
+                iterator_write(sbi, &pi, pi_info, reader, count, offset)?;
+            let (inode_size, pi) =
+                pi.inc_size_iterator(bytes_written.try_into()?, offset, page_list);
+
+            // update the VFS inode's size
+            inode.i_size_write(inode_size.try_into()?);
+            end_timing!(FullWrite, full_write);
+            Ok((bytes_written, pi))
         }
     }
 }
@@ -242,31 +250,31 @@ fn iterator_write<'a>(
     sbi: &'a SbInfo,
     pi: &InodeWrapper<'a, Clean, Start, RegInode>,
     pi_info: &HayleyFsRegInodeInfo,
-    _reader: &mut impl IoBufferReader,
+    reader: &mut impl IoBufferReader,
     count: u64,
     offset: u64,
-) -> Result<()> {
+) -> Result<(DataPageListWrapper<Clean, Written>, u64)> {
     let page_list = DataPageListWrapper::get_data_page_list(pi_info, count, offset)?;
-    let page_list_len = page_list.len()?;
-    let no_pages_to_write = count / HAYLEYFS_PAGESIZE;
-    if page_list_len < no_pages_to_write {
-        // we need to allocate new pages
-        let pages_to_allocate = no_pages_to_write - page_list_len;
-        let page_list = page_list
-            .allocate_pages(
-                sbi,
-                &pi_info,
-                no_pages_to_write.try_into()?,
-                pages_to_allocate,
-            )?
-            .fence();
-        sbi.add_blocks_in_use(pages_to_allocate);
-        // set backpointers for all new pages
-        let page_list = page_list.set_backpointers(sbi, pi.get_ino())?.fence();
-        pi_info.insert_pages(&page_list, no_pages_to_write)?;
-        // TODO FRIDAY
-    }
-    Ok(())
+    let page_list = match page_list {
+        Ok(page_list) => page_list, // all pages are already allocated
+        Err(page_list) => {
+            // we need to allocate some pages
+            // TODO: does this division round properly?
+            let pages_to_write = count / HAYLEYFS_PAGESIZE;
+            let pages_left = pages_to_write - page_list.len()?;
+            let page_list = page_list
+                .allocate_pages(sbi, &pi_info, pages_to_write.try_into()?, pages_left)?
+                .fence();
+            sbi.add_blocks_in_use(pages_left);
+            let page_list = page_list.set_backpointers(sbi, pi.get_ino())?.fence();
+            pi_info.insert_pages(&page_list, pages_to_write)?;
+            page_list
+        }
+    };
+
+    let page_list = page_list.write_pages(sbi, reader, count, offset)?.fence();
+
+    Ok((page_list, count))
 }
 
 #[allow(dead_code)]
