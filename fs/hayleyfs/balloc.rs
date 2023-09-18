@@ -1335,35 +1335,38 @@ impl DataPageListWrapper<Clean, Writeable> {
     pub(crate) fn get_data_page_list<'a>(
         pi_info: &HayleyFsRegInodeInfo,
         len: u64,
-        offset: u64,
+        mut offset: u64,
     ) -> Result<core::result::Result<Self, DataPageListWrapper<Clean, Start>>> {
         let mut bytes = 0;
         let mut page_nos = Vec::new();
+        let first_page_offset = page_offset(offset)?;
         while bytes < len {
             // get offset of the next page in the file
             let page_offset = page_offset(offset)?;
             // determine if the file actually has the page
             let result = pi_info.find(page_offset);
-            let page_no = match result {
-                Some(data_page_info) => data_page_info.get_page_no(),
+            let data_page_info = match result {
+                Some(data_page_info) => data_page_info,
                 None => {
                     // if we reach the end of the file before getting all of the pages we
                     // want, use the error case to indicate that the pages are not writeable
                     return Ok(Err(DataPageListWrapper {
                         state: PhantomData,
                         op: PhantomData,
-                        offset,
+                        offset: first_page_offset,
                         page_nos,
                     }));
                 }
             };
-            page_nos.try_push(DataPageInfo::new(pi_info.get_ino(), page_no, offset))?;
+
+            page_nos.try_push(data_page_info)?;
             bytes += HAYLEYFS_PAGESIZE;
+            offset = page_offset + HAYLEYFS_PAGESIZE;
         }
         Ok(Ok(Self {
             state: PhantomData,
             op: PhantomData,
-            offset,
+            offset: first_page_offset,
             page_nos,
         }))
     }
@@ -1372,17 +1375,18 @@ impl DataPageListWrapper<Clean, Writeable> {
         self,
         sbi: &SbInfo,
         reader: &mut impl IoBufferReader,
-        len: u64,
+        mut len: u64,
         offset: u64, // the raw offset provided by the user
     ) -> Result<DataPageListWrapper<InFlight, Written>> {
         // this is the value of the `offset` field of the page that
         // we want to write to
         let mut page_offset = page_offset(offset)?;
-        let offset_within_page = offset - page_offset;
+        let mut offset_within_page = offset - page_offset;
 
         let mut bytes_written = 0;
+        let write_size = len;
         for page in &self.page_nos {
-            if bytes_written >= len {
+            if bytes_written >= write_size {
                 break;
             }
 
@@ -1394,19 +1398,13 @@ impl DataPageListWrapper<Clean, Writeable> {
                 continue;
             }
             // TODO: safe wrapper
-            let ptr = unsafe { page_no_to_page(sbi, page_no)? };
+            let mut ptr = unsafe { page_no_to_page(sbi, page_no)? };
             // right now we assume that kernel-level writes succeed and write
             // the requested number of bytes, so only the first page may have
             // a non-zero offset
-            let (ptr, offset_within_page) = if page.get_offset() == page_offset {
-                (
-                    unsafe { ptr.offset(offset_within_page.try_into()?) },
-                    offset_within_page,
-                )
-            } else {
-                (ptr, 0)
-            };
-
+            if page.get_offset() == page_offset {
+                ptr = unsafe { ptr.offset(offset_within_page.try_into()?) };
+            }
             let bytes_to_write = if len < HAYLEYFS_PAGESIZE - offset_within_page {
                 len
             } else {
@@ -1426,6 +1424,8 @@ impl DataPageListWrapper<Clean, Writeable> {
             }
             bytes_written += bytes_to_write;
             page_offset += HAYLEYFS_PAGESIZE;
+            len -= bytes_to_write;
+            offset_within_page = 0;
         }
 
         Ok(DataPageListWrapper {

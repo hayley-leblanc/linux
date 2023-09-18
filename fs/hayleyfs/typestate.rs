@@ -18,7 +18,9 @@ pub(crate) struct Init {}
 pub(crate) struct IncLink {}
 #[derive(Debug)]
 pub(crate) struct Complete {}
+#[derive(Debug)]
 pub(crate) struct Writeable {}
+#[derive(Debug)]
 pub(crate) struct Written {}
 pub(crate) struct IncSize {}
 pub(crate) struct ClearIno {}

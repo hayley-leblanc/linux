@@ -259,10 +259,13 @@ fn iterator_write<'a>(
         Ok(page_list) => page_list, // all pages are already allocated
         Err(page_list) => {
             // we need to allocate some pages
-            // TODO: does this division round properly?
-            let pages_to_write = count / HAYLEYFS_PAGESIZE;
+            let pages_to_write = if count % HAYLEYFS_PAGESIZE == 0 {
+                count / HAYLEYFS_PAGESIZE
+            } else {
+                (count / HAYLEYFS_PAGESIZE) + 1
+            };
             let pages_left = pages_to_write - page_list.len()?;
-            let allocation_offset = offset + page_list.len()? * HAYLEYFS_PAGESIZE;
+            let allocation_offset = page_offset(offset)? + page_list.len()? * HAYLEYFS_PAGESIZE;
             let page_list = page_list
                 .allocate_pages(sbi, &pi_info, pages_left.try_into()?, allocation_offset)?
                 .fence();
@@ -272,7 +275,6 @@ fn iterator_write<'a>(
             page_list
         }
     };
-
     let page_list = page_list.write_pages(sbi, reader, count, offset)?.fence();
 
     Ok((page_list, count))
