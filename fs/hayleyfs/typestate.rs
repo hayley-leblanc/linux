@@ -1,4 +1,5 @@
 /// Zero-sized types for persistence state
+#[derive(Debug)]
 pub(crate) struct Dirty {}
 #[derive(Debug)]
 pub(crate) struct InFlight {}

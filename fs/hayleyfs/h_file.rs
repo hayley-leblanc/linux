@@ -281,7 +281,6 @@ fn runtime_checked_write<'a>(
                 let new_page = DataPageWrapper::alloc_data_page(sbi, page_offset)?
                     .flush()
                     .fence();
-                pr_info!("new page: {:?}\n", new_page);
                 sbi.inc_blocks_in_use();
                 let new_page = new_page.set_data_page_backpointer(pi).flush().fence();
                 pi_info.insert(&new_page)?;
@@ -292,8 +291,6 @@ fn runtime_checked_write<'a>(
         loop_offset = page_offset + HAYLEYFS_PAGESIZE;
     }
 
-    pr_info!("starting to write to page\n");
-
     // write to the pages
     let mut written_pages = Vec::new();
     // get offset into the first page to write to
@@ -303,11 +300,6 @@ fn runtime_checked_write<'a>(
     let mut bytes_written = 0;
     let write_size = len;
     for page in pages.drain(..) {
-        // bug
-        if page.get_offset() == 4096 {
-            pr_info!("skipping page {:?}\n", page);
-            continue;
-        }
         if bytes_written >= write_size {
             break;
         }
@@ -317,13 +309,17 @@ fn runtime_checked_write<'a>(
             HAYLEYFS_PAGESIZE - offset_in_page
         };
         let (written, page) = page.write_to_page(sbi, reader, offset_in_page, bytes_to_write)?;
-        written_pages.try_push(page)?;
         bytes_written += written;
         page_offset += HAYLEYFS_PAGESIZE;
         len -= bytes_to_write;
         offset_in_page = 0;
+        written_pages.try_push(page)?;
     }
-    let written_pages = fence_vec!(written_pages);
+    let mut written_pages = fence_vec!(written_pages);
+
+    for page in written_pages.iter_mut() {
+        page.make_drop_safe();
+    }
 
     Ok((written_pages, bytes_written))
 }
