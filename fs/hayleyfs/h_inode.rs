@@ -346,6 +346,40 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
 
     // TODO: use the same impl for all inc_size ops with a trait to reconcile 
     // different write types
+    pub(crate) fn inc_size_runtime_check(
+        self,
+        bytes_written: u64,
+        current_offset: u64,
+        _pages: Vec<DataPageWrapper<'a, Clean, Written>>,
+    ) -> (u64, InodeWrapper<'a, Clean, IncSize, Type>) {
+        let total_size = bytes_written + current_offset;
+        // also update the inode's ctime and mtime. the time update may be reordered with the size change
+        // we make no guarantees about ordering of these two updates
+        if let Some(vfs_inode) = self.vfs_inode {
+            let time = unsafe { bindings::current_time(vfs_inode) };
+            self.inode.ctime = time;
+            self.inode.mtime = time;
+        } else {
+            panic!("ERROR: no vfs inode for inode {:?} in dec_link_count\n", self.ino);
+        }
+        if self.inode.size < total_size {
+            self.inode.size = total_size;
+            flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+        }
+        (
+            self.inode.size,
+            InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                vfs_inode: self.vfs_inode,
+                ino: self.ino,
+                inode: self.inode,
+            },
+        )
+    }
+
+    
     pub(crate) fn inc_size_iterator(
         self, 
         bytes_written: u64,

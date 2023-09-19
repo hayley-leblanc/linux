@@ -3,7 +3,7 @@ use crate::defs::*;
 use crate::h_inode::*;
 use crate::typestate::*;
 use crate::volatile::*;
-use crate::{end_timing, init_timing, start_timing};
+use crate::{end_timing, fence_vec, init_timing, start_timing};
 use core::{marker::Sync, ptr, sync::atomic::Ordering};
 use kernel::prelude::*;
 use kernel::{
@@ -168,8 +168,14 @@ fn hayleyfs_write<'a>(
             Ok((bytes_written, pi))
         }
         Some(WriteType::RuntimeCheck) => {
-            pr_info!("Runtime-checked writes not implemented\n");
-            Err(EPERM)
+            let (page_list, bytes_written) =
+                runtime_checked_write(sbi, &pi, pi_info, reader, len, offset)?;
+            let (inode_size, pi) =
+                pi.inc_size_runtime_check(bytes_written.try_into()?, offset, page_list);
+            // update the VFS inode's size
+            inode.i_size_write(inode_size.try_into()?);
+            end_timing!(FullWrite, full_write);
+            Ok((bytes_written, pi))
         }
         Some(WriteType::Iterator) => {
             let (page_list, bytes_written) =
@@ -243,6 +249,77 @@ fn single_page_write<'a>(
         );
     }
     Ok((data_page, bytes_written))
+}
+
+fn runtime_checked_write<'a>(
+    sbi: &'a SbInfo,
+    pi: &InodeWrapper<'a, Clean, Start, RegInode>,
+    pi_info: &HayleyFsRegInodeInfo,
+    reader: &mut impl IoBufferReader,
+    mut len: u64,
+    offset: u64,
+) -> Result<(Vec<DataPageWrapper<'a, Clean, Written>>, u64)> {
+    // TODO: put a bug in here and make sure runtime checks catch it
+
+    // get a list of writeable pages, either by finding an already-allocated
+    // page or allocating
+    let mut bytes = 0;
+    let mut pages = Vec::new();
+    let mut loop_offset = offset;
+    while bytes < len {
+        // get offset of the next page in the file
+        let page_offset = page_offset(loop_offset)?;
+        // determine if the file actually has the page
+        let result = pi_info.find(page_offset);
+        match result {
+            Some(data_page_info) => {
+                let page = DataPageWrapper::from_data_page_info(sbi, &data_page_info)?;
+                pages.try_push(page)?;
+            }
+            None => {
+                // we need to allocate a page
+                // TODO: error handling
+                // TODO: one fence for all newly-allocated pages
+                let new_page = DataPageWrapper::alloc_data_page(sbi, page_offset)?
+                    .flush()
+                    .fence();
+                sbi.inc_blocks_in_use();
+                let new_page = new_page.set_data_page_backpointer(pi).flush().fence();
+                pi_info.insert(&new_page)?;
+                pages.try_push(new_page)?;
+            }
+        }
+        bytes += HAYLEYFS_PAGESIZE;
+        loop_offset = page_offset + HAYLEYFS_PAGESIZE;
+    }
+
+    // write to the pages
+    let mut written_pages = Vec::new();
+    // get offset into the first page to write to
+    let mut page_offset = page_offset(offset)?;
+    let mut offset_in_page = offset - page_offset;
+
+    let mut bytes_written = 0;
+    let write_size = len;
+    for page in pages.drain(..) {
+        if bytes_written >= write_size {
+            break;
+        }
+        let bytes_to_write = if len < HAYLEYFS_PAGESIZE - offset_in_page {
+            len
+        } else {
+            HAYLEYFS_PAGESIZE - offset_in_page
+        };
+        let (written, page) = page.write_to_page(sbi, reader, offset_in_page, bytes_to_write)?;
+        written_pages.try_push(page)?;
+        bytes_written += written;
+        page_offset += HAYLEYFS_PAGESIZE;
+        len -= bytes_to_write;
+        offset_in_page = 0;
+    }
+    let written_pages = fence_vec!(written_pages);
+
+    Ok((written_pages, bytes_written))
 }
 
 #[allow(dead_code)]
