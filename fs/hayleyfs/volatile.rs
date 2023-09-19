@@ -170,6 +170,10 @@ pub(crate) trait InoDataPageMap {
         &self,
         page: &DataPageWrapper<'a, Clean, State>,
     ) -> Result<()>;
+    fn insert_unchecked<'a, State: Initialized>(
+        &self,
+        page: &UncheckedDataPageWrapper<'a, Clean, State>,
+    ) -> Result<()>;
     fn insert_pages<'a, State: Initialized>(
         &self,
         page_list: &DataPageListWrapper<Clean, State>,
@@ -188,6 +192,24 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
     fn insert<'a, State: Initialized>(
         &self,
         page: &DataPageWrapper<'a, Clean, State>,
+    ) -> Result<()> {
+        let pages = Arc::clone(&self.pages);
+        let mut pages = pages.lock();
+        let offset = page.get_offset();
+        pages.try_insert(
+            offset,
+            DataPageInfo {
+                owner: self.ino,
+                page_no: page.get_page_no(),
+                offset,
+            },
+        )?;
+        Ok(())
+    }
+
+    fn insert_unchecked<'a, State: Initialized>(
+        &self,
+        page: &UncheckedDataPageWrapper<'a, Clean, State>,
     ) -> Result<()> {
         let pages = Arc::clone(&self.pages);
         let mut pages = pages.lock();

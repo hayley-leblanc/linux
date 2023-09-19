@@ -198,7 +198,7 @@ fn single_page_write<'a>(
     reader: &mut impl IoBufferReader,
     count: u64,
     offset: u64,
-) -> Result<(DataPageWrapper<'a, Clean, Written>, u64)> {
+) -> Result<(UncheckedDataPageWrapper<'a, Clean, Written>, u64)> {
     // let offset: usize = offset.try_into()?;
 
     // this is the value of the `offset` field of the page that
@@ -211,18 +211,18 @@ fn single_page_write<'a>(
     let result = pi_info.find(page_offset);
     end_timing!(WriteLookupPage, write_lookup_page);
     let data_page = if let Some(page_info) = result {
-        DataPageWrapper::from_data_page_info(sbi, &page_info)?
+        UncheckedDataPageWrapper::from_data_page_info(sbi, &page_info)?
     } else {
         init_timing!(write_alloc_page);
         start_timing!(write_alloc_page);
-        let page = DataPageWrapper::alloc_data_page(sbi, offset)?
+        let page = UncheckedDataPageWrapper::alloc_data_page(sbi, offset)?
             .flush()
             .fence();
         sbi.inc_blocks_in_use();
         let page = page.set_data_page_backpointer(&pi).flush().fence();
         // add page to the index
         // this is safe to do here because we hold a lock on this inode
-        pi_info.insert(&page)?;
+        pi_info.insert_unchecked(&page)?;
         end_timing!(WriteAllocPage, write_alloc_page);
         page
     };
@@ -259,8 +259,6 @@ fn runtime_checked_write<'a>(
     mut len: u64,
     offset: u64,
 ) -> Result<(Vec<DataPageWrapper<'a, Clean, Written>>, u64)> {
-    // TODO: put a bug in here and make sure runtime checks catch it
-
     // get a list of writeable pages, either by finding an already-allocated
     // page or allocating
     let mut bytes = 0;
@@ -283,6 +281,7 @@ fn runtime_checked_write<'a>(
                 let new_page = DataPageWrapper::alloc_data_page(sbi, page_offset)?
                     .flush()
                     .fence();
+                pr_info!("new page: {:?}\n", new_page);
                 sbi.inc_blocks_in_use();
                 let new_page = new_page.set_data_page_backpointer(pi).flush().fence();
                 pi_info.insert(&new_page)?;
@@ -293,6 +292,8 @@ fn runtime_checked_write<'a>(
         loop_offset = page_offset + HAYLEYFS_PAGESIZE;
     }
 
+    pr_info!("starting to write to page\n");
+
     // write to the pages
     let mut written_pages = Vec::new();
     // get offset into the first page to write to
@@ -302,6 +303,11 @@ fn runtime_checked_write<'a>(
     let mut bytes_written = 0;
     let write_size = len;
     for page in pages.drain(..) {
+        // bug
+        if page.get_offset() == 4096 {
+            pr_info!("skipping page {:?}\n", page);
+            continue;
+        }
         if bytes_written >= write_size {
             break;
         }
