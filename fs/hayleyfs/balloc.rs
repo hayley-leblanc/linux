@@ -1094,7 +1094,6 @@ impl<'a> UncheckedDataPageWrapper<'a, Clean, Alloc> {
         mut self,
         inode: &InodeWrapper<'a, Clean, S, RegInode>,
     ) -> UncheckedDataPageWrapper<'a, Dirty, Writeable> {
-        pr_info!("setting data page backpointer for {:?}\n", self);
         // match &mut self.page {
         //     Some(page) => page.ino = inode.get_ino(),
         //     None => panic!("ERROR: Wrapper does not have a page"),
