@@ -18,10 +18,11 @@ You can create your own VM setup or use a pre-existing image. Details are below.
 
 ### Option 1 (your own setup)
 
+0. Install QEMU: on pop-os/ubuntu, `sudo apt-get install qemu-system`
 1. Create a VM image: `qemu-img create -f qcow2 <image name> <size>`
     1. Your VM disk size should be at least 50GB
-2. Download Ubuntu 22.04 and boot the VM: `qemu-system-x86_64 -boot d -cdrom <path to ubuntu ISO> -m 8G -hda <image name> -enable-kvm`. 
-3. Follow the instructions to install Ubuntu on the VM.
+2. Download [Ubuntu 22.04](https://ubuntu.com/download/desktop/thank-you?version=22.04.3&architecture=amd64) and boot the VM: `qemu-system-x86_64 -boot d -cdrom <path to ubuntu ISO> -m 8G -hda <image name> -enable-kvm`. 
+3. Follow the instructions to install Ubuntu on the VM.  Defaults for the minimal installation are fine.
 4. Quit the VM and boot it again using `qemu-system-x86_64 -boot c -m 8G -hda <image name> -enable-kvm`.
 5. Open a terminal in the graphical VM and run `sudo apt-get install build-essential libncurses-dev bison flex libssl-dev libelf-dev git openssh-server curl clang-14 zstd lld-14 llvm-14`
 6. The VM can now be booted using `qemu-system-x86_64 -boot c -m 8G -hda <image name> -enable-kvm -net nic -net user,hostfwd=tcp::2222-:22 -cpu host -nographic -smp <cores>` and accessed via ssh over port 2222.
@@ -46,19 +47,18 @@ Follow these instructions to install the kernel on a baremetal Chameleon Cloud m
 All of these steps should be completed on the VM. 
 TODO: add instructions for building on host and using direct boot.
 
-1. Clone the kernel using `git clone --filter=blob:none git@github.com:hayley-leblanc/linux.git`. 
-2. Install Rust (see [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)).
+1. Clone the kernel using `git clone --filter=blob:none https://github.com/hayley-leblanc/linux` and check out the `dev` branch. 
+2. Install Rust (see [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)) and re-source your shell.
 3. `cd linux` and follow the instructions here https://github.com/Rust-for-Linux/linux/blob/rust/Documentation/rust/quick-start.rst to install Rust dependencies. Currently, those steps are:
     1. `rustup override set $(scripts/min-tool-version.sh rustc)` to set the correct version of the Rust compiler
     2. `rustup component add rust-src` to obtain the Rust standard library source
     3. `cargo install --locked --version $(scripts/min-tool-version.sh bindgen) bindgen` to install bindgen, which is used to set up C bindings in the Rust part of the kernel.
     4. `rustup component add rustfmt` to install a tool to automatically format Rust code. IDEs will use this to format data if they are configured to run a formatter on save.
     5. `rustup component add clippy` to install the clippy linter
-    6. Optional: if you want to use rust-analyzer for development, run `make rust-analyzer` to generate the necessary files. However, this does *not* enable Rust analyzer in the fs kernel module - TODO: figure out how to enable it there. Running this command may prompt you to set some config options interactively; just hit Enter to use the default on all of them.
 4. Configure the kernel. The easiest way to do this is:
     1. Run `make defconfig` to generate a default configuration file.
     2. Make sure that `CONFIG_RUST` (under `General Setup -> Rust Support`) is set to Y. If this option isn't available, make sure that `make LLVM=1 rustavailable` returns success and `CONFIG_MODVERSIONS` and `CONFIG_DEBUG_INFO_BTF` are set to N.
-    3. Set the following config options. These should be done in the listed order, as some later options depend on earlier ones. The config file can be searched by pressing /; the results will tell you where to find each option.
+    3. Set the following config options through `make menuconfig`. These should be done in the listed order, as some later options depend on earlier ones. The config file can be searched by pressing /; the results will tell you where to find each option.
         1. Set `CONFIG_SYSTEM_TRUSTED_KEYS` to an empty string
         2. Set `CONFIG_SYSTEM_REVOCATION_KEYS` to N
         3. Set `CONFIG_MODULES` to Y 
@@ -71,6 +71,7 @@ TODO: add instructions for building on host and using direct boot.
         10. Set `CONFIG_FS_DAX` to Y
         11. Set `CONFIG_HAYLEY_FS` to M
         12. Set `CONFIG_DEBUG_PREEMPTION` to N
+    4. Optional: if you want to use rust-analyzer for development, run `make rust-analyzer` to generate the necessary files. However, this does *not* enable Rust analyzer in the fs kernel module - TODO: figure out how to enable it there. Running this command may prompt you to set some config options interactively; just hit Enter to use the default on all of them.
 5. Build the kernel with `make LLVM=-14 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
     - Note: while building the kernel, it may prompt you to select some configuration options interactively.
     - Select the first option (i.e. 1,2,3 => choose 1 OR N/y => choose N)
@@ -94,9 +95,11 @@ You do *not* need to rebuild the entire kernel every time you make a change to t
 
 1. Building just the file system: `make LLVM=-14 fs/hayleyfs/hayleyfs.ko`
 2. To load the file system module: `sudo insmod fs/hayleyfs/hayleyfs.ko`
-3. To mount the file system: `sudo mount -t hayleyfs /dev/pmem0 /mnt/pmem`
-4. To unmount the file system: `sudo umount /dev/pmem0`
-5. To remove the file system module: `sudo rmmod hayleyfs`
+3. To mount the file system:
+    i. To initialize following a recompilation, `sudo mount -o init -t hayleyfs /dev/pmem0 /mnt/pmem`
+    ii. For all subsequent mounts: `sudo mount -t hayleyfs /dev/pmem0 /mnt/pmem`
+5. To unmount the file system: `sudo umount /dev/pmem0`
+6. To remove the file system module: `sudo rmmod hayleyfs`
 
 Currently, the file system cannot be remounted - it reinitializes and zeroes out all old data on each mount. 
 Currently, the file system supports creating and removing files. Otherwise, segmentation fault occurs.
