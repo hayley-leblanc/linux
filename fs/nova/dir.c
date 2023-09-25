@@ -153,10 +153,9 @@ void nova_delete_dir_tree(struct super_block *sb,
 /* ========================= Entry operations ============================= */
 
 static unsigned int nova_init_dentry(struct super_block *sb,
-	struct nova_dentry *de_entry, struct inode *self_inode, u64 parent_ino,
+	struct nova_dentry *de_entry, u64 self_ino, u64 parent_ino,
 	u64 epoch_id)
 {
-	int self_ino = self_inode->i_ino;
 	void *start = de_entry;
 	struct nova_inode_log_page *curr_page = start;
 	unsigned int length;
@@ -173,8 +172,9 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->name_len = 1;
 	de_entry->de_len = cpu_to_le16(de_len);
 	ktime_get_coarse_real_ts64(&now);
-	de_entry->mtime = timestamp_truncate(now,
-					 self_inode).tv_sec;
+	// de_entry->mtime = timestamp_truncate(now,
+	// 				 self_inode).tv_sec;
+	de_entry->mtime = now.tv_sec;
 
 	de_entry->links_count = 1;
 	strncpy(de_entry->name, ".\0", 2);
@@ -192,8 +192,9 @@ static unsigned int nova_init_dentry(struct super_block *sb,
 	de_entry->name_len = 2;
 	de_entry->de_len = cpu_to_le16(de_len);
 	ktime_get_coarse_real_ts64(&now);
-	de_entry->mtime = timestamp_truncate(now,
-					 self_inode).tv_sec;
+	de_entry->mtime = now.tv_sec;
+	// de_entry->mtime = timestamp_truncate(now,
+	// 				 self_inode).tv_sec;
 
 	de_entry->links_count = 2;
 	strncpy(de_entry->name, "..\0", 3);
@@ -215,7 +216,7 @@ int nova_append_dir_init_entries(struct super_block *sb,
 {
 	struct nova_inode_info_header sih;
 	struct nova_inode *alter_pi;
-	struct inode *inode;
+	// struct inode *inode;
 	u64 alter_pi_addr = 0;
 	int allocated;
 	int ret;
@@ -240,9 +241,9 @@ int nova_append_dir_init_entries(struct super_block *sb,
 
 	de_entry = (struct nova_dentry *)nova_get_block(sb, new_block);
 
-	inode = nova_iget(sb, parent_ino);
+	// inode = nova_iget(sb, parent_ino);
 
-	length = nova_init_dentry(sb, de_entry, inode, parent_ino, epoch_id);
+	length = nova_init_dentry(sb, de_entry, self_ino, parent_ino, epoch_id);
 
 	nova_update_tail(pi, new_block + length);
 
@@ -250,7 +251,6 @@ int nova_append_dir_init_entries(struct super_block *sb,
 	nova_memlock_inode(sb, pi, &irq_flags);
 
 	if (metadata_csum == 0) {
-		iput(inode);
 		return 0;
 	}
 
@@ -258,7 +258,6 @@ int nova_append_dir_init_entries(struct super_block *sb,
 							ANY_CPU, 1);
 	if (allocated != 1) {
 		nova_err(sb, "ERROR: no inode log page available\n");
-		iput(inode);
 		return -ENOMEM;
 	}
 	nova_memunlock_inode(sb, pi, &irq_flags);
@@ -266,10 +265,8 @@ int nova_append_dir_init_entries(struct super_block *sb,
 
 	de_entry = (struct nova_dentry *)nova_get_block(sb, new_block);
 
-	length = nova_init_dentry(sb, de_entry, inode, parent_ino, epoch_id);
+	length = nova_init_dentry(sb, de_entry, self_ino, parent_ino, epoch_id);
 	
-	iput(inode);
-
 	nova_update_alter_tail(pi, new_block + length);
 	nova_update_alter_pages(sb, pi, pi->log_head,
 						pi->alter_log_head);
