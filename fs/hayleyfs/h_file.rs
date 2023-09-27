@@ -150,7 +150,18 @@ fn hayleyfs_write<'a>(
 
     // TODO: update timestamp
     match sbi.mount_opts.write_type {
-        Some(WriteType::SinglePage) | None => {
+        Some(WriteType::Iterator) | None => {
+            let (page_list, bytes_written) =
+                iterator_write(sbi, &pi, pi_info, reader, len, offset)?;
+            let (inode_size, pi) =
+                pi.inc_size_iterator(bytes_written.try_into()?, offset, page_list);
+
+            // update the VFS inode's size
+            inode.i_size_write(inode_size.try_into()?);
+            end_timing!(FullWrite, full_write);
+            Ok((bytes_written, pi))
+        }
+        Some(WriteType::SinglePage) => {
             let count = if HAYLEYFS_PAGESIZE < len {
                 HAYLEYFS_PAGESIZE
             } else {
@@ -177,17 +188,6 @@ fn hayleyfs_write<'a>(
             end_timing!(FullWrite, full_write);
             Ok((bytes_written, pi))
         }
-        Some(WriteType::Iterator) => {
-            let (page_list, bytes_written) =
-                iterator_write(sbi, &pi, pi_info, reader, len, offset)?;
-            let (inode_size, pi) =
-                pi.inc_size_iterator(bytes_written.try_into()?, offset, page_list);
-
-            // update the VFS inode's size
-            inode.i_size_write(inode_size.try_into()?);
-            end_timing!(FullWrite, full_write);
-            Ok((bytes_written, pi))
-        }
     }
 }
 
@@ -198,7 +198,7 @@ fn single_page_write<'a>(
     reader: &mut impl IoBufferReader,
     count: u64,
     offset: u64,
-) -> Result<(UncheckedDataPageWrapper<'a, Clean, Written>, u64)> {
+) -> Result<(StaticDataPageWrapper<'a, Clean, Written>, u64)> {
     // let offset: usize = offset.try_into()?;
 
     // this is the value of the `offset` field of the page that
@@ -211,11 +211,11 @@ fn single_page_write<'a>(
     let result = pi_info.find(page_offset);
     end_timing!(WriteLookupPage, write_lookup_page);
     let data_page = if let Some(page_info) = result {
-        UncheckedDataPageWrapper::from_data_page_info(sbi, &page_info)?
+        StaticDataPageWrapper::from_data_page_info(sbi, &page_info)?
     } else {
         init_timing!(write_alloc_page);
         start_timing!(write_alloc_page);
-        let page = UncheckedDataPageWrapper::alloc_data_page(sbi, offset)?
+        let page = StaticDataPageWrapper::alloc_data_page(sbi, offset)?
             .flush()
             .fence();
         sbi.inc_blocks_in_use();

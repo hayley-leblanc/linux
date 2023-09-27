@@ -883,20 +883,20 @@ impl DataPageHeader {
 
 #[allow(dead_code)]
 #[derive(Debug)]
-pub(crate) struct UncheckedDataPageWrapper<'a, State, Op> {
+pub(crate) struct StaticDataPageWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
     page_no: PageNum,
     page: &'a mut DataPageHeader,
 }
 
-impl<'a, State, Op> PmObjWrapper for UncheckedDataPageWrapper<'a, State, Op> {}
+impl<'a, State, Op> PmObjWrapper for StaticDataPageWrapper<'a, State, Op> {}
 
 // TODO: we may be able to combine some DataPageWrapper methods with DirPageWrapper methods
 // by making them implement some shared trait - but need to be careful of dynamic dispatch.
 // dynamic dispatch may or may not be safe for us there
 #[allow(dead_code)]
-impl<'a, State, Op> UncheckedDataPageWrapper<'a, State, Op> {
+impl<'a, State, Op> StaticDataPageWrapper<'a, State, Op> {
     pub(crate) fn get_page_no(&self) -> PageNum {
         self.page_no
     }
@@ -949,7 +949,7 @@ fn unchecked_page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&m
 }
 
 #[allow(dead_code)]
-impl<'a> UncheckedDataPageWrapper<'a, Dirty, Alloc> {
+impl<'a> StaticDataPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
     pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: u64) -> Result<Self> {
@@ -959,7 +959,7 @@ impl<'a> UncheckedDataPageWrapper<'a, Dirty, Alloc> {
 
         ph.page_type = PageType::DATA;
         ph.offset = offset.try_into()?;
-        Ok(UncheckedDataPageWrapper {
+        Ok(StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             // drop_type: DropType::Panic,
@@ -969,7 +969,7 @@ impl<'a> UncheckedDataPageWrapper<'a, Dirty, Alloc> {
     }
 }
 
-impl<'a> UncheckedDataPageWrapper<'a, Clean, Writeable> {
+impl<'a> StaticDataPageWrapper<'a, Clean, Writeable> {
     #[allow(dead_code)]
     pub(crate) fn from_page_no(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
         let ph = page_no_to_data_header(&sbi, page_no)?;
@@ -1041,7 +1041,7 @@ impl<'a> UncheckedDataPageWrapper<'a, Clean, Writeable> {
         reader: &mut impl IoBufferReader,
         offset: u64,
         len: u64,
-    ) -> Result<(u64, UncheckedDataPageWrapper<'a, InFlight, Written>)> {
+    ) -> Result<(u64, StaticDataPageWrapper<'a, InFlight, Written>)> {
         let ptr = self.get_page_addr(sbi)? as *mut u8;
         let ptr = unsafe { ptr.offset(offset.try_into()?) };
 
@@ -1055,7 +1055,7 @@ impl<'a> UncheckedDataPageWrapper<'a, Clean, Writeable> {
         // let page = self.take_and_make_drop_safe();
         Ok((
             len,
-            UncheckedDataPageWrapper {
+            StaticDataPageWrapper {
                 state: PhantomData,
                 op: PhantomData,
                 // drop_type: self.drop_type,
@@ -1066,11 +1066,9 @@ impl<'a> UncheckedDataPageWrapper<'a, Clean, Writeable> {
     }
 
     #[allow(dead_code)]
-    pub(crate) unsafe fn temp_make_written(
-        self,
-    ) -> UncheckedDataPageWrapper<'a, InFlight, Written> {
+    pub(crate) unsafe fn temp_make_written(self) -> StaticDataPageWrapper<'a, InFlight, Written> {
         // let page = self.take();
-        UncheckedDataPageWrapper {
+        StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             // drop_type: self.drop_type,
@@ -1085,7 +1083,7 @@ impl<'a> UncheckedDataPageWrapper<'a, Clean, Writeable> {
     }
 }
 
-impl<'a> UncheckedDataPageWrapper<'a, Clean, Alloc> {
+impl<'a> StaticDataPageWrapper<'a, Clean, Alloc> {
     /// NOTE: this method returns a clean backpointer, since some pages
     /// will not actually need to be modified here. when they do, this method
     /// flushes and fences
@@ -1093,14 +1091,14 @@ impl<'a> UncheckedDataPageWrapper<'a, Clean, Alloc> {
     pub(crate) fn set_data_page_backpointer<S: StartOrAlloc>(
         mut self,
         inode: &InodeWrapper<'a, Clean, S, RegInode>,
-    ) -> UncheckedDataPageWrapper<'a, Dirty, Writeable> {
+    ) -> StaticDataPageWrapper<'a, Dirty, Writeable> {
         // match &mut self.page {
         //     Some(page) => page.ino = inode.get_ino(),
         //     None => panic!("ERROR: Wrapper does not have a page"),
         // };
         self.page.ino = inode.get_ino();
         // let page = self.take();
-        UncheckedDataPageWrapper {
+        StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             // drop_type: self.drop_type,
@@ -1110,9 +1108,9 @@ impl<'a> UncheckedDataPageWrapper<'a, Clean, Alloc> {
     }
 }
 
-impl<'a, Op> UncheckedDataPageWrapper<'a, Dirty, Op> {
+impl<'a, Op> StaticDataPageWrapper<'a, Dirty, Op> {
     #[allow(dead_code)]
-    pub(crate) fn flush(self) -> UncheckedDataPageWrapper<'a, InFlight, Op> {
+    pub(crate) fn flush(self) -> StaticDataPageWrapper<'a, InFlight, Op> {
         // match &self.page {
         //     Some(page) => flush_buffer(page, mem::size_of::<DataPageHeader>(), false),
         //     None => panic!("ERROR: Wrapper does not have a page"),
@@ -1121,7 +1119,7 @@ impl<'a, Op> UncheckedDataPageWrapper<'a, Dirty, Op> {
 
         // let page = self.take_and_make_drop_safe();
         // let page = self.take();
-        UncheckedDataPageWrapper {
+        StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             // drop_type: self.drop_type,
@@ -1131,13 +1129,13 @@ impl<'a, Op> UncheckedDataPageWrapper<'a, Dirty, Op> {
     }
 }
 
-impl<'a, Op> UncheckedDataPageWrapper<'a, InFlight, Op> {
+impl<'a, Op> StaticDataPageWrapper<'a, InFlight, Op> {
     #[allow(dead_code)]
-    pub(crate) fn fence(self) -> UncheckedDataPageWrapper<'a, Clean, Op> {
+    pub(crate) fn fence(self) -> StaticDataPageWrapper<'a, Clean, Op> {
         sfence();
         // let page = self.take_and_make_drop_safe();
         // let page = self.take();
-        UncheckedDataPageWrapper {
+        StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             // drop_type: self.drop_type,
@@ -1150,9 +1148,9 @@ impl<'a, Op> UncheckedDataPageWrapper<'a, InFlight, Op> {
     /// followed by an sfence call. The ONLY place it should be used is in the
     /// macros to fence all objects in a vector.
     #[allow(dead_code)]
-    pub(crate) unsafe fn fence_unsafe(self) -> UncheckedDataPageWrapper<'a, Clean, Op> {
+    pub(crate) unsafe fn fence_unsafe(self) -> StaticDataPageWrapper<'a, Clean, Op> {
         // let page = self.take();
-        UncheckedDataPageWrapper {
+        StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
             // drop_type: self.drop_type,
