@@ -870,6 +870,11 @@ pub(crate) fn page_offset(offset: u64) -> Result<u64> {
     Ok((offset / HAYLEYFS_PAGESIZE) * HAYLEYFS_PAGESIZE)
 }
 
+pub(crate) fn get_page_addr(sbi: &SbInfo, page_no: PageNum) -> Result<*mut u8> {
+    let page_addr = unsafe { page_no_to_page(sbi, page_no)? };
+    Ok(page_addr)
+}
+
 #[allow(dead_code)]
 impl DataPageHeader {
     pub(crate) fn is_initialized(&self) -> bool {
@@ -879,6 +884,62 @@ impl DataPageHeader {
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.ino
     }
+
+    pub(crate) fn get_offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// Allocates a data page by setting its type and offset. Returns its page number.
+    /// Safety: Should only be called in the context of a DataPageWrapper allocation
+    /// function that returns a <Dirty, Alloc> wrapper.
+    unsafe fn alloc<'a>(sbi: &'a SbInfo, offset: u64) -> Result<(&mut Self, PageNum)> {
+        let page_no = sbi.page_allocator.alloc_page()?;
+        let ph = unsafe { page_no_to_data_header(sbi, page_no)? };
+        ph.page_type = PageType::DATA;
+        ph.offset = offset.try_into()?;
+        Ok((ph, page_no))
+    }
+
+    /// Safety: Should only be called on the data page field of a DataPage wrapper type
+    /// with <Clean, Alloc> typestate
+    unsafe fn set_backpointer(&mut self, ino: InodeNum) {
+        self.ino = ino;
+    }
+}
+
+/// Safety: ptr must be a valid pointer to a live page obtained from
+/// a readable wrapper type
+pub(crate) unsafe fn read_from_page(
+    writer: &mut impl IoBufferWriter,
+    ptr: *mut u8,
+    offset: u64,
+    len: u64,
+) -> Result<u64> {
+    let ptr = unsafe { ptr.offset(offset.try_into()?) };
+    // FIXME: same problem as write_to_page - write_raw returns an error if
+    // the bytes are not all written, which is not what we want.
+    unsafe { writer.write_raw(ptr, len.try_into()?) }?;
+
+    Ok(len)
+}
+
+/// Safety: ptr must be a valid pointer to a live page obtained
+/// from a Writeable wrapper type
+pub(crate) unsafe fn write_to_page(
+    reader: &mut impl IoBufferReader,
+    ptr: *mut u8,
+    offset: u64,
+    len: u64,
+) -> Result<u64> {
+    let ptr = unsafe { ptr.offset(offset.try_into()?) };
+    // FIXME: read_raw and read_raw_nt return a Result that does NOT include the
+    // number of bytes actually read. they return an error if all bytes are not
+    // read. this is not the behavior we expect or want here. It does return an
+    // error if all bytes are not written so we can safely return len if
+    // the read does succeed though
+    unsafe { reader.read_raw_nt(ptr, len.try_into()?) }?;
+    unsafe { flush_edge_cachelines(ptr as *mut ffi::c_void, len) }?;
+    Ok(len)
 }
 
 #[allow(dead_code)]
@@ -892,6 +953,32 @@ pub(crate) struct StaticDataPageWrapper<'a, State, Op> {
 
 impl<'a, State, Op> PmObjWrapper for StaticDataPageWrapper<'a, State, Op> {}
 
+/// Safety: Only safe to call in the context of a DataPage wrapper type that stores the page_no arg
+#[allow(dead_code)]
+unsafe fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
+    let page_desc_table = sbi.get_page_desc_table()?;
+    let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
+    let ph = page_desc_table.get_mut(page_index);
+    match ph {
+        Some(ph) => {
+            if ph.get_page_type() != PageType::DATA {
+                pr_info!("Page {:?} is not a data page\n", page_no);
+                Err(EINVAL)
+            } else {
+                let ph: &mut DataPageHeader = ph.try_into()?;
+                Ok(ph)
+            }
+        }
+        None => {
+            pr_info!(
+                "No space left in page descriptor table - index {:?} out of bounds\n",
+                page_index
+            );
+            Err(ENOSPC)
+        }
+    }
+}
+
 // TODO: we may be able to combine some DataPageWrapper methods with DirPageWrapper methods
 // by making them implement some shared trait - but need to be careful of dynamic dispatch.
 // dynamic dispatch may or may not be safe for us there
@@ -903,48 +990,10 @@ impl<'a, State, Op> StaticDataPageWrapper<'a, State, Op> {
 
     pub(crate) fn get_offset(&self) -> u64 {
         self.page.offset
-        // match &self.page {
-        //     Some(page) => page.offset,
-        //     None => panic!("ERROR: wrapper does not have a page"),
-        // }
     }
 
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.page.ino
-        // match &self.page {
-        //     Some(page) => page.ino,
-        //     None => panic!("ERROR: wrapper does not have a page"),
-        // }
-    }
-
-    // // TODO: should this be unsafe?
-    // fn take(&mut self) -> Option<&'a mut DataPageHeader> {
-    //     self.page.take()
-    // }
-
-    // fn take_and_make_drop_safe(&mut self) -> Option<&'a mut DataPageHeader> {
-    //     self.drop_type = DropType::Ok;
-    //     self.page.take()
-    // }
-}
-
-// TODO: should check page type?
-#[allow(dead_code)]
-fn unchecked_page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
-    let page_desc_table = sbi.get_page_desc_table()?;
-    let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
-    let ph = page_desc_table.get_mut(page_index);
-    if ph.is_none() {
-        pr_info!(
-            "No space left in page descriptor table - index {:?} out of bounds\n",
-            page_index
-        );
-        Err(ENOSPC)
-    } else if let Some(ph) = ph {
-        let ph: &mut DataPageHeader = ph.try_into()?;
-        Ok(ph)
-    } else {
-        unreachable!()
     }
 }
 
@@ -953,16 +1002,10 @@ impl<'a> StaticDataPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
     pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: u64) -> Result<Self> {
-        // TODO: should we zero the page here?
-        let page_no = sbi.page_allocator.alloc_page()?;
-        let ph = page_no_to_data_header(sbi, page_no)?;
-
-        ph.page_type = PageType::DATA;
-        ph.offset = offset.try_into()?;
+        let (ph, page_no) = unsafe { DataPageHeader::alloc(sbi, offset)? };
         Ok(StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
-            // drop_type: DropType::Panic,
             page_no,
             page: ph,
         })
@@ -970,15 +1013,11 @@ impl<'a> StaticDataPageWrapper<'a, Dirty, Alloc> {
 }
 
 impl<'a> StaticDataPageWrapper<'a, Clean, Writeable> {
+    /// This method returns a DataPageWrapper ONLY if the page is initialized
+    /// Otherwise it returns an error
     #[allow(dead_code)]
     pub(crate) fn from_page_no(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
-        let ph = page_no_to_data_header(&sbi, page_no)?;
-        unsafe { Self::wrap_data_page_header(ph, page_no) }
-    }
-
-    // TODO: this doesn't need to be unsafe I think
-    #[allow(dead_code)]
-    unsafe fn wrap_data_page_header(ph: &'a mut DataPageHeader, page_no: PageNum) -> Result<Self> {
+        let ph = unsafe { page_no_to_data_header(&sbi, page_no)? };
         if !ph.is_initialized() {
             pr_info!("ERROR: page {:?} is uninitialized\n", page_no);
             Err(EPERM)
@@ -986,21 +1025,16 @@ impl<'a> StaticDataPageWrapper<'a, Clean, Writeable> {
             Ok(Self {
                 state: PhantomData,
                 op: PhantomData,
-                // drop_type: DropType::Ok,
                 page_no,
                 page: ph,
             })
         }
     }
 
-    /// This method returns a DataPageWrapper ONLY if the page is initialized
-    /// Otherwise it returns an error
     #[allow(dead_code)]
     pub(crate) fn from_data_page_info(sbi: &'a SbInfo, info: &DataPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
-        let ph = page_no_to_data_header(sbi, page_no)?;
-        // wrap_data_page_header checks whether the page is initialized
-        unsafe { Self::wrap_data_page_header(ph, page_no) }
+        Self::from_page_no(sbi, page_no)
     }
 
     #[allow(dead_code)]
@@ -1011,13 +1045,8 @@ impl<'a> StaticDataPageWrapper<'a, Clean, Writeable> {
         offset: u64,
         len: u64,
     ) -> Result<u64> {
-        let ptr = self.get_page_addr(sbi)? as *mut u8;
-        let ptr = unsafe { ptr.offset(offset.try_into()?) };
-        // FIXME: same problem as write_to_page - write_raw returns an error if
-        // the bytes are not all written, which is not what we want.
-        unsafe { writer.write_raw(ptr, len.try_into()?) }?;
-
-        Ok(len)
+        let ptr = get_page_addr(sbi, self.page_no)? as *mut u8;
+        unsafe { read_from_page(writer, ptr, offset, len) }
     }
 
     // TODO: define an internal implementation of IoBufferWriter that does not use
@@ -1028,7 +1057,7 @@ impl<'a> StaticDataPageWrapper<'a, Clean, Writeable> {
             Err(ENOSPC)
         } else {
             // TODO: safety notes
-            let ptr = self.get_page_addr(sbi)? as *mut u8;
+            let ptr = get_page_addr(sbi, self.page_no)? as *mut u8;
             let ptr = unsafe { ptr.offset(offset.try_into()?) };
             Ok(unsafe { slice::from_raw_parts(ptr, len.try_into()?) })
         }
@@ -1042,66 +1071,30 @@ impl<'a> StaticDataPageWrapper<'a, Clean, Writeable> {
         offset: u64,
         len: u64,
     ) -> Result<(u64, StaticDataPageWrapper<'a, InFlight, Written>)> {
-        let ptr = self.get_page_addr(sbi)? as *mut u8;
-        let ptr = unsafe { ptr.offset(offset.try_into()?) };
-
-        // FIXME: read_raw and read_raw_nt return a Result that does NOT include the
-        // number of bytes actually read. they return an error if all bytes are not
-        // read. this is not the behavior we expect or want here. It does return an
-        // error if all bytes are not written so we can safely return len if
-        // the read does succeed though
-        unsafe { reader.read_raw_nt(ptr, len.try_into()?) }?;
-        unsafe { flush_edge_cachelines(ptr as *mut ffi::c_void, len) }?;
-        // let page = self.take_and_make_drop_safe();
+        let ptr = get_page_addr(sbi, self.page_no)? as *mut u8;
+        let len = unsafe { write_to_page(reader, ptr, offset, len)? };
         Ok((
             len,
             StaticDataPageWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                // drop_type: self.drop_type,
                 page_no: self.page_no,
                 page: self.page,
             },
         ))
     }
-
-    #[allow(dead_code)]
-    pub(crate) unsafe fn temp_make_written(self) -> StaticDataPageWrapper<'a, InFlight, Written> {
-        // let page = self.take();
-        StaticDataPageWrapper {
-            state: PhantomData,
-            op: PhantomData,
-            // drop_type: self.drop_type,
-            page_no: self.page_no,
-            page: self.page,
-        }
-    }
-
-    fn get_page_addr(&self, sbi: &SbInfo) -> Result<*mut u8> {
-        let page_addr = unsafe { page_no_to_page(sbi, self.get_page_no())? };
-        Ok(page_addr)
-    }
 }
 
 impl<'a> StaticDataPageWrapper<'a, Clean, Alloc> {
-    /// NOTE: this method returns a clean backpointer, since some pages
-    /// will not actually need to be modified here. when they do, this method
-    /// flushes and fences
     #[allow(dead_code)]
     pub(crate) fn set_data_page_backpointer<S: StartOrAlloc>(
-        mut self,
+        self,
         inode: &InodeWrapper<'a, Clean, S, RegInode>,
     ) -> StaticDataPageWrapper<'a, Dirty, Writeable> {
-        // match &mut self.page {
-        //     Some(page) => page.ino = inode.get_ino(),
-        //     None => panic!("ERROR: Wrapper does not have a page"),
-        // };
-        self.page.ino = inode.get_ino();
-        // let page = self.take();
+        unsafe { self.page.set_backpointer(inode.get_ino()) };
         StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
-            // drop_type: self.drop_type,
             page_no: self.page_no,
             page: self.page,
         }
@@ -1111,18 +1104,10 @@ impl<'a> StaticDataPageWrapper<'a, Clean, Alloc> {
 impl<'a, Op> StaticDataPageWrapper<'a, Dirty, Op> {
     #[allow(dead_code)]
     pub(crate) fn flush(self) -> StaticDataPageWrapper<'a, InFlight, Op> {
-        // match &self.page {
-        //     Some(page) => flush_buffer(page, mem::size_of::<DataPageHeader>(), false),
-        //     None => panic!("ERROR: Wrapper does not have a page"),
-        // };
         flush_buffer(self.page, mem::size_of::<DataPageHeader>(), false);
-
-        // let page = self.take_and_make_drop_safe();
-        // let page = self.take();
         StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
-            // drop_type: self.drop_type,
             page_no: self.page_no,
             page: self.page,
         }
@@ -1133,12 +1118,9 @@ impl<'a, Op> StaticDataPageWrapper<'a, InFlight, Op> {
     #[allow(dead_code)]
     pub(crate) fn fence(self) -> StaticDataPageWrapper<'a, Clean, Op> {
         sfence();
-        // let page = self.take_and_make_drop_safe();
-        // let page = self.take();
         StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
-            // drop_type: self.drop_type,
             page_no: self.page_no,
             page: self.page,
         }
@@ -1149,11 +1131,9 @@ impl<'a, Op> StaticDataPageWrapper<'a, InFlight, Op> {
     /// macros to fence all objects in a vector.
     #[allow(dead_code)]
     pub(crate) unsafe fn fence_unsafe(self) -> StaticDataPageWrapper<'a, Clean, Op> {
-        // let page = self.take();
         StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
-            // drop_type: self.drop_type,
             page_no: self.page_no,
             page: self.page,
         }
@@ -1165,9 +1145,7 @@ impl<'a, Op> StaticDataPageWrapper<'a, InFlight, Op> {
 pub(crate) struct DataPageWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
-    // drop_type: DropType,
     page_no: PageNum,
-    // page: Option<&'a mut DataPageHeader>,
     page: CheckedPage<'a>,
 }
 
@@ -1220,25 +1198,6 @@ impl<'a, State, Op> DataPageWrapper<'a, State, Op> {
     }
 }
 
-// TODO: should check page type?
-fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
-    let page_desc_table = sbi.get_page_desc_table()?;
-    let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
-    let ph = page_desc_table.get_mut(page_index);
-    if ph.is_none() {
-        pr_info!(
-            "No space left in page descriptor table - index {:?} out of bounds\n",
-            page_index
-        );
-        Err(ENOSPC)
-    } else if let Some(ph) = ph {
-        let ph: &mut DataPageHeader = ph.try_into()?;
-        Ok(ph)
-    } else {
-        unreachable!()
-    }
-}
-
 #[allow(dead_code)]
 impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
@@ -1246,7 +1205,7 @@ impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
     pub(crate) fn alloc_data_page(sbi: &'a SbInfo, offset: u64) -> Result<Self> {
         // TODO: should we zero the page here?
         let page_no = sbi.page_allocator.alloc_page()?;
-        let ph = page_no_to_data_header(sbi, page_no)?;
+        let ph = unsafe { page_no_to_data_header(sbi, page_no)? };
 
         ph.page_type = PageType::DATA;
         ph.offset = offset.try_into()?;
@@ -1266,7 +1225,7 @@ impl<'a> DataPageWrapper<'a, Dirty, Alloc> {
 
 impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     pub(crate) fn from_page_no(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
-        let ph = page_no_to_data_header(&sbi, page_no)?;
+        let ph = unsafe { page_no_to_data_header(&sbi, page_no)? };
         unsafe { Self::wrap_data_page_header(ph, page_no) }
     }
 
@@ -1294,7 +1253,7 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
     /// Otherwise it returns an error
     pub(crate) fn from_data_page_info(sbi: &'a SbInfo, info: &DataPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
-        let ph = page_no_to_data_header(sbi, page_no)?;
+        let ph = unsafe { page_no_to_data_header(sbi, page_no)? };
         // wrap_data_page_header checks whether the page is initialized
         unsafe { Self::wrap_data_page_header(ph, page_no) }
     }
@@ -1404,7 +1363,7 @@ impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
     #[allow(dead_code)]
     pub(crate) fn mark_to_unmap(sbi: &'a SbInfo, info: &DataPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
-        let ph = page_no_to_data_header(sbi, page_no)?;
+        let ph = unsafe { page_no_to_data_header(sbi, page_no)? };
         unsafe { Self::wrap_page_to_unmap(ph, page_no) }
     }
 
@@ -1600,12 +1559,12 @@ impl DataPageListWrapper<Clean, Start> {
             // run this here just to make sure we haven't run out of space in the
             // page header table
             // TODO: write an actual check for that
-            let _ph = page_no_to_data_header(sbi, page_no)?;
+            let _ph = unsafe { page_no_to_data_header(sbi, page_no)? };
             new_pages.try_push(page_no)?;
         }
         self.page_nos.try_reserve(no_pages)?;
         for page_no in new_pages.drain(..) {
-            let ph = page_no_to_data_header(sbi, page_no)?;
+            let ph = unsafe { page_no_to_data_header(sbi, page_no)? };
             ph.page_type = PageType::DATA;
             ph.offset = offset;
             flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
@@ -1629,7 +1588,7 @@ impl DataPageListWrapper<Clean, Alloc> {
         ino: InodeNum,
     ) -> Result<DataPageListWrapper<InFlight, Writeable>> {
         for page in &self.page_nos {
-            let mut ph = page_no_to_data_header(sbi, page.get_page_no())?;
+            let mut ph = unsafe { page_no_to_data_header(sbi, page.get_page_no())? };
             if ph.get_ino() == 0 {
                 ph.ino = ino;
                 // TODO: only flush the cache line we changed
