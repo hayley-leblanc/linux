@@ -1538,7 +1538,7 @@ impl DataPageListWrapper<Clean, Start> {
     // allocates pages to represent a contiguous chunk of a file (the pages
     // themselves may not be physically contiguous)
     pub(crate) fn allocate_pages<'a>(
-        mut self,
+        self,
         sbi: &'a SbInfo,
         pi_info: &HayleyFsRegInodeInfo,
         no_pages: usize,
@@ -1546,28 +1546,16 @@ impl DataPageListWrapper<Clean, Start> {
     ) -> Result<DataPageListWrapper<InFlight, Alloc>> {
         let mut new_pages = Vec::try_with_capacity(no_pages)?;
         for _ in 0..no_pages {
-            let page_no = sbi.page_allocator.alloc_page()?;
-            // run this here just to make sure we haven't run out of space in the
-            // page header table
-            // TODO: write an actual check for that
-            let _ph = unsafe { page_no_to_data_header(sbi, page_no)? };
-            new_pages.try_push(page_no)?;
-        }
-        self.page_nos.try_reserve(no_pages)?;
-        for page_no in new_pages.drain(..) {
-            let ph = unsafe { page_no_to_data_header(sbi, page_no)? };
-            ph.page_type = PageType::DATA;
-            ph.offset = offset;
+            let (ph, page_no) = unsafe { DataPageHeader::alloc(sbi, offset)? };
+            new_pages.try_push(DataPageInfo::new(pi_info.get_ino(), page_no, offset))?;
             flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
-            self.page_nos
-                .try_push(DataPageInfo::new(pi_info.get_ino(), page_no, offset))?;
             offset += HAYLEYFS_PAGESIZE;
         }
         Ok(DataPageListWrapper {
             state: PhantomData,
             op: PhantomData,
             offset: self.offset,
-            page_nos: self.page_nos,
+            page_nos: new_pages,
         })
     }
 }
@@ -1579,9 +1567,9 @@ impl DataPageListWrapper<Clean, Alloc> {
         ino: InodeNum,
     ) -> Result<DataPageListWrapper<InFlight, Writeable>> {
         for page in &self.page_nos {
-            let mut ph = unsafe { page_no_to_data_header(sbi, page.get_page_no())? };
+            let ph = unsafe { page_no_to_data_header(sbi, page.get_page_no())? };
             if ph.get_ino() == 0 {
-                ph.ino = ino;
+                unsafe { ph.set_backpointer(ino) };
                 // TODO: only flush the cache line we changed
                 flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
             }
@@ -1664,30 +1652,15 @@ impl DataPageListWrapper<Clean, Writeable> {
                 continue;
             }
             // TODO: safe wrapper
-            let mut ptr = unsafe { page_no_to_page(sbi, page_no)? };
-            // right now we assume that kernel-level writes succeed and write
-            // the requested number of bytes, so only the first page may have
-            // a non-zero offset
-            if page.get_offset() == page_offset {
-                ptr = unsafe { ptr.offset(offset_within_page.try_into()?) };
-            }
+            let ptr = unsafe { page_no_to_page(sbi, page_no)? };
             let bytes_to_write = if len < HAYLEYFS_PAGESIZE - offset_within_page {
                 len
             } else {
                 HAYLEYFS_PAGESIZE - offset_within_page
             };
 
-            // FIXME: read_raw and read_raw_nt return a Result that does NOT include the
-            // number of bytes actually read. they return an error if all bytes are not
-            // read. this is not the behavior we expect or want here. It does return an
-            // error if all bytes are not written so we can safely return len if
-            // the read does succeed though
-            unsafe {
-                reader.read_raw_nt(ptr, bytes_to_write.try_into()?)?;
-            }
-            unsafe {
-                flush_edge_cachelines(ptr as *mut ffi::c_void, bytes_to_write)?;
-            }
+            let bytes_to_write = unsafe { write_to_page(reader, ptr, offset, bytes_to_write)? };
+
             bytes_written += bytes_to_write;
             page_offset += HAYLEYFS_PAGESIZE;
             len -= bytes_to_write;
@@ -1700,6 +1673,68 @@ impl DataPageListWrapper<Clean, Writeable> {
             offset: self.offset,
             page_nos: self.page_nos,
         })
+    }
+}
+
+impl<'a> DataPageListWrapper<Clean, ToUnmap> {
+    // inode try_complete_unlink_runtime can return a list of pages in the ToUnmap state
+    // probably just need a different version that returns the wrapper
+    // instead of straight vector of wrapped stateful pages
+    pub(crate) fn get_data_pages_to_unmap(pi_info: &HayleyFsRegInodeInfo) -> Result<Self> {
+        let pages = pi_info.get_all_pages()?;
+        let iter = pages.values();
+        // TODO: get len and reserve vec with capacity
+        let mut v = Vec::new();
+        for page in iter {
+            v.try_push(*page)?;
+        }
+        Ok(Self {
+            state: PhantomData,
+            op: PhantomData,
+            offset: 0,
+            page_nos: v,
+        })
+    }
+
+    pub(crate) fn unmap(self, sbi: &SbInfo) -> Result<DataPageListWrapper<InFlight, ClearIno>> {
+        for page in &self.page_nos {
+            let ph = unsafe { page_no_to_data_header(sbi, page.get_page_no())? };
+            ph.ino = 0;
+            flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
+        }
+        Ok(DataPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            offset: self.offset,
+            page_nos: self.page_nos,
+        })
+    }
+}
+
+impl<'a> DataPageListWrapper<Clean, ClearIno> {
+    pub(crate) fn dealloc(self, sbi: &SbInfo) -> Result<DataPageListWrapper<InFlight, Dealloc>> {
+        for page in &self.page_nos {
+            let ph = unsafe { page_no_to_data_header(sbi, page.get_page_no())? };
+            unsafe { ph.dealloc() };
+            flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
+        }
+        Ok(DataPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            offset: self.offset,
+            page_nos: self.page_nos,
+        })
+    }
+}
+
+impl<'a> DataPageListWrapper<Clean, Dealloc> {
+    pub(crate) fn mark_free(self) -> DataPageListWrapper<Clean, Free> {
+        DataPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            offset: self.offset,
+            page_nos: self.page_nos,
+        }
     }
 }
 

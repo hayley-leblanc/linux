@@ -918,7 +918,43 @@ fn finish_unlink<'a>(
     inode: *mut bindings::inode,
     pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
 ) -> Result<InodeWrapper<'a, Clean, Complete, RegInode>> {
-    let result = pi.try_complete_unlink(sbi)?;
+    match sbi.mount_opts.write_type {
+        Some(WriteType::Iterator) | None => iterator_finish_unlink(sbi, inode, pi),
+        _ => runtime_finish_unlink(sbi, inode, pi),
+    }
+}
+
+fn iterator_finish_unlink<'a>(
+    sbi: &'a SbInfo,
+    inode: *mut bindings::inode,
+    pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
+) -> Result<InodeWrapper<'a, Clean, Complete, RegInode>> {
+    let result = pi.try_complete_unlink_iterator()?;
+    if let Ok(result) = result {
+        // there are still links left - just decrement VFS link count and return
+        unsafe {
+            bindings::drop_nlink(inode);
+        }
+        Ok(result)
+    } else if let Err((pi, pages)) = result {
+        // no links left - we need to deallocate all of the pages
+        let pages = pages.unmap(sbi)?.fence().dealloc(sbi)?.fence().mark_free();
+        unsafe {
+            bindings::drop_nlink(inode);
+        }
+        let pi = pi.iterator_dealloc(pages).flush().fence();
+        Ok(pi)
+    } else {
+        Err(EINVAL)
+    }
+}
+
+fn runtime_finish_unlink<'a>(
+    sbi: &'a SbInfo,
+    inode: *mut bindings::inode,
+    pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
+) -> Result<InodeWrapper<'a, Clean, Complete, RegInode>> {
+    let result = pi.try_complete_unlink_runtime(sbi)?;
     if let Ok(result) = result {
         unsafe {
             bindings::drop_nlink(inode);
@@ -959,7 +995,7 @@ fn finish_unlink<'a>(
 
         // pages are now deallocated and we can use the freed pages vector
         // to deallocate the inode.
-        let pi = pi.dealloc(freed_pages).flush().fence();
+        let pi = pi.runtime_dealloc(freed_pages).flush().fence();
         end_timing!(DeallocPages, dealloc_pages);
         Ok(pi)
     } else {

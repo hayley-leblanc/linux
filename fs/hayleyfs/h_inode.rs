@@ -449,7 +449,9 @@ impl<'a> InodeWrapper<'a, Clean, Alloc, RegInode> {
 
 impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
     // this is horrifying
-    pub(crate) fn try_complete_unlink(self, sbi: &'a SbInfo) -> Result<core::result::Result<InodeWrapper<'a, Clean, Complete, RegInode>, (InodeWrapper<'a, Clean, Dealloc, RegInode>, Vec<DataPageWrapper<'a, Clean, ToUnmap>>)>> {
+    pub(crate) fn try_complete_unlink_runtime(self, sbi: &'a SbInfo) -> 
+        Result<core::result::Result<InodeWrapper<'a, Clean, Complete, RegInode>, (InodeWrapper<'a, Clean, Dealloc, RegInode>, Vec<DataPageWrapper<'a, Clean, ToUnmap>>)>> 
+    {
         if self.inode.get_link_count() > 0 {
             Ok(Ok(InodeWrapper {
                 state: PhantomData,
@@ -462,7 +464,6 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
         } else {
             // get the list of pages associated with this inode and convert them into 
             // ToUnmap wrappers
-            // let pages = sbi.ino_data_page_map.get_all_pages(&self.get_ino())?;
             let info = self.get_inode_info()?;
             let pages = info.get_all_pages()?;
             let mut unmap_vec = Vec::new();
@@ -485,11 +486,78 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
             )
         }
     }
+
+    pub(crate) fn try_complete_unlink_iterator(self) -> 
+        Result<
+            core::result::Result<
+                InodeWrapper<'a, Clean, Complete, RegInode>, 
+                (InodeWrapper<'a, Clean, Dealloc, RegInode>, DataPageListWrapper<Clean, ToUnmap>)
+            >
+        > {
+            // there are still links, so don't delete the inode or its pages
+            if self.inode.get_link_count() > 0 {
+                Ok(Ok(InodeWrapper {
+                    state: PhantomData,
+                    op: PhantomData,
+                    inode_type: PhantomData,
+                    vfs_inode: self.vfs_inode,
+                    ino: self.ino,
+                    inode: self.inode,
+                }))
+            } else {
+                let info = self.get_inode_info()?;
+                let pages = DataPageListWrapper::get_data_pages_to_unmap(info)?;
+                Ok(
+                    Err(
+                        (
+                            InodeWrapper {
+                                state: PhantomData,
+                                op: PhantomData,
+                                inode_type: PhantomData,
+                                vfs_inode: self.vfs_inode,
+                                ino: self.ino,
+                                inode: self.inode,
+                            }, 
+                            pages
+                        )
+                    )
+                )
+            }
+        }
 }
 
 impl<'a> InodeWrapper<'a, Clean, Dealloc, RegInode> {
     // NOTE: data page wrappers don't actually need to be free, they just need to be in ClearIno
-    pub(crate) fn dealloc(self, _freed_pages: Vec<DataPageWrapper<'a, Clean, Free>>) -> InodeWrapper<'a, Dirty, Complete, RegInode> {
+    pub(crate) fn runtime_dealloc(self, _freed_pages: Vec<DataPageWrapper<'a, Clean, Free>>) -> InodeWrapper<'a, Dirty, Complete, RegInode> {
+        self.inode.inode_type = InodeType::NONE;
+        // link count should already be 0
+        assert!(self.inode.link_count == 0);
+        self.inode.mode = 0;
+        self.inode.uid = 0;
+        self.inode.gid = 0;
+        self.inode.ctime.tv_sec = 0;
+        self.inode.ctime.tv_nsec = 0;
+        self.inode.atime.tv_sec = 0;
+        self.inode.atime.tv_nsec = 0;
+        self.inode.mtime.tv_sec = 0;
+        self.inode.mtime.tv_nsec = 0;
+        self.inode.blocks = 0;
+        self.inode.size = 0;
+        self.inode.ino = 0;
+
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            inode_type: PhantomData,
+            vfs_inode: self.vfs_inode,
+            ino: self.ino,
+            inode: self.inode
+        }
+    }
+
+    // NOTE: data page wrappers don't actually need to be free, they just need to be in ClearIno
+    // TODO: combine with runtime version using a trait for the data page wrapper 
+    pub(crate) fn iterator_dealloc(self, _freed_pages: DataPageListWrapper<Clean, Free>) -> InodeWrapper<'a, Dirty, Complete, RegInode> {
         self.inode.inode_type = InodeType::NONE;
         // link count should already be 0
         assert!(self.inode.link_count == 0);

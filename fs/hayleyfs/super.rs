@@ -44,7 +44,7 @@ impl fs::Context<Self> for HayleyFs {
         // TODO: let the user pass in a string
         {u64, "write_type", |s, v| {
             if v == 0 {
-                pr_info!("using write iterator\n");
+                pr_info!("using single page writes\n");
                 s.mount_opts.write_type = Some(WriteType::SinglePage);
             } else if v == 1 {
                 pr_info!("using runtime checked writes\n");
