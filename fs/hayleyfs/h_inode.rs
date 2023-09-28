@@ -608,7 +608,35 @@ impl<'a> InodeWrapper<'a, Clean, Start, DirInode> {
 impl<'a> InodeWrapper<'a, Clean, UnmapPages, DirInode> {
     // NOTE: data page wrappers don't actually need to be free, they just need to be in ClearIno
     // any state after ClearIno is fine
-    pub(crate) fn dealloc(self, _freed_pages: Vec<DirPageWrapper<'a, Clean, Free>>) -> InodeWrapper<'a, Dirty, Complete, DirInode> {
+    pub(crate) fn iterator_dealloc(self, _freed_pages: DirPageListWrapper<Clean, Free>) -> InodeWrapper<'a, Dirty, Complete, DirInode> {
+        self.inode.inode_type = InodeType::NONE;
+        // link count should 2 for ./.. but we don't store those in durable PM, so it's safe 
+        // to just clear the link count if it is in fact 2
+        assert!(self.inode.link_count == 2);
+        self.inode.mode = 0;
+        self.inode.uid = 0;
+        self.inode.gid = 0;
+        self.inode.ctime.tv_sec = 0;
+        self.inode.ctime.tv_nsec = 0;
+        self.inode.atime.tv_sec = 0;
+        self.inode.atime.tv_nsec = 0;
+        self.inode.mtime.tv_sec = 0;
+        self.inode.mtime.tv_nsec = 0;
+        self.inode.blocks = 0;
+        self.inode.size = 0;
+        self.inode.ino = 0;
+
+        InodeWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            inode_type: PhantomData,
+            vfs_inode: self.vfs_inode,
+            ino: self.ino,
+            inode: self.inode
+        }
+    }
+
+    pub(crate) fn runtime_dealloc(self, _freed_pages: Vec<DirPageWrapper<'a, Clean, Free>>) -> InodeWrapper<'a, Dirty, Complete, DirInode> {
         self.inode.inode_type = InodeType::NONE;
         // link count should 2 for ./.. but we don't store those in durable PM, so it's safe 
         // to just clear the link count if it is in fact 2

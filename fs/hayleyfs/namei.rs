@@ -607,12 +607,12 @@ fn hayleyfs_rmdir<'a>(
             // }
             // let freed_pages = DirPageWrapper::mark_pages_free(deallocated)?;
             let pi = pi.set_unmap_page_state()?;
-            let freed_pages = rmdir_delete_pages(sbi, &delete_dir_info, &pi)?;
 
+            let pi = rmdir_delete_pages(sbi, &delete_dir_info, pi)?;
             // deallocate the inode
             // since dir inodes do not have any links other than ./.. and their children,
             // this also handles link count stuff
-            let pi = pi.dealloc(freed_pages).flush();
+            // let pi = pi.dealloc(freed_pages).flush();
 
             // deallocate the dentry
             let pd = pd.dealloc_dentry().flush();
@@ -630,6 +630,41 @@ fn hayleyfs_rmdir<'a>(
 }
 
 fn rmdir_delete_pages<'a>(
+    sbi: &'a SbInfo,
+    delete_dir_info: &HayleyFsDirInodeInfo,
+    pi: InodeWrapper<'a, Clean, UnmapPages, DirInode>,
+) -> Result<InodeWrapper<'a, InFlight, Complete, DirInode>> {
+    match sbi.mount_opts.write_type {
+        Some(WriteType::Iterator) | None => {
+            let pages = iterator_rmdir_delete_pages(sbi, delete_dir_info, &pi)?;
+            Ok(pi.iterator_dealloc(pages).flush())
+        }
+        _ => {
+            let pages = runtime_rmdir_delete_pages(sbi, delete_dir_info, &pi)?;
+            Ok(pi.runtime_dealloc(pages).flush())
+        }
+    }
+}
+
+fn iterator_rmdir_delete_pages<'a>(
+    sbi: &'a SbInfo,
+    delete_dir_info: &HayleyFsDirInodeInfo,
+    pi: &InodeWrapper<'a, Clean, UnmapPages, DirInode>,
+) -> Result<DirPageListWrapper<Clean, Free>> {
+    if delete_dir_info.get_ino() != pi.get_ino() {
+        pr_info!(
+            "ERROR: delete_dir_info inode {:?} does not match pi inode {:?}\n",
+            delete_dir_info.get_ino(),
+            pi.get_ino()
+        );
+        return Err(EINVAL);
+    }
+    let pages = DirPageListWrapper::get_dir_pages_to_unmap(delete_dir_info)?;
+    let pages = pages.unmap(sbi)?.fence().dealloc(sbi)?.fence().mark_free();
+    Ok(pages)
+}
+
+fn runtime_rmdir_delete_pages<'a>(
     sbi: &'a SbInfo,
     delete_dir_info: &HayleyFsDirInodeInfo,
     pi: &InodeWrapper<'a, Clean, UnmapPages, DirInode>,
@@ -793,13 +828,14 @@ fn single_dir_rename<'a>(
                             let (_parent_inode, dst_dentry) = fence_all!(parent_inode, dst_dentry);
 
                             let new_pi = new_pi.set_unmap_page_state()?;
-                            let freed_pages = rmdir_delete_pages(sbi, &delete_dir_info, &new_pi)?;
+                            // let freed_pages = rmdir_delete_pages(sbi, &delete_dir_info, &new_pi)?;
+                            let _new_pi = rmdir_delete_pages(sbi, &delete_dir_info, new_pi)?;
 
                             let src_dentry = src_dentry.dealloc_dentry().flush().fence();
                             parent_inode_info
                                 .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
 
-                            let _new_pi = new_pi.dealloc(freed_pages).flush().fence();
+                            // let _new_pi = new_pi.dealloc(freed_pages).flush().fence();
                             unsafe {
                                 bindings::drop_nlink(old_dir.get_inner());
                             }

@@ -888,6 +888,83 @@ impl<'a, State, Op> Drop for DirPageWrapper<'a, State, Op> {
     }
 }
 
+/// represents a typestate-ful section of a directory's pages in no
+/// particular order
+pub(crate) struct DirPageListWrapper<State, Op> {
+    state: PhantomData<State>,
+    op: PhantomData<Op>,
+    pages: Vec<DirPageInfo>,
+}
+
+impl<State, Op> PmObjWrapper for DirPageListWrapper<State, Op> {}
+
+impl<'a> DirPageListWrapper<Clean, ToUnmap> {
+    // TODO: this should require an inode in the proper state
+    pub(crate) fn get_dir_pages_to_unmap(pi_info: &HayleyFsDirInodeInfo) -> Result<Self> {
+        let pages = pi_info.get_all_pages()?;
+        let iter = pages.keys();
+        // TODO: get len and reserve vec with capacity
+        let mut v = Vec::new();
+        for page in iter {
+            v.try_push(*page)?;
+        }
+        Ok(Self {
+            state: PhantomData,
+            op: PhantomData,
+            pages: v,
+        })
+    }
+
+    pub(crate) fn unmap(self, sbi: &SbInfo) -> Result<DirPageListWrapper<InFlight, ClearIno>> {
+        for page in &self.pages {
+            let ph = unsafe { page_no_to_dir_header(sbi, page.get_page_no())? };
+            ph.ino = 0;
+            flush_buffer(ph, mem::size_of::<DirPageHeader>(), false);
+        }
+        Ok(DirPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            pages: self.pages,
+        })
+    }
+}
+
+impl<'a> DirPageListWrapper<Clean, ClearIno> {
+    pub(crate) fn dealloc(self, sbi: &SbInfo) -> Result<DirPageListWrapper<InFlight, Dealloc>> {
+        for page in &self.pages {
+            let ph = unsafe { page_no_to_dir_header(sbi, page.get_page_no())? };
+            unsafe { ph.dealloc() };
+            flush_buffer(ph, mem::size_of::<DirPageHeader>(), false);
+        }
+        Ok(DirPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            pages: self.pages,
+        })
+    }
+}
+
+impl<'a> DirPageListWrapper<Clean, Dealloc> {
+    pub(crate) fn mark_free(self) -> DirPageListWrapper<Clean, Free> {
+        DirPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            pages: self.pages,
+        }
+    }
+}
+
+impl<Op> DirPageListWrapper<InFlight, Op> {
+    pub(crate) fn fence(self) -> DirPageListWrapper<Clean, Op> {
+        sfence();
+        DirPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            pages: self.pages,
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Debug)]
