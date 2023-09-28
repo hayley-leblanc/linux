@@ -855,6 +855,7 @@ fn single_dir_rename<'a>(
     }
 }
 
+// TODO: delete the dir page if this dentry was the last one in it
 #[allow(dead_code)]
 fn hayleyfs_unlink<'a>(
     sbi: &'a SbInfo,
