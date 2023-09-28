@@ -306,7 +306,7 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
         memset_nt(
             sbi.get_virt_addr() as *mut ffi::c_void,
             0,
-            sbi.get_size().try_into()?,
+            DATA_PAGE_START.try_into()?, // only zero out regions that store metadata
             true,
         );
 
