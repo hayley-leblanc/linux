@@ -1082,6 +1082,11 @@ fn alloc_page_for_dentry<'a>(
     parent_inode: &fs::INode,
 ) -> Result<DentryWrapper<'a, Clean, Free>> {
     // allocate a page
+    // we always use single DirPageWrapper here, rather than an iterator,
+    // regardless of the mount options selected, because we are only
+    // allocating one page at a time. We could implement a special
+    // StaticDirPageWrapper for just this case but it probably will not make
+    // a noticeable difference
     let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
     sbi.inc_blocks_in_use();
     let result = sbi.get_init_dir_inode_by_vfs_inode(parent_inode.get_inner());
