@@ -578,41 +578,9 @@ fn hayleyfs_rmdir<'a>(
             let (parent_pi, _) = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
             let parent_pi = parent_pi.dec_link_count(&pd)?.flush().fence();
 
-            // // deallocate pages (if any) belonging to the inode
-            // // NOTE: we do this in a series of vectors to reduce the number of
-            // // total flushes. Unclear if this saves us time, or if the overhead
-            // // of more flushes is less than the time it takes to manage the vecs.
-            // // We need to do some evaluation of this
-            // let pages = delete_dir_info.get_all_pages()?;
-            // let mut unmap_vec = Vec::new();
-            // let mut to_dealloc = Vec::new();
-            // let mut deallocated = Vec::new();
-            // for page in pages.keys() {
-            //     // the pages have already been removed from the inode's page vector
-            //     let page = DirPageWrapper::mark_to_unmap(sbi, page)?;
-            //     unmap_vec.try_push(page)?;
-            // }
-            // for page in unmap_vec.drain(..) {
-            //     let page = page.unmap().flush();
-            //     to_dealloc.try_push(page)?;
-            // }
-            // let mut to_dealloc = fence_all_vecs!(to_dealloc);
-            // for page in to_dealloc.drain(..) {
-            //     let page = page.dealloc().flush();
-            //     deallocated.try_push(page)?;
-            // }
-            // let deallocated = fence_all_vecs!(deallocated);
-            // for page in &deallocated {
-            //     sbi.page_allocator.dealloc_dir_page(page)?;
-            // }
-            // let freed_pages = DirPageWrapper::mark_pages_free(deallocated)?;
             let pi = pi.set_unmap_page_state()?;
 
             let pi = rmdir_delete_pages(sbi, &delete_dir_info, pi)?;
-            // deallocate the inode
-            // since dir inodes do not have any links other than ./.. and their children,
-            // this also handles link count stuff
-            // let pi = pi.dealloc(freed_pages).flush();
 
             // deallocate the dentry
             let pd = pd.dealloc_dentry().flush();
@@ -835,7 +803,6 @@ fn single_dir_rename<'a>(
                             parent_inode_info
                                 .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
 
-                            // let _new_pi = new_pi.dealloc(freed_pages).flush().fence();
                             unsafe {
                                 bindings::drop_nlink(old_dir.get_inner());
                             }
