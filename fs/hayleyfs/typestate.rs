@@ -63,3 +63,8 @@ impl DeletableDentry for Renamed {}
 pub(crate) trait CanDeletePages {}
 impl CanDeletePages for ClearIno {}
 impl CanDeletePages for Complete {}
+
+pub(crate) trait InvalidInode {}
+impl InvalidInode for DecLink {}
+impl InvalidInode for Free {}
+impl InvalidInode for Complete {} // TODO: this may not be safe. some Complete inodes are invalid but some aren't

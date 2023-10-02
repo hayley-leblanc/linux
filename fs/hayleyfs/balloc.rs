@@ -546,6 +546,7 @@ impl PageHeader for DirPageHeader {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) struct DirPageWrapper<'a, State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
@@ -603,6 +604,17 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
     /// Otherwise it returns an error
     pub(crate) fn from_dir_page_info(sbi: &'a SbInfo, info: &DirPageInfo) -> Result<Self> {
         let page_no = info.get_page_no();
+        Self::from_page_no(sbi, page_no)
+    }
+
+    pub(crate) fn from_dentry<State, Op>(
+        sbi: &'a SbInfo,
+        dentry: &DentryWrapper<'a, State, Op>,
+    ) -> Result<Self> {
+        // get a u64 representing the offset of this dentry into the device
+        let dentry_offset = dentry.get_dentry_offset(sbi);
+        // then translate that offset into a page number
+        let page_no = page_offset(dentry_offset)? / HAYLEYFS_PAGESIZE;
         Self::from_page_no(sbi, page_no)
     }
 }
@@ -834,6 +846,23 @@ impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
         // if we can't find a free dentry in this page, return an error
         pr_info!("could not find a free dentry in this page\n");
         Err(ENOSPC)
+    }
+
+    pub(crate) fn is_empty(mut self, sbi: &SbInfo) -> Result<DirPageWrapper<'a, Clean, ToUnmap>> {
+        let page = self.get_dir_page(&sbi)?;
+        // TODO: store something in the wrapper so we don't have to iterate
+        for dentry in page.dentries.iter() {
+            if !dentry.is_free() {
+                return Err(ENOTEMPTY);
+            }
+        }
+        let page = self.take_and_make_drop_safe();
+        Ok(DirPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            page_no: self.page_no,
+            page,
+        })
     }
 }
 

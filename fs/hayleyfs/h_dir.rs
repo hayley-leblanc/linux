@@ -1,3 +1,4 @@
+use crate::balloc::*;
 use crate::defs::*;
 use crate::h_inode::*;
 use crate::pm::*;
@@ -55,7 +56,9 @@ pub(crate) struct DentryWrapper<'a, State, Op> {
 impl<'a, State, Op> PmObjWrapper for DentryWrapper<'a, State, Op> {}
 
 impl<'a, State, Op> DentryWrapper<'a, State, Op> {
-    fn get_dentry_offset(&self, sbi: &'a SbInfo) -> u64 {
+    // needs to be public so we can use it to obtain the page that a
+    // dentry belongs to
+    pub(crate) fn get_dentry_offset(&self, sbi: &'a SbInfo) -> u64 {
         let dentry_virtual_addr = self.dentry as *const HayleyFsDentry as u64;
         let device_virtual_addr = sbi.get_virt_addr() as u64;
         dentry_virtual_addr - device_virtual_addr
@@ -105,6 +108,18 @@ impl<'a> DentryWrapper<'a, Clean, Free> {
             op: PhantomData,
             dentry: self.dentry,
         })
+    }
+
+    pub(crate) fn try_dealloc_parent_page(
+        &self,
+        sbi: &'a SbInfo,
+    ) -> Result<DirPageWrapper<'a, Clean, ToUnmap>> {
+        // get the page that owns the dentry and check if it is empty
+        // TODO: use a statically checked dir page wrapper
+        let parent_page = DirPageWrapper::from_dentry(sbi, self)?;
+        // from_dentry checks that the page is initialized. now we check if it is empty
+        // and return an unmappable dir page wrapper if it is
+        parent_page.is_empty(sbi)
     }
 }
 

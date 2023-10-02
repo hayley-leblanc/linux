@@ -587,6 +587,14 @@ fn hayleyfs_rmdir<'a>(
 
             let (pi, pd) = fence_all!(pi, pd);
 
+            // if the page that the freed dentry belongs to is now empty, free it
+            let parent_page = pd.try_dealloc_parent_page(sbi);
+            if let Ok(parent_page) = parent_page {
+                let parent_page = parent_page.unmap().flush().fence();
+                let parent_page = parent_page.dealloc().flush().fence();
+                sbi.page_allocator.dealloc_dir_page(&parent_page)?;
+            }
+
             unsafe {
                 bindings::clear_nlink(inode);
             }
@@ -777,6 +785,13 @@ fn single_dir_rename<'a>(
                             // deallocate the src dentry
                             // this fully deallocates the dentry - it can now be used again
                             let src_dentry = src_dentry.dealloc_dentry().flush().fence();
+                            // if the page that the freed dentry belongs to is now empty, free it
+                            let parent_page = src_dentry.try_dealloc_parent_page(sbi);
+                            if let Ok(parent_page) = parent_page {
+                                let parent_page = parent_page.unmap().flush().fence();
+                                let parent_page = parent_page.dealloc().flush().fence();
+                                sbi.page_allocator.dealloc_dir_page(&parent_page)?;
+                            }
                             // atomically update the volatile index
                             parent_inode_info
                                 .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
@@ -800,6 +815,13 @@ fn single_dir_rename<'a>(
                             let _new_pi = rmdir_delete_pages(sbi, &delete_dir_info, new_pi)?;
 
                             let src_dentry = src_dentry.dealloc_dentry().flush().fence();
+                            // if the page that the freed dentry belongs to is now empty, free it
+                            let parent_page = src_dentry.try_dealloc_parent_page(sbi);
+                            if let Ok(parent_page) = parent_page {
+                                let parent_page = parent_page.unmap().flush().fence();
+                                let parent_page = parent_page.dealloc().flush().fence();
+                                sbi.page_allocator.dealloc_dir_page(&parent_page)?;
+                            }
                             parent_inode_info
                                 .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
 
@@ -906,6 +928,14 @@ fn hayleyfs_unlink<'a>(
         let (pi, pd) = fence_all!(pi, pd);
 
         end_timing!(DecLinkCount, dec_link_count);
+
+        // if the page that the freed dentry belongs to is now empty, free it
+        let parent_page = pd.try_dealloc_parent_page(sbi);
+        if let Ok(parent_page) = parent_page {
+            let parent_page = parent_page.unmap().flush().fence();
+            let parent_page = parent_page.dealloc().flush().fence();
+            sbi.page_allocator.dealloc_dir_page(&parent_page)?;
+        }
 
         let pi = finish_unlink(sbi, inode, pi)?;
 
