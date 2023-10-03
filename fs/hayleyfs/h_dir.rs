@@ -239,9 +239,34 @@ impl<'a, Op: DeletableDentry> DentryWrapper<'a, Clean, Op> {
 }
 
 impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
-    pub(crate) fn init_rename_pointer(
+    pub(crate) fn init_rename_pointer_crossdir_create(
         self,
         src_dentry: DentryWrapper<'a, Clean, Renaming>,
+        _dst_parent: &InodeWrapper<'a, Clean, IncLink, DirInode>,
+    ) -> (
+        DentryWrapper<'a, Dirty, InitRenamePointer>,
+        DentryWrapper<'a, Clean, Renamed>,
+    ) {
+        // set self's inode to the renamed dentry's inode
+        self.dentry.ino = src_dentry.get_ino();
+        (
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: self.dentry,
+            },
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: src_dentry.dentry,
+            },
+        )
+    }
+
+    pub(crate) fn init_rename_pointer_standard(
+        self,
+        src_dentry: DentryWrapper<'a, Clean, Renaming>,
+        _dst_parent: &InodeWrapper<'a, Clean, Start, DirInode>,
     ) -> (
         DentryWrapper<'a, Dirty, InitRenamePointer>,
         DentryWrapper<'a, Clean, Renamed>,
