@@ -440,7 +440,7 @@ pub(crate) fn hayleyfs_readdir(
     // get all dentries currently in this inode
     // TODO: need to start at the specified position
 
-    let mut parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let parent_inode_info = parent_inode.get_inode_info()?;
     move_dir_inode_tree_to_map(sbi, &parent_inode_info)?;
 

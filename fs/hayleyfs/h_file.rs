@@ -145,7 +145,7 @@ fn hayleyfs_write<'a>(
     let len: u64 = reader.len().try_into()?;
     init_timing!(write_inode_lookup);
     start_timing!(write_inode_lookup);
-    let mut pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     let pi_info = pi.get_inode_info()?;
     end_timing!(WriteInodeLookup, write_inode_lookup);
 
@@ -377,7 +377,7 @@ fn hayleyfs_read(
     // let inode = inode.read();
     init_timing!(read_inode_lookup);
     start_timing!(read_inode_lookup);
-    let mut pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     let pi_info = pi.get_inode_info()?;
     end_timing!(ReadInodeLookup, read_inode_lookup);
     let size: u64 = inode.i_size_read().try_into()?;
