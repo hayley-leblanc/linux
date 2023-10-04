@@ -40,6 +40,10 @@ impl HayleyFsDentry {
         self.name
     }
 
+    pub(crate) fn get_name_as_cstr(&self) -> &CStr {
+        unsafe { CStr::from_char_ptr(self.get_name().as_ptr() as *const core::ffi::c_char) }
+    }
+
     pub(crate) fn is_free(&self) -> bool {
         self.ino == 0 && self.is_rename_ptr_null() && !self.has_name()
     }
@@ -74,6 +78,10 @@ impl<'a, State, Op> DentryWrapper<'a, State, Op> {
 
     pub(crate) fn get_name(&self) -> [u8; MAX_FILENAME_LEN] {
         self.dentry.name.clone()
+    }
+
+    pub(crate) fn get_name_as_cstr(&self) -> &CStr {
+        self.dentry.get_name_as_cstr()
     }
 }
 
@@ -239,10 +247,11 @@ impl<'a, Op: DeletableDentry> DentryWrapper<'a, Clean, Op> {
 }
 
 impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
-    pub(crate) fn init_rename_pointer_crossdir_create(
+    pub(crate) fn init_rename_pointer_file_inode(
         self,
         src_dentry: DentryWrapper<'a, Clean, Renaming>,
-        _dst_parent: &InodeWrapper<'a, Clean, IncLink, DirInode>,
+        _rename_inode: &InodeWrapper<'a, Clean, Start, RegInode>,
+        _parent_dir: &InodeWrapper<'a, Clean, Start, DirInode>,
     ) -> (
         DentryWrapper<'a, Dirty, InitRenamePointer>,
         DentryWrapper<'a, Clean, Renamed>,
@@ -263,10 +272,12 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
         )
     }
 
-    pub(crate) fn init_rename_pointer_standard(
+    // TODO: this one should be required in a crossdir setting
+    pub(crate) fn init_rename_pointer_dir_crossdir_overwrite(
         self,
         src_dentry: DentryWrapper<'a, Clean, Renaming>,
-        _dst_parent: &InodeWrapper<'a, Clean, Start, DirInode>,
+        _rename_inode: InodeWrapper<'a, Clean, Start, DirInode>,
+        _dst_parent_dir: InodeWrapper<'a, Clean, IncLink, DirInode>,
     ) -> (
         DentryWrapper<'a, Dirty, InitRenamePointer>,
         DentryWrapper<'a, Clean, Renamed>,
@@ -286,6 +297,89 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
             },
         )
     }
+
+    pub(crate) fn init_rename_pointer_dir_regular(
+        self,
+        src_dentry: DentryWrapper<'a, Clean, Renaming>,
+        _rename_inode: InodeWrapper<'a, Clean, Start, DirInode>,
+        _dst_parent_dir: InodeWrapper<'a, Clean, Start, DirInode>,
+        dst_parent_inode_info: &HayleyFsDirInodeInfo, // TODO: obtain in the fxn to make sure we use the right one
+    ) -> Result<(
+        DentryWrapper<'a, Dirty, InitRenamePointer>,
+        DentryWrapper<'a, Clean, Renamed>,
+    )> {
+        // if we created a new dentry and the src dentry is not in the dst parent,
+        // we should be using the dir crossdir version
+        if self.get_ino() == 0
+            && dst_parent_inode_info
+                .lookup_dentry(src_dentry.get_name_as_cstr())
+                .is_none()
+        {
+            return Err(EPERM);
+        }
+        // set self's inode to the renamed dentry's inode
+        self.dentry.ino = src_dentry.get_ino();
+        Ok((
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: self.dentry,
+            },
+            DentryWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                dentry: src_dentry.dentry,
+            },
+        ))
+    }
+
+    // pub(crate) fn init_rename_pointer_crossdir_create(
+    //     self,
+    //     src_dentry: DentryWrapper<'a, Clean, Renaming>,
+    //     _dst_parent: &InodeWrapper<'a, Clean, IncLink, DirInode>,
+    // ) -> (
+    //     DentryWrapper<'a, Dirty, InitRenamePointer>,
+    //     DentryWrapper<'a, Clean, Renamed>,
+    // ) {
+    //     // set self's inode to the renamed dentry's inode
+    //     self.dentry.ino = src_dentry.get_ino();
+    //     (
+    //         DentryWrapper {
+    //             state: PhantomData,
+    //             op: PhantomData,
+    //             dentry: self.dentry,
+    //         },
+    //         DentryWrapper {
+    //             state: PhantomData,
+    //             op: PhantomData,
+    //             dentry: src_dentry.dentry,
+    //         },
+    //     )
+    // }
+
+    // pub(crate) fn init_rename_pointer_standard(
+    //     self,
+    //     src_dentry: DentryWrapper<'a, Clean, Renaming>,
+    //     _dst_parent: &InodeWrapper<'a, Clean, Start, DirInode>,
+    // ) -> (
+    //     DentryWrapper<'a, Dirty, InitRenamePointer>,
+    //     DentryWrapper<'a, Clean, Renamed>,
+    // ) {
+    //     // set self's inode to the renamed dentry's inode
+    //     self.dentry.ino = src_dentry.get_ino();
+    //     (
+    //         DentryWrapper {
+    //             state: PhantomData,
+    //             op: PhantomData,
+    //             dentry: self.dentry,
+    //         },
+    //         DentryWrapper {
+    //             state: PhantomData,
+    //             op: PhantomData,
+    //             dentry: src_dentry.dentry,
+    //         },
+    //     )
+    // }
 }
 
 impl<'a> DentryWrapper<'a, Clean, InitRenamePointer> {
@@ -389,10 +483,9 @@ pub(crate) fn hayleyfs_readdir(
     // get all dentries currently in this inode
     // TODO: need to start at the specified position
 
-    let (_parent_inode, parent_inode_info) =
-        sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
-
-    move_dir_inode_tree_to_map(sbi, parent_inode_info)?;
+    let mut parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    let parent_inode_info = parent_inode.get_inode_info()?;
+    move_dir_inode_tree_to_map(sbi, &parent_inode_info)?;
 
     let dentries = parent_inode_info.get_all_dentries()?;
     let num_dentries: i64 = dentries.len().try_into()?;
@@ -402,8 +495,8 @@ pub(crate) fn hayleyfs_readdir(
         }
     }
     for dentry in dentries {
-        let name =
-            unsafe { CStr::from_char_ptr(dentry.get_name().as_ptr() as *const core::ffi::c_char) };
+        let name = dentry.get_name_as_cstr();
+        // unsafe { CStr::from_char_ptr(dentry.get_name().as_ptr() as *const core::ffi::c_char) };
         let file_type = bindings::DT_REG; // TODO: get the actual type
         let result = unsafe {
             bindings::dir_emit(

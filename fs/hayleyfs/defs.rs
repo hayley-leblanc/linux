@@ -6,8 +6,8 @@ use core::{
     ptr, slice,
     sync::atomic::{AtomicI64, AtomicU64, Ordering},
 };
+use kernel::bindings;
 use kernel::prelude::*;
-use kernel::{bindings, ForeignOwnable};
 
 // TODO: different magic value
 pub(crate) const SUPER_MAGIC: i64 = 0xabcdef;
@@ -321,10 +321,7 @@ impl SbInfo {
     pub(crate) fn get_init_reg_inode_by_vfs_inode<'a>(
         &self,
         inode: *mut bindings::inode,
-    ) -> Result<(
-        InodeWrapper<'a, Clean, Start, RegInode>,
-        &HayleyFsRegInodeInfo,
-    )> {
+    ) -> Result<InodeWrapper<'a, Clean, Start, RegInode>> {
         // TODO: use &fs::INode to avoid unsafely dereferencing the inode here
         let ino = unsafe { (*inode).i_ino };
         // we don't use inode 0
@@ -333,46 +330,35 @@ impl SbInfo {
         }
 
         let pi = unsafe { self.get_inode_by_ino_mut(ino)? };
-        let pi_info =
-            unsafe { <Box<HayleyFsRegInodeInfo> as ForeignOwnable>::borrow((*inode).i_private) };
-
         if pi.get_type() != InodeType::REG && pi.get_type() != InodeType::SYMLINK {
             pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
             return Err(EPERM);
         }
         if pi.is_initialized() {
-            Ok((InodeWrapper::wrap_inode(inode, pi), pi_info))
+            Ok(InodeWrapper::wrap_inode(inode, pi))
         } else {
             pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)
         }
     }
 
-    // TODO: this should be in h_inode.rs
     pub(crate) fn get_init_dir_inode_by_vfs_inode<'a>(
         &self,
         inode: *mut bindings::inode,
-    ) -> Result<(
-        InodeWrapper<'a, Clean, Start, DirInode>,
-        &HayleyFsDirInodeInfo,
-    )> {
+    ) -> Result<InodeWrapper<'a, Clean, Start, DirInode>> {
         // TODO: use &fs::INode to avoid unsafely dereferencing the inode here
         let ino = unsafe { (*inode).i_ino };
         // we don't use inode 0
         if ino >= NUM_INODES || ino == 0 {
             return Err(EINVAL);
         }
-
         let pi = unsafe { self.get_inode_by_ino_mut(ino)? };
-        let pi_info =
-            unsafe { <Box<HayleyFsDirInodeInfo> as ForeignOwnable>::borrow((*inode).i_private) };
-
         if pi.get_type() != InodeType::DIR {
             pr_info!("ERROR: inode {:?} is not a directory\n", ino);
             return Err(EPERM);
         }
         if pi.is_initialized() {
-            Ok((InodeWrapper::wrap_inode(inode, pi), pi_info))
+            Ok(InodeWrapper::wrap_inode(inode, pi))
         } else {
             pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)

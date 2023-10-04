@@ -40,6 +40,7 @@ pub(crate) trait Initialized {}
 impl Initialized for Init {}
 impl Initialized for Start {}
 impl Initialized for Complete {}
+impl Initialized for IncLink {}
 impl Initialized for Written {}
 impl Initialized for Writeable {} // FIXME: potential issue - new pages could be added to the index before they are written to
                                   // but the typestates are tricky especially during remount so making writeable pages indexable

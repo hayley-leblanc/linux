@@ -200,19 +200,19 @@ impl fs::Type for HayleyFs {
         let atime = unsafe { bindings::current_time(inode.get_inner()) };
         match inode_type {
             InodeType::REG => {
-                let (inode, _) = sbi
+                let inode = sbi
                     .get_init_reg_inode_by_vfs_inode(inode.get_inner())
                     .unwrap();
                 inode.update_atime(atime);
             }
             InodeType::DIR => {
-                let (inode, _) = sbi
+                let inode = sbi
                     .get_init_dir_inode_by_vfs_inode(inode.get_inner())
                     .unwrap();
                 inode.update_atime(atime);
             }
             InodeType::SYMLINK => {
-                let (inode, _) = sbi
+                let inode = sbi
                     .get_init_reg_inode_by_vfs_inode(inode.get_inner())
                     .unwrap();
                 inode.update_atime(atime);

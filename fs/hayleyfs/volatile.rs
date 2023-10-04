@@ -43,6 +43,10 @@ impl DentryInfo {
     pub(crate) fn get_name(&self) -> &[u8; MAX_FILENAME_LEN] {
         &self.name
     }
+
+    pub(crate) fn get_name_as_cstr(&self) -> &CStr {
+        unsafe { CStr::from_char_ptr(self.get_name().as_ptr() as *const core::ffi::c_char) }
+    }
 }
 
 // /// maps inodes to info about dentries for inode's children

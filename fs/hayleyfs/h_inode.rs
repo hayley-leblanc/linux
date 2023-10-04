@@ -239,13 +239,32 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
     pub(crate) fn get_type(&self) -> InodeType {
         self.inode.get_type()
     }
+
+    // TODO: safety
+    pub(crate) fn get_vfs_inode(&self) -> Result<*mut bindings::inode> {
+        match self.vfs_inode {
+            Some(vfs_inode) => Ok(vfs_inode),
+            None => {pr_info!("ERROR: inode is uninitialized\n"); Err(EPERM)}
+        }
+    }
 }
 
 impl<'a, State, Op> InodeWrapper<'a, State, Op, RegInode> {
-    pub(crate) fn get_inode_info(&self) -> Result<&HayleyFsRegInodeInfo> {
-        match self.vfs_inode {
-            Some(vfs_inode) => unsafe {Ok(<Box::<HayleyFsRegInodeInfo> as ForeignOwnable>::borrow((*vfs_inode).i_private))},
+    // TODO: safety
+    pub(crate) fn get_inode_info(&mut self) -> Result<HayleyFsRegInodeInfo> {
+        match self.vfs_inode.take() {
+            Some(vfs_inode) => unsafe {Ok(*<Box::<HayleyFsRegInodeInfo> as ForeignOwnable>::from_foreign((*vfs_inode).i_private))},
             None => {pr_info!("ERROR: inode is uninitialized\n"); Err(EPERM)}
+        }
+    }
+}
+
+impl<'a, State, Op: Initialized> InodeWrapper<'a, State, Op, DirInode> {
+    // TODO: safety
+    pub(crate) fn get_inode_info(&mut self) -> Result<HayleyFsDirInodeInfo> {
+        match self.vfs_inode.take() {
+            Some(vfs_inode) => unsafe {Ok(*<Box::<HayleyFsDirInodeInfo> as ForeignOwnable>::from_foreign((*vfs_inode).i_private))},
+            None => {pr_info!("ERROR: inode does not have vfs info attached\n"); Err(EPERM)}
         }
     }
 }
@@ -449,7 +468,7 @@ impl<'a> InodeWrapper<'a, Clean, Alloc, RegInode> {
 
 impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
     // this is horrifying
-    pub(crate) fn try_complete_unlink_runtime(self, sbi: &'a SbInfo) -> 
+    pub(crate) fn try_complete_unlink_runtime(mut self, sbi: &'a SbInfo) -> 
         Result<core::result::Result<InodeWrapper<'a, Clean, Complete, RegInode>, (InodeWrapper<'a, Clean, Dealloc, RegInode>, Vec<DataPageWrapper<'a, Clean, ToUnmap>>)>> 
     {
         if self.inode.get_link_count() > 0 {
@@ -487,7 +506,7 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
         }
     }
 
-    pub(crate) fn try_complete_unlink_iterator(self) -> 
+    pub(crate) fn try_complete_unlink_iterator(mut self) -> 
         Result<
             core::result::Result<
                 InodeWrapper<'a, Clean, Complete, RegInode>, 
@@ -506,7 +525,7 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
                 }))
             } else {
                 let info = self.get_inode_info()?;
-                let pages = DataPageListWrapper::get_data_pages_to_unmap(info)?;
+                let pages = DataPageListWrapper::get_data_pages_to_unmap(&info)?;
                 Ok(
                     Err(
                         (

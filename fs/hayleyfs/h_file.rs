@@ -145,14 +145,15 @@ fn hayleyfs_write<'a>(
     let len: u64 = reader.len().try_into()?;
     init_timing!(write_inode_lookup);
     start_timing!(write_inode_lookup);
-    let (pi, pi_info) = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    let mut pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    let pi_info = pi.get_inode_info()?;
     end_timing!(WriteInodeLookup, write_inode_lookup);
 
     // TODO: update timestamp
     match sbi.mount_opts.write_type {
         Some(WriteType::Iterator) | None => {
             let (page_list, bytes_written) =
-                iterator_write(sbi, &pi, pi_info, reader, len, offset)?;
+                iterator_write(sbi, &pi, &pi_info, reader, len, offset)?;
             let (inode_size, pi) =
                 pi.inc_size_iterator(bytes_written.try_into()?, offset, page_list);
 
@@ -168,7 +169,7 @@ fn hayleyfs_write<'a>(
                 len
             };
             let (data_page, bytes_written) =
-                single_page_write(sbi, &pi, pi_info, reader, count, offset)?;
+                single_page_write(sbi, &pi, &pi_info, reader, count, offset)?;
 
             let (inode_size, pi) =
                 pi.inc_size_single_page(bytes_written.try_into()?, offset, data_page);
@@ -180,7 +181,7 @@ fn hayleyfs_write<'a>(
         }
         Some(WriteType::RuntimeCheck) => {
             let (page_list, bytes_written) =
-                runtime_checked_write(sbi, &pi, pi_info, reader, len, offset)?;
+                runtime_checked_write(sbi, &pi, &pi_info, reader, len, offset)?;
             let (inode_size, pi) =
                 pi.inc_size_runtime_check(bytes_written.try_into()?, offset, page_list);
             // update the VFS inode's size
@@ -376,7 +377,8 @@ fn hayleyfs_read(
     // let inode = inode.read();
     init_timing!(read_inode_lookup);
     start_timing!(read_inode_lookup);
-    let (_, pi_info) = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    let mut pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    let pi_info = pi.get_inode_info()?;
     end_timing!(ReadInodeLookup, read_inode_lookup);
     let size: u64 = inode.i_size_read().try_into()?;
     count = if count < size { count } else { size };

@@ -728,7 +728,7 @@ impl<'a> DirPageWrapper<'a, Clean, Alloc> {
     /// to an initialized inode
     pub(crate) fn set_dir_page_backpointer<InoState: Initialized>(
         mut self,
-        inode: InodeWrapper<'a, Clean, InoState, DirInode>,
+        inode: &InodeWrapper<'a, Clean, InoState, DirInode>,
     ) -> DirPageWrapper<'a, Dirty, Init> {
         unsafe { self.page.set_backpointer(inode.get_ino()) };
         let page = self.take_and_make_drop_safe();
