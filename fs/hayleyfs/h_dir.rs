@@ -40,6 +40,7 @@ impl HayleyFsDentry {
         self.name
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_name_as_cstr(&self) -> &CStr {
         unsafe { CStr::from_char_ptr(self.get_name().as_ptr() as *const core::ffi::c_char) }
     }
@@ -76,10 +77,12 @@ impl<'a, State, Op> DentryWrapper<'a, State, Op> {
         )
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_name(&self) -> [u8; MAX_FILENAME_LEN] {
         self.dentry.name.clone()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_name_as_cstr(&self) -> &CStr {
         self.dentry.get_name_as_cstr()
     }
@@ -179,8 +182,8 @@ impl<'a, S: StartOrAlloc> DentryWrapper<'a, Clean, S> {
         sbi: &'a SbInfo,
         src_dentry: DentryWrapper<'a, Clean, Start>,
     ) -> (
-        DentryWrapper<'a, Dirty, SetRenamePointer>,
         DentryWrapper<'a, Clean, Renaming>,
+        DentryWrapper<'a, Dirty, SetRenamePointer>,
     ) {
         // set self's rename pointer to the PHYSICAL offset of the src dentry in the device
         let src_dentry_offset = src_dentry.get_dentry_offset(sbi);
@@ -253,8 +256,8 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
         _rename_inode: &InodeWrapper<'a, Clean, Start, RegInode>,
         _parent_dir: &InodeWrapper<'a, Clean, Start, DirInode>,
     ) -> (
-        DentryWrapper<'a, Dirty, InitRenamePointer>,
         DentryWrapper<'a, Clean, Renamed>,
+        DentryWrapper<'a, Dirty, InitRenamePointer>,
     ) {
         // set self's inode to the renamed dentry's inode
         self.dentry.ino = src_dentry.get_ino();
@@ -279,8 +282,8 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
         _rename_inode: InodeWrapper<'a, Clean, Start, DirInode>,
         _dst_parent_dir: InodeWrapper<'a, Clean, IncLink, DirInode>,
     ) -> (
-        DentryWrapper<'a, Dirty, InitRenamePointer>,
         DentryWrapper<'a, Clean, Renamed>,
+        DentryWrapper<'a, Dirty, InitRenamePointer>,
     ) {
         // set self's inode to the renamed dentry's inode
         self.dentry.ino = src_dentry.get_ino();
@@ -301,13 +304,15 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
     pub(crate) fn init_rename_pointer_dir_regular(
         self,
         src_dentry: DentryWrapper<'a, Clean, Renaming>,
-        _rename_inode: InodeWrapper<'a, Clean, Start, DirInode>,
-        _dst_parent_dir: InodeWrapper<'a, Clean, Start, DirInode>,
-        dst_parent_inode_info: &HayleyFsDirInodeInfo, // TODO: obtain in the fxn to make sure we use the right one
+        _rename_inode: &InodeWrapper<'a, Clean, Start, DirInode>,
+        dst_parent_dir: &mut InodeWrapper<'a, Clean, Start, DirInode>,
+        // dst_parent_inode_info: &HayleyFsDirInodeInfo, // TODO: obtain in the fxn to make sure we use the right one
     ) -> Result<(
-        DentryWrapper<'a, Dirty, InitRenamePointer>,
         DentryWrapper<'a, Clean, Renamed>,
+        DentryWrapper<'a, Dirty, InitRenamePointer>,
     )> {
+        let dst_parent_inode_info = dst_parent_dir.get_inode_info()?; // TODO: this might fail
+
         // if we created a new dentry and the src dentry is not in the dst parent,
         // we should be using the dir crossdir version
         if self.get_ino() == 0
@@ -332,54 +337,6 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
             },
         ))
     }
-
-    // pub(crate) fn init_rename_pointer_crossdir_create(
-    //     self,
-    //     src_dentry: DentryWrapper<'a, Clean, Renaming>,
-    //     _dst_parent: &InodeWrapper<'a, Clean, IncLink, DirInode>,
-    // ) -> (
-    //     DentryWrapper<'a, Dirty, InitRenamePointer>,
-    //     DentryWrapper<'a, Clean, Renamed>,
-    // ) {
-    //     // set self's inode to the renamed dentry's inode
-    //     self.dentry.ino = src_dentry.get_ino();
-    //     (
-    //         DentryWrapper {
-    //             state: PhantomData,
-    //             op: PhantomData,
-    //             dentry: self.dentry,
-    //         },
-    //         DentryWrapper {
-    //             state: PhantomData,
-    //             op: PhantomData,
-    //             dentry: src_dentry.dentry,
-    //         },
-    //     )
-    // }
-
-    // pub(crate) fn init_rename_pointer_standard(
-    //     self,
-    //     src_dentry: DentryWrapper<'a, Clean, Renaming>,
-    //     _dst_parent: &InodeWrapper<'a, Clean, Start, DirInode>,
-    // ) -> (
-    //     DentryWrapper<'a, Dirty, InitRenamePointer>,
-    //     DentryWrapper<'a, Clean, Renamed>,
-    // ) {
-    //     // set self's inode to the renamed dentry's inode
-    //     self.dentry.ino = src_dentry.get_ino();
-    //     (
-    //         DentryWrapper {
-    //             state: PhantomData,
-    //             op: PhantomData,
-    //             dentry: self.dentry,
-    //         },
-    //         DentryWrapper {
-    //             state: PhantomData,
-    //             op: PhantomData,
-    //             dentry: src_dentry.dentry,
-    //         },
-    //     )
-    // }
 }
 
 impl<'a> DentryWrapper<'a, Clean, InitRenamePointer> {
