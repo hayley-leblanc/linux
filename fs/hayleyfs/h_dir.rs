@@ -276,11 +276,11 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
     }
 
     // TODO: this one should be required in a crossdir setting
-    pub(crate) fn init_rename_pointer_dir_crossdir_overwrite(
+    pub(crate) fn init_rename_pointer_dir_crossdir(
         self,
         src_dentry: DentryWrapper<'a, Clean, Renaming>,
-        _rename_inode: InodeWrapper<'a, Clean, Start, DirInode>,
-        _dst_parent_dir: InodeWrapper<'a, Clean, IncLink, DirInode>,
+        _rename_inode: &InodeWrapper<'a, Clean, Start, DirInode>,
+        _dst_parent_dir: &InodeWrapper<'a, Clean, IncLink, DirInode>,
     ) -> (
         DentryWrapper<'a, Clean, Renamed>,
         DentryWrapper<'a, Dirty, InitRenamePointer>,

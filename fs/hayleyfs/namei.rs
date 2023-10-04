@@ -728,36 +728,6 @@ fn hayleyfs_rename<'a>(
                     Err(EINVAL)
                 }
             }
-
-            // // not cross dir
-            // if old_dir.i_ino() == new_dir.i_ino() {
-            //     single_dir_rename(
-            //         sbi,
-            //         &old_dentry_info,
-            //         old_dentry,
-            //         new_dentry,
-            //         old_dir,
-            //         new_dir,
-            //         parent_inode,
-            //         parent_inode_info,
-            //     )
-            // } else {
-            //     // pr_info!("ERROR: cross-directory rename not supported\n");
-            //     let (new_parent_inode, new_parent_inode_info) =
-            //         sbi.get_init_dir_inode_by_vfs_inode(new_dir.get_inner())?;
-            //     crossdir_rename(
-            //         sbi,
-            //         &old_dentry_info,
-            //         old_dentry,
-            //         new_dentry,
-            //         old_dir,
-            //         new_dir,
-            //         parent_inode,
-            //         parent_inode_info,
-            //         new_parent_inode,
-            //         new_parent_inode_info,
-            //     )
-            // }
         }
     }
 }
@@ -887,269 +857,43 @@ fn dir_inode_rename<'a>(
         }
     } else {
         // crossdir
-        Err(EPERM)
+
+        match new_dentry_info {
+            Some(new_dentry_info) => {
+                // overwriting a dentry in a different directory
+                // TODO: I THINK this is right? but you need to test it
+                // if it is take the single dir out of the name
+                let (src_dentry, dst_dentry) = rename_overwrite_dentry_dir_inode_single_dir(
+                    sbi,
+                    old_dentry_info,
+                    &new_dentry_info,
+                    &new_pi,
+                    &mut old_dir,
+                )?;
+                let (src_dentry, dst_dentry) = rename_overwrite_dir_inode_single_dir(
+                    sbi, src_dentry, dst_dentry, new_pi, old_dir, old_name,
+                )?;
+                Ok((src_dentry, dst_dentry))
+            }
+            None => {
+                // creating a new dentry in a different directory
+                let dst_dentry = get_free_dentry(sbi, &new_dir, &new_dir_info)?;
+                let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
+                let (src_dentry, dst_dentry, new_dir) = rename_new_dentry_dir_inode_crossdir(
+                    sbi,
+                    dst_dentry,
+                    old_dentry_info,
+                    &new_pi,
+                    new_dir,
+                )?;
+                let (src_dentry, dst_dentry) = rename_new_inode_dir_inode_crossdir(
+                    sbi, src_dentry, dst_dentry, new_pi, old_dir, new_dir, old_name,
+                )?;
+                Ok((src_dentry, dst_dentry))
+            }
+        }
     }
 }
-// fn single_dir_rename<'a>(
-//     sbi: &'a SbInfo,
-//     old_dentry_info: &DentryInfo,
-//     old_dentry: &fs::DEntry,
-//     new_dentry: &fs::DEntry,
-//     old_dir: &fs::INode,
-//     _new_dir: &fs::INode,
-//     parent_inode: InodeWrapper<'a, Clean, Start, DirInode>,
-//     parent_inode_info: &HayleyFsDirInodeInfo,
-// ) -> Result<(
-//     DentryWrapper<'a, Clean, Free>,
-//     DentryWrapper<'a, Clean, Complete>,
-// )> {
-//     // map to a kernel error type since as_bytes_with_nul() returns a core error
-//     let old_name = match old_dentry.d_name().as_bytes_with_nul().try_into() {
-//         Ok(arr) => Ok(arr),
-//         Err(_) => Err(EINVAL),
-//     }?;
-//     let new_name = new_dentry.d_name();
-//     let old_inode = old_dentry.d_inode();
-//     let new_inode = new_dentry.d_inode();
-
-//     let new_dentry_info = parent_inode_info.lookup_dentry(new_name);
-//     let inode_type = sbi.check_inode_type_by_vfs_inode(old_dentry.d_inode());
-//     match inode_type {
-//         Ok(InodeType::REG) | Ok(InodeType::SYMLINK) | Ok(InodeType::DIR) => {
-//             // TODO: refactor - there is some repeated code here
-//             match new_dentry_info {
-//                 Some(new_dentry_info) => {
-//                     let new_inode_type = sbi.check_inode_type_by_vfs_inode(new_inode)?;
-
-//                     // if overwriting a directory, is that directory empty?
-//                     if new_inode_type == InodeType::DIR {
-//                         let (_, delete_dir_info) =
-//                             sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
-
-//                         if delete_dir_info.has_dentries() {
-//                             return Err(ENOTEMPTY);
-//                         }
-//                     }
-
-//                     let (src_dentry, dst_dentry) = rename_overwrite_dentry_standard(
-//                         sbi,
-//                         old_dentry_info,
-//                         &new_dentry_info,
-//                         &parent_inode,
-//                     )?;
-
-//                     match new_inode_type {
-//                         InodeType::REG | InodeType::SYMLINK => {
-//                             let (src_dentry, dst_dentry) = rename_overwrite_inode(
-//                                 sbi,
-//                                 new_inode,
-//                                 old_inode,
-//                                 old_name,
-//                                 dst_dentry,
-//                                 src_dentry,
-//                                 parent_inode_info,
-//                             )?;
-
-//                             Ok((src_dentry, dst_dentry))
-//                         }
-//                         InodeType::DIR => {
-//                             let (new_pi, delete_dir_info) =
-//                                 sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
-//                             // we DO need to decrement the parent link count because a directory is being deleted
-//                             // since dst inode is empty, we don't decrement its link count here
-//                             let parent_inode =
-//                                 parent_inode.dec_link_count_rename(&dst_dentry)?.flush();
-//                             let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
-//                             let (_parent_inode, dst_dentry) = fence_all!(parent_inode, dst_dentry);
-
-//                             let new_pi = new_pi.set_unmap_page_state()?;
-//                             // let freed_pages = rmdir_delete_pages(sbi, &delete_dir_info, &new_pi)?;
-//                             let _new_pi = rmdir_delete_pages(sbi, &delete_dir_info, new_pi)?;
-
-//                             let src_dentry = src_dentry.dealloc_dentry().flush().fence();
-//                             // if the page that the freed dentry belongs to is now empty, free it
-//                             let parent_page = src_dentry.try_dealloc_parent_page(sbi);
-//                             if let Ok(parent_page) = parent_page {
-//                                 let parent_page = parent_page.unmap().flush().fence();
-//                                 let parent_page = parent_page.dealloc().flush().fence();
-//                                 sbi.page_allocator.dealloc_dir_page(&parent_page)?;
-//                             }
-//                             parent_inode_info
-//                                 .atomic_add_and_delete_dentry(&dst_dentry, old_name)?;
-
-//                             unsafe {
-//                                 bindings::drop_nlink(old_dir.get_inner());
-//                             }
-
-//                             Ok((src_dentry, dst_dentry))
-//                         }
-//                         _ => {
-//                             pr_info!("ERROR: bad inode type\n");
-//                             Err(EINVAL)
-//                         }
-//                     }
-//                 }
-//                 None => {
-//                     // TODO reimplement with new functions
-//                     Err(EPERM)
-//                     // // not overwriting a dentry - allocate a new one
-//                     // // this is the same regardless of whether we are using a reg or dir inode
-//                     // // allocate new persistent dentry
-//                     // let dst_dentry = get_free_dentry(sbi, old_dir, parent_inode_info)?;
-//                     // let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
-//                     // let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
-//                     // let old_dentry_name = src_dentry.get_name();
-
-//                     // // set and initialize rename pointer to atomically switch the live dentry
-//                     // let (dst_dentry, src_dentry) = dst_dentry.set_rename_pointer(sbi, src_dentry);
-//                     // let dst_dentry = dst_dentry.flush().fence();
-//                     // let (dst_dentry, src_dentry) = dst_dentry.init_rename_pointer(src_dentry);
-//                     // let dst_dentry = dst_dentry.flush().fence();
-
-//                     // // clear src dentry's inode
-//                     // let src_dentry = src_dentry.clear_ino().flush().fence();
-
-//                     // // clear the rename pointer, using the invalid src dentry as proof that it is
-//                     // // safe to do so
-//                     // let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush().fence();
-
-//                     // // deallocate the src dentry
-//                     // // this fully deallocates the dentry - it can now be used again
-//                     // let src_dentry = src_dentry.dealloc_dentry().flush().fence();
-
-//                     // // atomically update the volatile index
-//                     // parent_inode_info
-//                     //     .atomic_add_and_delete_dentry(&dst_dentry, &old_dentry_name)?;
-
-//                     // // since we are creating a new dentry, there is no inode to deallocate
-//                     // Ok((dst_dentry, src_dentry))
-//                 }
-//             }
-//         }
-//         Ok(InodeType::NONE) => {
-//             pr_info!("ERROR: inode has type None\n");
-//             Err(ENOENT)
-//         }
-//         Err(e) => Err(e),
-//     }
-// }
-
-// fn crossdir_rename<'a>(
-//     sbi: &'a SbInfo,
-//     old_dentry_info: &DentryInfo,
-//     old_dentry: &fs::DEntry,
-//     new_dentry: &fs::DEntry,
-//     _old_dir: &fs::INode,
-//     _new_dir: &fs::INode,
-//     _old_parent_inode: InodeWrapper<'a, Clean, Start, DirInode>,
-//     old_parent_inode_info: &HayleyFsDirInodeInfo,
-//     new_parent_inode: InodeWrapper<'a, Clean, Start, DirInode>,
-//     new_parent_inode_info: &HayleyFsDirInodeInfo,
-// ) -> Result<(
-//     DentryWrapper<'a, Clean, Free>,
-//     DentryWrapper<'a, Clean, Complete>,
-// )> {
-//     // map to a kernel error type since as_bytes_with_nul() returns a core error
-//     let old_name = match old_dentry.d_name().as_bytes_with_nul().try_into() {
-//         Ok(arr) => Ok(arr),
-//         Err(_) => Err(EINVAL),
-//     }?;
-//     let new_name = new_dentry.d_name();
-//     let old_inode = old_dentry.d_inode();
-//     let new_inode = new_dentry.d_inode();
-
-//     let new_dentry_info = new_parent_inode_info.lookup_dentry(new_name);
-//     let inode_type = sbi.check_inode_type_by_vfs_inode(old_dentry.d_inode());
-
-//     match inode_type {
-//         Ok(InodeType::REG) | Ok(InodeType::SYMLINK) | Ok(InodeType::DIR) => {
-//             match new_dentry_info {
-//                 Some(new_dentry_info) => {
-//                     // overwriting an existing dentry
-//                     let new_inode_type = sbi.check_inode_type_by_vfs_inode(new_inode)?;
-
-//                     // we can't overwrite the new dentry yet because if we are renaming a directory,
-//                     // we need to increment the new parent's link count first.
-
-//                     match new_inode_type {
-//                         InodeType::REG | InodeType::SYMLINK => {
-//                             let (src_dentry, dst_dentry) = rename_overwrite_dentry_standard(
-//                                 sbi,
-//                                 old_dentry_info,
-//                                 &new_dentry_info,
-//                                 &new_parent_inode,
-//                             )?;
-//                             let (src_dentry, dst_dentry) = rename_overwrite_inode(
-//                                 sbi,
-//                                 new_inode,
-//                                 old_inode,
-//                                 old_name,
-//                                 dst_dentry,
-//                                 src_dentry,
-//                                 old_parent_inode_info,
-//                             )?;
-//                             Ok((src_dentry, dst_dentry))
-//                         }
-//                         InodeType::DIR => {
-//                             let (_, delete_dir_info) =
-//                                 sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
-
-//                             if delete_dir_info.has_dentries() {
-//                                 return Err(ENOTEMPTY);
-//                             }
-
-//                             Err(EPERM)
-//                         }
-//                         _ => Err(EINVAL),
-//                     }
-//                 }
-//                 None => {
-//                     // create a new dentry
-//                     // TODO implement
-//                     Err(EPERM)
-//                 }
-//             }
-//         }
-//         Ok(InodeType::NONE) => {
-//             pr_info!("ERROR: inode has type None\n");
-//             Err(ENOENT)
-//         }
-//         Err(e) => Err(e),
-//     }
-// }
-
-// // TODO: clean up and refactor these functions once rename is fully implemented
-
-// fn rename_overwrite_dentry_crossdir_create<'a>(
-//     sbi: &'a SbInfo,
-//     old_dentry_info: &DentryInfo,
-//     new_dentry_info: &DentryInfo,
-//     _src_parent_info: &HayleyFsDirInodeInfo,
-//     dst_parent_inode: InodeWrapper<'a, Clean, Start, DirInode>,
-// ) -> Result<(
-//     DentryWrapper<'a, Clean, ClearIno>,
-//     DentryWrapper<'a, Clean, InitRenamePointer>,
-//     InodeWrapper<'a, Clean, IncLink, DirInode>,
-// )> {
-//     // increment the dst parent link count if necessary. regardless of whether we actually
-//     // increment it, we still change the typestate so that we can call init_rename_pointer
-//     let dst_parent_inode = dst_parent_inode.inc_link_count()?.flush();
-//     // overwriting another file, potentially deleting its inode
-//     let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
-//     let dst_dentry = DentryWrapper::get_init_dentry(*new_dentry_info)?;
-//     // set and initialize rename pointer to atomically switch the live dentry
-//     let (dst_dentry, src_dentry) = dst_dentry.set_rename_pointer(sbi, src_dentry);
-//     let dst_dentry = dst_dentry.flush();
-//     let (dst_parent_inode, dst_dentry) = fence_all!(dst_parent_inode, dst_dentry);
-//     let (dst_dentry, src_dentry) =
-//         dst_dentry.init_rename_pointer_crossdir_create(src_dentry, &dst_parent_inode);
-//     let dst_dentry = dst_dentry.flush().fence();
-
-//     // clear src dentry's inode
-//     let src_dentry = src_dentry.clear_ino().flush().fence();
-
-//     Ok((src_dentry, dst_dentry, dst_parent_inode))
-// }
 
 fn rename_overwrite_dentry_file_inode<'a>(
     sbi: &'a SbInfo,
@@ -1201,6 +945,28 @@ fn rename_new_dentry_dir_inode_single_dir<'a>(
 )> {
     let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
     set_and_init_rename_ptr_dir_inode_regular(
+        sbi,
+        src_dentry,
+        dst_dentry,
+        rename_inode,
+        dst_parent_inode,
+    )
+}
+
+fn rename_new_dentry_dir_inode_crossdir<'a>(
+    sbi: &'a SbInfo,
+    dst_dentry: DentryWrapper<'a, Clean, Alloc>,
+    old_dentry_info: &DentryInfo,
+    rename_inode: &InodeWrapper<'a, Clean, Start, DirInode>,
+    dst_parent_inode: InodeWrapper<'a, Clean, Start, DirInode>,
+) -> Result<(
+    DentryWrapper<'a, Clean, ClearIno>,
+    DentryWrapper<'a, Clean, InitRenamePointer>,
+    InodeWrapper<'a, Clean, IncLink, DirInode>,
+)> {
+    let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
+    let dst_parent_inode = dst_parent_inode.inc_link_count()?.flush().fence();
+    set_and_init_rename_ptr_dir_inode_crossdir(
         sbi,
         src_dentry,
         dst_dentry,
@@ -1269,6 +1035,30 @@ fn set_and_init_rename_ptr_dir_inode_regular<'a, S: StartOrAlloc>(
     Ok((src_dentry, dst_dentry))
 }
 
+fn set_and_init_rename_ptr_dir_inode_crossdir<'a, S: StartOrAlloc>(
+    sbi: &'a SbInfo,
+    src_dentry: DentryWrapper<'a, Clean, Start>,
+    dst_dentry: DentryWrapper<'a, Clean, S>,
+    rename_inode: &InodeWrapper<'a, Clean, Start, DirInode>,
+    dst_parent_inode: InodeWrapper<'a, Clean, IncLink, DirInode>,
+) -> Result<(
+    DentryWrapper<'a, Clean, ClearIno>,
+    DentryWrapper<'a, Clean, InitRenamePointer>,
+    InodeWrapper<'a, Clean, IncLink, DirInode>,
+)> {
+    // set and initialize rename pointer to atomically switch the live dentry
+    let (src_dentry, dst_dentry) = dst_dentry.set_rename_pointer(sbi, src_dentry);
+    let dst_dentry = dst_dentry.flush().fence();
+    let (src_dentry, dst_dentry) =
+        dst_dentry.init_rename_pointer_dir_crossdir(src_dentry, rename_inode, &dst_parent_inode);
+    let dst_dentry = dst_dentry.flush().fence();
+
+    // clear src dentry's inode
+    let src_dentry = src_dentry.clear_ino().flush().fence();
+
+    Ok((src_dentry, dst_dentry, dst_parent_inode))
+}
+
 fn rename_overwrite_file_inode<'a>(
     sbi: &SbInfo,
     src_dentry: DentryWrapper<'a, Clean, ClearIno>,
@@ -1303,6 +1093,25 @@ fn rename_overwrite_dir_inode_single_dir<'a>(
     // clear the rename pointer in the dst dentry, since the src has been invalidated
     let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush().fence();
     rename_overwrite_deallocation_dir_inode_single_dir(
+        sbi, src_dentry, dst_dentry, new_pi, old_dir, old_name,
+    )
+}
+
+fn rename_new_inode_dir_inode_crossdir<'a>(
+    sbi: &SbInfo,
+    src_dentry: DentryWrapper<'a, Clean, ClearIno>,
+    dst_dentry: DentryWrapper<'a, Clean, InitRenamePointer>,
+    new_pi: InodeWrapper<'a, Clean, Start, DirInode>,
+    old_dir: InodeWrapper<'a, Clean, Start, DirInode>,
+    _new_dir: InodeWrapper<'a, Clean, IncLink, DirInode>,
+    old_name: &[u8; MAX_FILENAME_LEN],
+) -> Result<(
+    DentryWrapper<'a, Clean, Free>,
+    DentryWrapper<'a, Clean, Complete>,
+)> {
+    // clear the rename pointer in the dst dentry, since the src has been invalidated
+    let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush().fence();
+    rename_new_dentry_deallocation_dir_inode_single_dir(
         sbi, src_dentry, dst_dentry, new_pi, old_dir, old_name,
     )
 }
