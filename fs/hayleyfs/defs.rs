@@ -366,6 +366,12 @@ impl SbInfo {
     }
 }
 
+pub(crate) fn cstr_to_filename_array(cstr: &CStr) -> [u8; MAX_FILENAME_LEN] {
+    let mut full_filename = [0; MAX_FILENAME_LEN];
+    full_filename[..cstr.len()].copy_from_slice(cstr.as_bytes());
+    full_filename
+}
+
 pub(crate) fn get_cpuid(cpus: &u32) -> u32 {
     (unsafe { bindings::smp_processor_id() }) % cpus
 }
