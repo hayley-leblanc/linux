@@ -804,12 +804,11 @@ fn dir_inode_rename<'a>(
 )> {
     let old_name = cstr_to_filename_array(old_dentry.d_name());
     let new_name = new_dentry.d_name();
-    let _old_inode = old_dentry.d_inode();
+    let old_inode = old_dentry.d_inode();
     let new_inode = new_dentry.d_inode();
 
     let old_dir_inode_info = old_dir.get_inode_info()?;
     let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
-    let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
 
     let new_dir_info = new_dir.get_inode_info()?; // TODO: might fail
     if new_dir_info.has_dentries() {
@@ -822,6 +821,7 @@ fn dir_inode_rename<'a>(
         match new_dentry_info {
             Some(new_dentry_info) => {
                 // overwriting another dentry in the same dir
+                let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
                 let (src_dentry, dst_dentry) = rename_overwrite_dentry_dir_inode_single_dir(
                     sbi,
                     old_dentry_info,
@@ -836,18 +836,18 @@ fn dir_inode_rename<'a>(
             }
             None => {
                 // creating a new dentry in the same dir
-                // let pi = sbi.get_init_reg_inode_by_vfs_inode(old_inode)?;
+                let pi = sbi.get_init_dir_inode_by_vfs_inode(old_inode)?;
                 let dst_dentry = get_free_dentry(sbi, &old_dir)?;
                 let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
                 let (src_dentry, dst_dentry) = rename_new_dentry_dir_inode_single_dir(
                     sbi,
                     dst_dentry,
                     old_dentry_info,
-                    &new_pi,
+                    &pi,
                     &mut old_dir,
                 )?;
                 let (src_dentry, dst_dentry) = rename_new_inode_dir_inode_single_dir(
-                    sbi, src_dentry, dst_dentry, new_pi, old_dir, &old_name,
+                    sbi, src_dentry, dst_dentry, pi, old_dir, &old_name,
                 )?;
                 Ok((src_dentry, dst_dentry))
             }
@@ -860,6 +860,7 @@ fn dir_inode_rename<'a>(
                 // overwriting a dentry in a different directory
                 // TODO: I THINK this is right? but you need to test it
                 // if it is take the single dir out of the name
+                let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
                 let (src_dentry, dst_dentry) = rename_overwrite_dentry_dir_inode_single_dir(
                     sbi,
                     old_dentry_info,
@@ -874,17 +875,18 @@ fn dir_inode_rename<'a>(
             }
             None => {
                 // creating a new dentry in a different directory
+                let pi = sbi.get_init_dir_inode_by_vfs_inode(old_inode)?;
                 let dst_dentry = get_free_dentry(sbi, &new_dir)?;
                 let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
                 let (src_dentry, dst_dentry, new_dir) = rename_new_dentry_dir_inode_crossdir(
                     sbi,
                     dst_dentry,
                     old_dentry_info,
-                    &new_pi,
+                    &pi,
                     new_dir,
                 )?;
                 let (src_dentry, dst_dentry) = rename_new_inode_dir_inode_crossdir(
-                    sbi, src_dentry, dst_dentry, new_pi, old_dir, new_dir, &old_name,
+                    sbi, src_dentry, dst_dentry, pi, old_dir, new_dir, &old_name,
                 )?;
                 Ok((src_dentry, dst_dentry))
             }
