@@ -15,6 +15,7 @@ pub(crate) struct Start {}
 pub(crate) struct Free {}
 #[derive(Debug)]
 pub(crate) struct Alloc {}
+#[derive(Debug)]
 pub(crate) struct Init {}
 pub(crate) struct IncLink {}
 #[derive(Debug)]
@@ -24,6 +25,7 @@ pub(crate) struct Writeable {}
 #[derive(Debug)]
 pub(crate) struct Written {}
 pub(crate) struct IncSize {}
+#[derive(Debug)]
 pub(crate) struct ClearIno {}
 pub(crate) struct DecLink {}
 pub(crate) struct Dealloc {}

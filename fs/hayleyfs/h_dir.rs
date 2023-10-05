@@ -192,12 +192,12 @@ impl<'a, S: StartOrAlloc> DentryWrapper<'a, Clean, S> {
             DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: self.dentry,
+                dentry: src_dentry.dentry,
             },
             DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: src_dentry.dentry,
+                dentry: self.dentry,
             },
         )
     }
@@ -356,7 +356,14 @@ impl<'a> DentryWrapper<'a, Clean, InitRenamePointer> {
 
 impl<'a> DentryWrapper<'a, Clean, ClearIno> {
     pub(crate) fn dealloc_dentry(self) -> DentryWrapper<'a, Dirty, Free> {
+        if self.dentry.rename_ptr != 0 {
+            pr_info!(
+                "WARNING: dentry {:?} has non zero rename pointer\n",
+                self.dentry.name
+            );
+        }
         self.dentry.name.iter_mut().for_each(|c| *c = 0);
+
         DentryWrapper {
             state: PhantomData,
             op: PhantomData,
