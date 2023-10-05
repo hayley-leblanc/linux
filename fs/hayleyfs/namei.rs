@@ -1076,7 +1076,7 @@ fn rename_overwrite_file_inode<'a>(
     // this is the inode being unlinked, not the parent directory
     let new_pi = new_pi.dec_link_count_rename(&dst_dentry)?.flush();
     unsafe {
-        bindings::drop_nlink(old_dir.get_vfs_inode()?);
+        bindings::drop_nlink(new_pi.get_vfs_inode()?);
     }
     // clear the rename pointer in the dst dentry, since the src has been invalidated
     let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
