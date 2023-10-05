@@ -265,12 +265,12 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
             DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: self.dentry,
+                dentry: src_dentry.dentry,
             },
             DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: src_dentry.dentry,
+                dentry: self.dentry,
             },
         )
     }
@@ -291,12 +291,12 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
             DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: self.dentry,
+                dentry: src_dentry.dentry,
             },
             DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: src_dentry.dentry,
+                dentry: self.dentry,
             },
         )
     }
@@ -328,12 +328,12 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
             DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: self.dentry,
+                dentry: src_dentry.dentry,
             },
             DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: src_dentry.dentry,
+                dentry: self.dentry,
             },
         ))
     }

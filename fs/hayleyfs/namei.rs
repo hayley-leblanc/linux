@@ -695,7 +695,6 @@ fn hayleyfs_rename<'a>(
     DentryWrapper<'a, Clean, Free>,
     DentryWrapper<'a, Clean, Complete>,
 )> {
-    pr_info!("hayleyfs rename\n");
     let old_name = old_dentry.d_name();
 
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(old_dir.get_inner())?;
@@ -707,7 +706,6 @@ fn hayleyfs_rename<'a>(
         None => Err(ENOENT),
         Some(old_dentry_info) => {
             let inode_type = sbi.check_inode_type_by_vfs_inode(old_dentry.d_inode())?;
-            pr_info!("inode type: {:?}\n", inode_type);
             match inode_type {
                 InodeType::REG | InodeType::SYMLINK => reg_inode_rename(
                     sbi,
@@ -750,26 +748,19 @@ fn reg_inode_rename<'a>(
     DentryWrapper<'a, Clean, Free>,
     DentryWrapper<'a, Clean, Complete>,
 )> {
-    pr_info!("reg inode rename\n");
     let old_name = cstr_to_filename_array(old_dentry.d_name());
     let new_name = new_dentry.d_name();
-    pr_info!(
-        "reg inode rename old name {:?} new name {:?}\n",
-        old_name,
-        new_name
-    );
     let old_inode = old_dentry.d_inode();
     let new_inode = new_dentry.d_inode();
 
     let old_dir_inode_info = old_dir.get_inode_info()?;
     let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
-    let new_pi = sbi.get_init_reg_inode_by_vfs_inode(new_inode)?;
 
     // reg file rename is the same for single dir and crossdir
     match new_dentry_info {
         Some(new_dentry_info) => {
             // overwriting a dentry
-            pr_info!("overwriting dentry\n");
+            let new_pi = sbi.get_init_reg_inode_by_vfs_inode(new_inode)?;
             let (src_dentry, dst_dentry) = rename_overwrite_dentry_file_inode(
                 sbi,
                 old_dentry_info,
@@ -784,7 +775,6 @@ fn reg_inode_rename<'a>(
         }
         None => {
             // creating a new dentry
-            pr_info!("creating a new dentry\n");
             let pi = sbi.get_init_reg_inode_by_vfs_inode(old_inode)?;
             let dst_dentry = get_free_dentry(sbi, &old_dir)?;
             let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
