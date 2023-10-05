@@ -1075,6 +1075,9 @@ fn rename_overwrite_file_inode<'a>(
     // decrement link count of the inode whose dentry is being overwritten
     // this is the inode being unlinked, not the parent directory
     let new_pi = new_pi.dec_link_count_rename(&dst_dentry)?.flush();
+    unsafe {
+        bindings::drop_nlink(old_dir.get_vfs_inode()?);
+    }
     // clear the rename pointer in the dst dentry, since the src has been invalidated
     let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
     let (new_pi, dst_dentry) = fence_all!(new_pi, dst_dentry);
@@ -1192,6 +1195,9 @@ fn rename_overwrite_deallocation_dir_inode_single_dir<'a>(
 )> {
     // decrement link count because we are getting rid of a dir
     let old_dir = old_dir.dec_link_count(&src_dentry)?.flush().fence();
+    unsafe {
+        bindings::drop_nlink(old_dir.get_vfs_inode()?);
+    }
     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
     // let delete_dir_info = new_pi.get_inode_info()?; // TODO: this will probably fail
     let new_pi = new_pi.set_unmap_page_state()?;
