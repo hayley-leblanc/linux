@@ -472,7 +472,11 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
     fn has_dentries(&self) -> bool {
         let dentries = Arc::clone(&self.dentries);
         let dentries = dentries.lock();
+        for k in dentries.keys() {
+            pr_info!("{:?}: {:?}\n", k, dentries.get(k));
+        }
         let mut keys = dentries.keys().peekable();
+
         keys.peek().is_some()
     }
 

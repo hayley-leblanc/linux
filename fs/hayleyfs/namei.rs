@@ -795,7 +795,6 @@ fn dir_inode_rename<'a>(
     old_dentry: &fs::DEntry,
     new_dentry: &fs::DEntry,
     mut old_dir: InodeWrapper<'a, Clean, Start, DirInode>,
-
     new_dir: InodeWrapper<'a, Clean, Start, DirInode>,
     old_dentry_info: &DentryInfo,
 ) -> Result<(
@@ -810,9 +809,13 @@ fn dir_inode_rename<'a>(
     let old_dir_inode_info = old_dir.get_inode_info()?;
     let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
 
-    let new_dir_info = new_dir.get_inode_info()?; // TODO: might fail
-    if new_dir_info.has_dentries() {
-        return Err(ENOTEMPTY);
+    if !new_inode.is_null() {
+        // TODO: ideally we wouldn't do this twice
+        let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
+        let new_pi_info = new_pi.get_inode_info()?;
+        if new_pi_info.has_dentries() {
+            return Err(ENOTEMPTY);
+        }
     }
 
     // directory rename is different for same dir vs cross dir
