@@ -303,10 +303,11 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
     pr_info!("init fs\n");
 
     unsafe {
+        let data_page_start = DATA_PAGE_START * HAYLEYFS_PAGESIZE;
         memset_nt(
             sbi.get_virt_addr() as *mut ffi::c_void,
             0,
-            DATA_PAGE_START.try_into()?, // only zero out regions that store metadata
+            data_page_start.try_into()?, // only zero out regions that store metadata
             true,
         );
 
