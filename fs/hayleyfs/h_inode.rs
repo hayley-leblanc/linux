@@ -178,6 +178,11 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
         self.ino
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn get_link_count(&self) -> u16 {
+        self.inode.get_link_count()
+    }
+
     pub(crate) fn get_size(&self) -> u64 {
         self.inode.get_size()
     }

@@ -830,7 +830,7 @@ fn dir_inode_rename<'a>(
     let new_inode = new_dentry.d_inode();
 
     let old_dir_inode_info = old_dir.get_inode_info()?;
-    let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
+    // let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
 
     if !new_inode.is_null() {
         // TODO: ideally we wouldn't do this twice
@@ -843,6 +843,7 @@ fn dir_inode_rename<'a>(
 
     // directory rename is different for same dir vs cross dir
     if old_dir.get_ino() == new_dir.get_ino() {
+        let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
         // same dir
         match new_dentry_info {
             Some(new_dentry_info) => {
@@ -880,12 +881,11 @@ fn dir_inode_rename<'a>(
         }
     } else {
         // crossdir
-
+        let new_dir_inode_info = new_dir.get_inode_info()?;
+        let new_dentry_info = new_dir_inode_info.lookup_dentry(new_name);
         match new_dentry_info {
             Some(new_dentry_info) => {
                 // overwriting a dentry in a different directory
-                // TODO: I THINK this is right? but you need to test it
-                // if it is take the single dir out of the name
                 let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
                 let (src_dentry, dst_dentry) = rename_overwrite_dentry_dir_inode_single_dir(
                     sbi,
@@ -992,6 +992,9 @@ fn rename_new_dentry_dir_inode_crossdir<'a>(
 )> {
     let src_dentry = DentryWrapper::get_init_dentry(*old_dentry_info)?;
     let dst_parent_inode = dst_parent_inode.inc_link_count()?.flush().fence();
+    unsafe {
+        bindings::inc_nlink(dst_parent_inode.get_vfs_inode()?);
+    }
     set_and_init_rename_ptr_dir_inode_crossdir(
         sbi,
         src_dentry,
@@ -1418,6 +1421,11 @@ fn rename_new_dentry_deallocation_dir_inode_crossdir<'a>(
     DentryWrapper<'a, Clean, Free>,
     DentryWrapper<'a, Clean, Complete>,
 )> {
+    // decrement link count because we are getting rid of a dir
+    let old_dir = old_dir.dec_link_count(&src_dentry)?.flush().fence();
+    unsafe {
+        bindings::drop_nlink(old_dir.get_vfs_inode()?);
+    }
     let old_parent_inode_info = old_dir.get_inode_info()?;
     let new_parent_inode_info = new_dir.get_inode_info()?;
     // decrement link count because we are getting rid of a dir
@@ -1796,14 +1804,3 @@ fn init_dentry_with_new_dir_inode<'a>(
     let dentry = dentry.flush().fence();
     Ok((dentry, parent_inode, new_inode))
 }
-
-// fn init_dentry_hard_link<'a>(
-//     sbi: &'a SbInfo,
-//     dentry: DentryWrapper<'a, Clean, Alloc>,
-//     inode: InodeWrapper<'a, Clean, IncLink, RegInode>,
-// ) -> Result<(
-//     DentryWrapper<'a, Clean, Complete>,
-//     InodeWrapper<'a, Clean, Complete, RegInode>,
-// )> {
-//     // set the inode in the dentrty
-// }
