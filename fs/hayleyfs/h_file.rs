@@ -338,11 +338,24 @@ fn iterator_write<'a>(
     let page_list = match page_list {
         Ok(page_list) => page_list, // all pages are already allocated
         Err(page_list) => {
-            // we need to allocate some pages
-            let pages_to_write = if count % HAYLEYFS_PAGESIZE == 0 {
-                count / HAYLEYFS_PAGESIZE
+            let pages_to_write = if offset % HAYLEYFS_PAGESIZE == 0 {
+                if count % HAYLEYFS_PAGESIZE == 0 {
+                    count / HAYLEYFS_PAGESIZE
+                } else {
+                    (count / HAYLEYFS_PAGESIZE) + 1
+                }
             } else {
-                (count / HAYLEYFS_PAGESIZE) + 1
+                let first_page_bytes = HAYLEYFS_PAGESIZE - (offset % HAYLEYFS_PAGESIZE);
+                let remaining_bytes = if count < first_page_bytes {
+                    count
+                } else {
+                    count - first_page_bytes
+                };
+                if remaining_bytes % HAYLEYFS_PAGESIZE == 0 {
+                    (remaining_bytes / HAYLEYFS_PAGESIZE) + 1 // +1 for the first page
+                } else {
+                    (remaining_bytes / HAYLEYFS_PAGESIZE) + 2 // +2 for the first and last page
+                }
             };
             let pages_left = pages_to_write - page_list.len()?;
             let allocation_offset = page_offset(offset)? + page_list.len()? * HAYLEYFS_PAGESIZE;

@@ -1743,16 +1743,17 @@ impl DataPageListWrapper<Clean, Start> {
     // allocates pages to represent a contiguous chunk of a file (the pages
     // themselves may not be physically contiguous)
     pub(crate) fn allocate_pages<'a>(
-        self,
+        mut self,
         sbi: &'a SbInfo,
         pi_info: &HayleyFsRegInodeInfo,
         no_pages: usize,
         mut offset: u64,
     ) -> Result<DataPageListWrapper<InFlight, Alloc>> {
-        let mut new_pages = Vec::try_with_capacity(no_pages)?;
+        self.page_nos.try_reserve(no_pages)?;
         for _ in 0..no_pages {
             let (ph, page_no) = unsafe { DataPageHeader::alloc(sbi, Some(offset))? };
-            new_pages.try_push(DataPageInfo::new(pi_info.get_ino(), page_no, offset))?;
+            self.page_nos
+                .try_push(DataPageInfo::new(pi_info.get_ino(), page_no, offset))?;
             flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
             offset += HAYLEYFS_PAGESIZE;
         }
@@ -1760,7 +1761,7 @@ impl DataPageListWrapper<Clean, Start> {
             state: PhantomData,
             op: PhantomData,
             offset: self.offset,
-            page_nos: new_pages,
+            page_nos: self.page_nos,
         })
     }
 }
