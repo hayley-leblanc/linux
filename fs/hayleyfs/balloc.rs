@@ -584,6 +584,7 @@ impl<'a, State, Op> DirPageWrapper<'a, State, Op> {
 
 impl<'a> DirPageWrapper<'a, Clean, Start> {
     pub(crate) fn from_page_no(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
+        // pr_info!("from page no\n");
         let ph = unsafe { page_no_to_dir_header(&sbi, page_no)? };
         if !ph.is_initialized() {
             pr_info!("ERROR: page {:?} is uninitialized\n", page_no);
@@ -655,7 +656,11 @@ unsafe fn page_no_to_dir_header<'a>(
     match ph {
         Some(ph) => {
             if ph.get_page_type() != PageType::DIR {
-                pr_info!("Page {:?} is not a dir page\n", page_no);
+                pr_info!(
+                    "Page {:?} is not a dir page, has type {:?}\n",
+                    page_no,
+                    ph.get_page_type()
+                );
                 Err(EINVAL)
             } else {
                 let ph: &mut DirPageHeader = ph.try_into()?;

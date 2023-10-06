@@ -757,9 +757,6 @@ fn reg_inode_rename<'a>(
     let old_dir_inode_info = old_dir.get_inode_info()?;
     let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
 
-    // reg file rename is the same for single dir and crossdir
-    // TODO: it literally is not. FRIDAY fix this
-
     match new_dentry_info {
         Some(new_dentry_info) => {
             // overwriting a dentry
@@ -923,6 +920,7 @@ fn dir_inode_rename<'a>(
     }
 }
 
+// TODO: all these rename functions need some SERIOUS refactoring
 fn rename_overwrite_dentry_file_inode<'a>(
     sbi: &'a SbInfo,
     old_dentry_info: &DentryInfo,
@@ -1244,17 +1242,18 @@ fn rename_overwrite_deallocation_file_inode<'a>(
     DentryWrapper<'a, Clean, Free>,
     DentryWrapper<'a, Clean, Complete>,
 )> {
+    let old_parent_inode_info = old_dir.get_inode_info()?;
     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
     if let Ok(parent_page) = parent_page {
+        old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
         let parent_page = parent_page.dealloc().flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
     // TODO is this still right?
-    let old_parent_inode_info = old_dir.get_inode_info()?;
     old_parent_inode_info.atomic_add_and_delete_dentry(&dst_dentry, old_name)?;
     // finish deallocating the new inode and its pages
     finish_unlink(sbi, new_pi)?;
@@ -1274,18 +1273,19 @@ fn rename_overwrite_deallocation_file_inode_crossdir<'a>(
     DentryWrapper<'a, Clean, Free>,
     DentryWrapper<'a, Clean, Complete>,
 )> {
+    let old_parent_inode_info = old_dir.get_inode_info()?;
+    let new_parent_inode_info = new_dir.get_inode_info()?;
     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
     if let Ok(parent_page) = parent_page {
+        old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
         let parent_page = parent_page.dealloc().flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
     // TODO is this still right?
-    let old_parent_inode_info = old_dir.get_inode_info()?;
-    let new_parent_inode_info = new_dir.get_inode_info()?;
     old_parent_inode_info.atomic_add_and_delete_dentry_crossdir(
         new_parent_inode_info,
         &dst_dentry,
@@ -1318,14 +1318,16 @@ fn rename_overwrite_deallocation_dir_inode_single_dir<'a>(
     let _new_pi = rmdir_delete_pages(sbi, new_pi)?;
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
+    let old_parent_inode_info = old_dir.get_inode_info()?;
     if let Ok(parent_page) = parent_page {
+        old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
         let parent_page = parent_page.dealloc().flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
     // TODO is this still right?
-    let old_parent_inode_info = old_dir.get_inode_info()?;
+
     old_parent_inode_info.atomic_add_and_delete_dentry(&dst_dentry, old_name)?;
 
     Ok((src_dentry, dst_dentry))
@@ -1354,14 +1356,16 @@ fn rename_overwrite_deallocation_dir_inode_crossdir<'a>(
     let _new_pi = rmdir_delete_pages(sbi, new_pi)?;
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
+    let old_parent_inode_info = old_dir.get_inode_info()?;
     if let Ok(parent_page) = parent_page {
+        old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
         let parent_page = parent_page.dealloc().flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
     // TODO is this still right?
-    let old_parent_inode_info = old_dir.get_inode_info()?;
+
     let new_parent_inode_info = new_dir.get_inode_info()?;
     old_parent_inode_info.atomic_add_and_delete_dentry_crossdir(
         new_parent_inode_info,
@@ -1390,6 +1394,7 @@ fn rename_new_dentry_deallocation_dir_inode_single_dir<'a>(
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
     if let Ok(parent_page) = parent_page {
+        old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
         let parent_page = parent_page.dealloc().flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
@@ -1421,6 +1426,7 @@ fn rename_new_dentry_deallocation_dir_inode_crossdir<'a>(
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
     if let Ok(parent_page) = parent_page {
+        old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
         let parent_page = parent_page.dealloc().flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
@@ -1446,16 +1452,17 @@ fn rename_deallocation_file_inode_single_dir<'a>(
     DentryWrapper<'a, Clean, Free>,
     DentryWrapper<'a, Clean, Complete>,
 )> {
+    let old_parent_inode_info = old_dir.get_inode_info()?;
     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
     if let Ok(parent_page) = parent_page {
+        old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
         let parent_page = parent_page.dealloc().flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
-    let old_parent_inode_info = old_dir.get_inode_info()?;
     old_parent_inode_info.atomic_add_and_delete_dentry(&dst_dentry, old_name)?;
 
     Ok((src_dentry, dst_dentry))
@@ -1472,16 +1479,17 @@ fn rename_deallocation_file_inode_crossdir<'a>(
     DentryWrapper<'a, Clean, Free>,
     DentryWrapper<'a, Clean, Complete>,
 )> {
+    let old_parent_inode_info = old_dir.get_inode_info()?;
     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
     if let Ok(parent_page) = parent_page {
+        old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
         let parent_page = parent_page.dealloc().flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
-    let old_parent_inode_info = old_dir.get_inode_info()?;
     let new_parent_inode_info = new_dir.get_inode_info()?;
     old_parent_inode_info.atomic_add_and_delete_dentry_crossdir(
         new_parent_inode_info,
@@ -1491,44 +1499,6 @@ fn rename_deallocation_file_inode_crossdir<'a>(
 
     Ok((src_dentry, dst_dentry))
 }
-
-// fn rename_overwrite_inode<'a>(
-//     sbi: &SbInfo,
-//     new_inode: *mut bindings::inode,
-//     old_inode: *mut bindings::inode,
-//     old_name: &[u8; MAX_FILENAME_LEN],
-//     dst_dentry: DentryWrapper<'a, Clean, InitRenamePointer>,
-//     src_dentry: DentryWrapper<'a, Clean, ClearIno>,
-//     old_parent_inode_info: &HayleyFsDirInodeInfo,
-// ) -> Result<(
-//     DentryWrapper<'a, Clean, Free>,
-//     DentryWrapper<'a, Clean, Complete>,
-// )> {
-//     let (new_pi, _) = sbi.get_init_reg_inode_by_vfs_inode(new_inode)?;
-//     // decrement link count of the inode whose dentry is being overwritten
-//     // this is the inode being unlinked, not the parent directory
-//     let new_pi = new_pi.dec_link_count_rename(&dst_dentry)?.flush();
-//     // clear the rename pointer in the dst dentry, since the src has been invalidated
-//     let dst_dentry = dst_dentry.clear_rename_pointer(&src_dentry).flush();
-//     let (new_pi, dst_dentry) = fence_all!(new_pi, dst_dentry);
-//     // deallocate the src dentry
-//     // this fully deallocates the dentry - it can now be used again
-//     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
-//     // if the page that the freed dentry belongs to is now empty, free it
-//     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
-//     if let Ok(parent_page) = parent_page {
-//         let parent_page = parent_page.unmap().flush().fence();
-//         let parent_page = parent_page.dealloc().flush().fence();
-//         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
-//     }
-//     // atomically update the volatile index
-//     // TODO is this still right?
-//     old_parent_inode_info.atomic_add_and_delete_dentry(&dst_dentry, old_name)?;
-//     // finish deallocating the old inode and its pages
-//     finish_unlink(sbi, old_inode, new_pi)?;
-
-//     Ok((src_dentry, dst_dentry))
-// }
 
 // TODO: delete the dir page if this dentry was the last one in it
 #[allow(dead_code)]
@@ -1582,6 +1552,7 @@ fn hayleyfs_unlink<'a>(
         // if the page that the freed dentry belongs to is now empty, free it
         let parent_page = pd.try_dealloc_parent_page(sbi);
         if let Ok(parent_page) = parent_page {
+            parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
             let parent_page = parent_page.unmap().flush().fence();
             let parent_page = parent_page.dealloc().flush().fence();
             sbi.page_allocator.dealloc_dir_page(&parent_page)?;

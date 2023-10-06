@@ -379,9 +379,11 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
         Ok(return_tree)
     }
 
-    // TODO: implement
-    fn delete(&self, _pge: DirPageInfo) -> Result<()> {
-        unimplemented!();
+    fn delete(&self, page: DirPageInfo) -> Result<()> {
+        let pages = Arc::clone(&self.pages);
+        let mut pages = pages.lock();
+        pages.remove(&page);
+        Ok(())
     }
 }
 
