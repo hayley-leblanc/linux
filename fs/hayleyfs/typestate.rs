@@ -15,6 +15,7 @@ pub(crate) struct Start {}
 pub(crate) struct Free {}
 #[derive(Debug)]
 pub(crate) struct Alloc {}
+pub(crate) struct Zeroed {}
 #[derive(Debug)]
 pub(crate) struct Init {}
 pub(crate) struct IncLink {}

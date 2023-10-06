@@ -35,6 +35,7 @@ pub(crate) trait PageAllocator {
     fn dealloc_dir_page<'a>(&self, page: &DirPageWrapper<'a, Clean, Dealloc>) -> Result<()>;
 }
 
+// TODO: is this used at all? can yo utake it out?
 pub(crate) struct RBPageAllocator {
     map: Arc<Mutex<RBTree<PageNum, ()>>>,
 }
@@ -690,6 +691,8 @@ unsafe fn page_no_to_page(sbi: &SbInfo, page_no: PageNum) -> Result<*mut u8> {
 impl<'a> DirPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
+    /// TODO: this should zero the page - that way we don't have to pessimistically
+    /// zero all pages at the beginning
     pub(crate) fn alloc_dir_page(sbi: &'a SbInfo) -> Result<Self> {
         let (page, page_no) = unsafe { DirPageHeader::alloc(sbi, None)? };
         Ok(DirPageWrapper {
@@ -724,6 +727,33 @@ impl<'a> DirPageWrapper<'a, Clean, Free> {
 }
 
 impl<'a> DirPageWrapper<'a, Clean, Alloc> {
+    pub(crate) fn zero_page(mut self, sbi: &SbInfo) -> Result<DirPageWrapper<'a, Clean, Zeroed>> {
+        // memset_nt(
+        //     sbi.get_virt_addr() as *mut ffi::c_void,
+        //     0,
+        //     DATA_PAGE_START.try_into()?, // only zero out regions that store metadata
+        //     true,
+        // );
+        let page_addr = unsafe { page_no_to_page(sbi, self.page_no)? };
+        unsafe {
+            memset_nt(
+                page_addr as *mut ffi::c_void,
+                0,
+                HAYLEYFS_PAGESIZE.try_into()?,
+                true,
+            )
+        };
+        let page = self.take_and_make_drop_safe();
+        Ok(DirPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            page_no: self.page_no,
+            page,
+        })
+    }
+}
+
+impl<'a> DirPageWrapper<'a, Clean, Zeroed> {
     /// Requires Initialized inode only as proof that the inode number we are setting points
     /// to an initialized inode
     pub(crate) fn set_dir_page_backpointer<InoState: Initialized>(

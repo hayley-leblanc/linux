@@ -397,7 +397,13 @@ pub(crate) trait InoDentryMap {
     fn atomic_add_and_delete_dentry<'a>(
         &self,
         new_dentry: &DentryWrapper<'a, Clean, Complete>,
-        old_dentry: &[u8; MAX_FILENAME_LEN],
+        old_dentry_name: &[u8; MAX_FILENAME_LEN],
+    ) -> Result<()>;
+    fn atomic_add_and_delete_dentry_crossdir<'a>(
+        &self, // src dir
+        dst_dir: &HayleyFsDirInodeInfo,
+        new_dentry: &DentryWrapper<'a, Clean, Complete>,
+        old_dentry_name: &[u8; MAX_FILENAME_LEN],
     ) -> Result<()>;
     fn has_dentries(&self) -> bool;
     fn debug_print_dentries(&self);
@@ -466,6 +472,22 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
         let mut dentries = dentries.lock();
         dentries.try_insert(new_dentry_info.name, new_dentry_info)?;
         dentries.remove(old_dentry_name);
+        Ok(())
+    }
+
+    fn atomic_add_and_delete_dentry_crossdir<'a>(
+        &self, // src dir
+        dst_dir: &HayleyFsDirInodeInfo,
+        new_dentry: &DentryWrapper<'a, Clean, Complete>,
+        old_dentry_name: &[u8; MAX_FILENAME_LEN],
+    ) -> Result<()> {
+        let new_dentry_info = new_dentry.get_dentry_info();
+        let src_dentries = Arc::clone(&self.dentries);
+        let mut src_dentries = src_dentries.lock();
+        let dst_dentries = Arc::clone(&dst_dir.dentries);
+        let mut dst_dentries = dst_dentries.lock();
+        dst_dentries.try_insert(new_dentry_info.name, new_dentry_info)?;
+        src_dentries.remove(old_dentry_name);
         Ok(())
     }
 
