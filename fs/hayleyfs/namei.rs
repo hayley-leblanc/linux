@@ -921,6 +921,7 @@ fn dir_inode_rename<'a>(
 }
 
 // TODO: all these rename functions need some SERIOUS refactoring
+// TODO: indexes should be updated before deallocation
 fn rename_overwrite_dentry_file_inode<'a>(
     sbi: &'a SbInfo,
     old_dentry_info: &DentryInfo,
@@ -1530,6 +1531,7 @@ fn hayleyfs_unlink<'a>(
 
     // use volatile index to find the persistent dentry
     let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name());
+    
     end_timing!(UnlinkLookup, unlink_lookup);
     if let Some(dentry_info) = dentry_info {
         // FIXME?: right now we don't enforce that the dentry has to have pointed
@@ -1538,7 +1540,6 @@ fn hayleyfs_unlink<'a>(
 
         init_timing!(dec_link_count);
         start_timing!(dec_link_count);
-
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
         parent_inode_info.delete_dentry(dentry_info)?;
@@ -1750,6 +1751,7 @@ fn alloc_page_for_dentry<'a, S: Initialized>(
     // StaticDirPageWrapper for just this case but it probably will not make
     // a noticeable difference
     let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
+    // pr_info!("alloc page {:?} for parent {:?}\n", dir_page.get_page_no(), parent_inode_info.get_ino());
     sbi.inc_blocks_in_use();
     let dir_page = dir_page.zero_page(sbi)?;
     let dir_page = dir_page

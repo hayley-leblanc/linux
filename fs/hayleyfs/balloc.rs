@@ -616,7 +616,7 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
         // get a u64 representing the offset of this dentry into the device
         let dentry_offset = dentry.get_dentry_offset(sbi);
         // then translate that offset into a page number
-        let page_no = page_offset(dentry_offset)? / HAYLEYFS_PAGESIZE;
+        let page_no = dentry_offset / HAYLEYFS_PAGESIZE;
         Self::from_page_no(sbi, page_no)
     }
 }
@@ -733,12 +733,7 @@ impl<'a> DirPageWrapper<'a, Clean, Free> {
 
 impl<'a> DirPageWrapper<'a, Clean, Alloc> {
     pub(crate) fn zero_page(mut self, sbi: &SbInfo) -> Result<DirPageWrapper<'a, Clean, Zeroed>> {
-        // memset_nt(
-        //     sbi.get_virt_addr() as *mut ffi::c_void,
-        //     0,
-        //     DATA_PAGE_START.try_into()?, // only zero out regions that store metadata
-        //     true,
-        // );
+        // pr_info!("zero page {:?}\n", self.page_no);
         let page_addr = unsafe { page_no_to_page(sbi, self.page_no)? };
         unsafe {
             memset_nt(
@@ -1864,8 +1859,7 @@ impl DataPageListWrapper<Clean, Writeable> {
             } else {
                 HAYLEYFS_PAGESIZE - offset_within_page
             };
-
-            let bytes_to_write = unsafe { write_to_page(reader, ptr, offset, bytes_to_write)? };
+            let bytes_to_write = unsafe { write_to_page(reader, ptr, offset_within_page, bytes_to_write)? };
 
             bytes_written += bytes_to_write;
             page_offset += HAYLEYFS_PAGESIZE;

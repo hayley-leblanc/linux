@@ -288,6 +288,7 @@ pub(crate) trait InoDirPageMap {
     fn find_page_with_free_dentry(&self, sbi: &SbInfo) -> Result<Option<DirPageInfo>>;
     fn get_all_pages(&self) -> Result<RBTree<DirPageInfo, ()>>;
     fn delete(&self, page: DirPageInfo) -> Result<()>;
+    fn debug_print_pages(&self);
 }
 
 #[repr(C)]
@@ -384,6 +385,14 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
         let mut pages = pages.lock();
         pages.remove(&page);
         Ok(())
+    }
+
+    fn debug_print_pages(&self) {
+        let pages = Arc::clone(&self.pages);
+        let pages = pages.lock();
+        for page in pages.keys() {
+            pr_info!("{:?}\n", page);
+        }
     }
 }
 
@@ -496,9 +505,6 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
     fn has_dentries(&self) -> bool {
         let dentries = Arc::clone(&self.dentries);
         let dentries = dentries.lock();
-        for k in dentries.keys() {
-            pr_info!("{:?}: {:?}\n", k, dentries.get(k));
-        }
         let mut keys = dentries.keys().peekable();
 
         keys.peek().is_some()
