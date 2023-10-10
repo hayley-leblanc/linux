@@ -1684,7 +1684,8 @@ fn hayleyfs_symlink<'a>(
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     // obtain and allocate an inode for the symlink
-    let pi = sbi.inode_allocator.alloc_ino()?;
+    // let pi = sbi.inode_allocator.alloc_ino()?;
+    let pi = sbi.alloc_ino()?;
     let pi = InodeWrapper::get_free_reg_inode_by_ino(sbi, pi)?;
 
     let pi = pi.allocate_symlink_inode(dir, mode)?.flush().fence();
@@ -1773,7 +1774,7 @@ fn init_dentry_with_new_reg_inode<'a>(
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
     // set up the new inode
-    let new_ino = sbi.inode_allocator.alloc_ino()?;
+    let new_ino = sbi.alloc_ino()?;
     let inode = InodeWrapper::get_free_reg_inode_by_ino(sbi, new_ino)?;
     let inode = inode.allocate_file_inode(dir, mode)?.flush().fence();
     sbi.inc_inodes_in_use();
@@ -1797,7 +1798,7 @@ fn init_dentry_with_new_dir_inode<'a>(
     InodeWrapper<'a, Clean, Complete, DirInode>, // new inode
 )> {
     // set up the new inode
-    let new_ino = sbi.inode_allocator.alloc_ino()?;
+    let new_ino = sbi.alloc_ino()?;
     let new_inode = InodeWrapper::get_free_dir_inode_by_ino(sbi, new_ino)?;
     let new_inode = new_inode.allocate_dir_inode(inode, mode)?.flush().fence();
 

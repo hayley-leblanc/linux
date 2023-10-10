@@ -847,8 +847,8 @@ impl<'a, Op, Type> InodeWrapper<'a, InFlight, Op, Type> {
 
 /// Interface for volatile inode allocator structures
 pub(crate) trait InodeAllocator {
-    fn new(val: u64) -> Result<Self> where Self: Sized;
-    fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64) -> Result<Self> where Self: Sized;
+    fn new(val: u64, num_inodes: u64) -> Result<Self> where Self: Sized;
+    fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64, num_inodes: u64) -> Result<Self> where Self: Sized;
     fn alloc_ino(&self) -> Result<InodeNum>;
     // TODO: should this be unsafe or require a free inode wrapper?
     fn dealloc_ino(&self, ino: InodeNum) -> Result<()>;
@@ -859,9 +859,9 @@ pub(crate) struct RBInodeAllocator {
 }
 
 impl InodeAllocator for RBInodeAllocator {
-    fn new(val: u64) -> Result<Self> {
+    fn new(val: u64, num_inodes: u64) -> Result<Self> {
         let mut rb = RBTree::new();
-        for i in val..NUM_INODES {
+        for i in val..num_inodes {
             rb.try_insert(i, ())?;
         }
         Ok(Self {
@@ -869,11 +869,11 @@ impl InodeAllocator for RBInodeAllocator {
         })
     }
 
-    fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64) -> Result<Self> {
+    fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64, num_inodes: u64) -> Result<Self> {
         let mut rb = RBTree::new();
         let mut cur_ino = start;
         let mut i = 0;
-        while cur_ino < NUM_INODES && i < alloc_inodes.len() {
+        while cur_ino < num_inodes && i < alloc_inodes.len() {
             if cur_ino < alloc_inodes[i] {
                 rb.try_insert(cur_ino, ())?;
                 cur_ino += 1;
@@ -888,8 +888,8 @@ impl InodeAllocator for RBInodeAllocator {
             }
         }
         // add all remaining inodes to the allocator
-        if i < NUM_INODES.try_into()? {
-            for j in i..NUM_INODES.try_into()? {
+        if i < num_inodes.try_into()? {
+            for j in i..num_inodes.try_into()? {
                 rb.try_insert(j.try_into()?, ())?;
             }
         }

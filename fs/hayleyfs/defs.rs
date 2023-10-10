@@ -21,25 +21,15 @@ pub(crate) type PageNum = u64;
 
 pub(crate) const HAYLEYFS_PAGESIZE: u64 = 4096;
 
-pub(crate) const MAX_FILENAME_LEN: usize = 64; // TODO: increase
-pub(crate) const NUM_INODES: u64 = INODE_TABLE_SIZE / INODE_SIZE; // max inodes in the FS
+pub(crate) const MAX_FILENAME_LEN: usize = 112;
 pub(crate) const MAX_PAGES: u64 = u64::MAX;
 pub(crate) const MAX_LINKS: u16 = u16::MAX;
-pub(crate) const DENTRIES_PER_PAGE: usize = 32; // TODO: update with true dentry size
-pub(crate) const INODE_TABLE_SIZE: u64 = 1024 * 1024 * 64; // 2MB
-pub(crate) const NUM_INODE_PAGES: u64 = INODE_TABLE_SIZE / HAYLEYFS_PAGESIZE;
-pub(crate) const DESCRIPTOR_TABLE_SIZE: u64 = 1024 * 1024 * 256; // 2MB
-pub(crate) const NUM_DESCRIPTOR_TABLE_PAGES: u64 = DESCRIPTOR_TABLE_SIZE / HAYLEYFS_PAGESIZE;
-pub(crate) const NUM_PAGE_DESCRIPTORS: u64 = DESCRIPTOR_TABLE_SIZE / PAGE_DESCRIPTOR_SIZE;
+pub(crate) const DENTRIES_PER_PAGE: usize = 32;
 
 /// Reserved pages
 #[allow(dead_code)]
 pub(crate) const SB_PAGE: PageNum = 0;
 #[allow(dead_code)]
-pub(crate) const INO_PAGE_START: PageNum = 1;
-pub(crate) const PAGE_DESCRIPTOR_TABLE_START: PageNum = INO_PAGE_START + NUM_INODE_PAGES;
-pub(crate) const DATA_PAGE_START: PageNum =
-    PAGE_DESCRIPTOR_TABLE_START + NUM_DESCRIPTOR_TABLE_PAGES;
 
 /// Sizes of persistent objects
 /// Update these if they get bigger or are permanently smaller
@@ -161,9 +151,14 @@ pub(crate) struct SbInfo {
     // TODO: fix this.
     // optional because we can't set it up until we know how big the fs is
     pub(crate) page_allocator: Option<PerCpuPageAllocator>,
-    pub(crate) inode_allocator: RBInodeAllocator,
+    pub(crate) inode_allocator: Option<RBInodeAllocator>,
 
     pub(crate) mount_opts: HayleyfsParams,
+
+    pub(crate) num_inodes: u64,
+    pub(crate) inode_table_size: u64,
+    pub(crate) num_pages: u64,
+    pub(crate) page_desc_table_size: u64,
 }
 
 // SbInfo must be Send and Sync for it to be used as the Context's data.
@@ -195,9 +190,26 @@ impl SbInfo {
             ino_dir_page_tree: InoDirPageTree::new().unwrap(),
             ino_dentry_tree: InoDentryTree::new().unwrap(),
             page_allocator: None,
-            inode_allocator: InodeAllocator::new(ROOT_INO + 1).unwrap(),
+            inode_allocator: None,
+            // inode_allocator: InodeAllocator::new(ROOT_INO + 1).unwrap(),
             mount_opts: HayleyfsParams::default(),
+            num_inodes: 0,
+            inode_table_size: 0,
+            num_pages: 0,
+            page_desc_table_size: 0,
         }
+    }
+
+    pub(crate) fn get_inode_table_start_page(&self) -> PageNum {
+        1
+    }
+
+    pub(crate) fn get_page_desc_table_start_page(&self) -> PageNum {
+        self.get_inode_table_start_page() + self.inode_table_size / HAYLEYFS_PAGESIZE
+    }
+
+    pub(crate) fn get_data_pages_start_page(&self) -> PageNum {
+        self.get_page_desc_table_start_page() + self.page_desc_table_size / HAYLEYFS_PAGESIZE
     }
 
     // TODO: do these really need to be SeqCst?
@@ -264,10 +276,10 @@ impl SbInfo {
     pub(crate) fn get_page_desc_table<'a>(&self) -> Result<&'a mut [PageDescriptor]> {
         let page_desc_table_addr = unsafe {
             self.virt_addr
-                .offset((HAYLEYFS_PAGESIZE * PAGE_DESCRIPTOR_TABLE_START).try_into()?)
+                .offset((HAYLEYFS_PAGESIZE * self.get_page_desc_table_start_page()).try_into()?)
         } as *mut PageDescriptor;
         let table = unsafe {
-            slice::from_raw_parts_mut(page_desc_table_addr, NUM_PAGE_DESCRIPTORS.try_into()?)
+            slice::from_raw_parts_mut(page_desc_table_addr, self.num_pages.try_into()?)
         };
         Ok(table)
     }
@@ -275,16 +287,16 @@ impl SbInfo {
     pub(crate) fn get_inode_table<'a>(&self) -> Result<&'a mut [HayleyFsInode]> {
         let inode_table_addr: *mut HayleyFsInode = unsafe {
             self.virt_addr
-                .offset((HAYLEYFS_PAGESIZE * INO_PAGE_START).try_into()?)
+                .offset((HAYLEYFS_PAGESIZE * self.get_inode_table_start_page()).try_into()?)
                 as *mut HayleyFsInode
         };
-        let table = unsafe { slice::from_raw_parts_mut(inode_table_addr, NUM_INODES.try_into()?) };
+        let table = unsafe { slice::from_raw_parts_mut(inode_table_addr, self.num_inodes.try_into()?) };
         Ok(table)
     }
 
     pub(crate) fn get_inode_by_ino<'a>(&self, ino: InodeNum) -> Result<&'a HayleyFsInode> {
         // we don't use inode 0
-        if ino >= NUM_INODES || ino == 0 {
+        if ino >= self.num_inodes || ino == 0 {
             return Err(EINVAL);
         }
 
@@ -299,7 +311,7 @@ impl SbInfo {
         ino: InodeNum,
     ) -> Result<&'a mut HayleyFsInode> {
         // we don't use inode 0
-        if ino >= NUM_INODES || ino == 0 {
+        if ino >= self.num_inodes || ino == 0 {
             return Err(EINVAL);
         }
 
@@ -325,7 +337,7 @@ impl SbInfo {
         // TODO: use &fs::INode to avoid unsafely dereferencing the inode here
         let ino = unsafe { (*inode).i_ino };
         // we don't use inode 0
-        if ino >= NUM_INODES || ino == 0 {
+        if ino >= self.num_inodes || ino == 0 {
             return Err(EINVAL);
         }
 
@@ -349,7 +361,7 @@ impl SbInfo {
         // TODO: use &fs::INode to avoid unsafely dereferencing the inode here
         let ino = unsafe { (*inode).i_ino };
         // we don't use inode 0
-        if ino >= NUM_INODES || ino == 0 {
+        if ino >= self.num_inodes || ino == 0 {
             return Err(EINVAL);
         }
         let pi = unsafe { self.get_inode_by_ino_mut(ino)? };
@@ -362,6 +374,30 @@ impl SbInfo {
         } else {
             pr_info!("ERROR: inode {:?} is not initialized\n", ino);
             Err(EPERM)
+        }
+    }
+
+    pub(crate) fn alloc_ino(&self) -> Result<InodeNum> {
+        match &self.inode_allocator {
+            Some(inode_allocator) => {
+                inode_allocator.alloc_ino()
+            } 
+            None => {
+                pr_info!("ERROR: inode allocator does not exist");
+                Err(EPERM)
+            }
+        }
+    }
+
+    pub(crate) fn dealloc_ino(&self, ino: InodeNum) -> Result<()> {
+        match &self.inode_allocator {
+            Some(inode_allocator) => {
+                inode_allocator.dealloc_ino(ino)
+            } 
+            None => {
+                pr_info!("ERROR: inode allocator does not exist");
+                Err(EPERM)
+            }
         }
     }
 }

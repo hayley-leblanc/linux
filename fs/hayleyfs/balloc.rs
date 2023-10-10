@@ -629,7 +629,7 @@ unsafe fn unchecked_new_page_no_to_dir_header<'a>(
     page_no: PageNum,
 ) -> Result<&'a mut DirPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
-    let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
+    let page_index: usize = (page_no - sbi.get_data_pages_start_page()).try_into()?;
     let ph = page_desc_table.get_mut(page_index);
     match ph {
         Some(ph) => {
@@ -651,7 +651,7 @@ unsafe fn page_no_to_dir_header<'a>(
     page_no: PageNum,
 ) -> Result<&'a mut DirPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
-    let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
+    let page_index: usize = (page_no - sbi.get_data_pages_start_page()).try_into()?;
     let ph = page_desc_table.get_mut(page_index);
     match ph {
         Some(ph) => {
@@ -1160,7 +1160,7 @@ pub(crate) unsafe fn write_to_page(
 #[allow(dead_code)]
 unsafe fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut DataPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
-    let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
+    let page_index: usize = (page_no - sbi.get_data_pages_start_page()).try_into()?;
     let ph = page_desc_table.get_mut(page_index);
     match ph {
         Some(ph) => {
@@ -1190,7 +1190,7 @@ unsafe fn unchecked_new_page_no_to_data_header(
     page_no: PageNum,
 ) -> Result<&mut DataPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
-    let page_index: usize = (page_no - DATA_PAGE_START).try_into()?;
+    let page_index: usize = (page_no - sbi.get_data_pages_start_page()).try_into()?;
     let ph = page_desc_table.get_mut(page_index);
     match ph {
         Some(ph) => {

@@ -176,8 +176,8 @@ impl fs::Type for HayleyFs {
             }
             (*buf).f_bfree = sbi.num_blocks - sbi.get_pages_in_use();
             (*buf).f_bavail = sbi.num_blocks - sbi.get_pages_in_use();
-            (*buf).f_files = NUM_INODES;
-            (*buf).f_ffree = NUM_INODES - sbi.get_inodes_in_use();
+            (*buf).f_files = sbi.num_inodes;
+            (*buf).f_ffree = sbi.num_inodes - sbi.get_inodes_in_use();
             (*buf).f_namelen = MAX_FILENAME_LEN.try_into()?;
         }
 
@@ -278,7 +278,7 @@ impl fs::Type for HayleyFs {
         // persistently freed
         // inode should only be deallocated if the inode's link count is actually 0
         if link_count == 0 {
-            sbi.inode_allocator.dealloc_ino(ino).unwrap();
+            sbi.dealloc_ino(ino).unwrap();
         }
         end_timing!(EvictInodeFull, evict_inode_full);
     }
@@ -303,7 +303,7 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
     pr_info!("init fs\n");
 
     unsafe {
-        let data_page_start = DATA_PAGE_START * HAYLEYFS_PAGESIZE;
+        let data_page_start = sbi.get_data_pages_start_page() * HAYLEYFS_PAGESIZE;
         memset_nt(
             sbi.get_virt_addr() as *mut ffi::c_void,
             0,
@@ -357,7 +357,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
 
     // keeps track of maximum inode/page number in use to recreate the allocator
     let mut max_inode = 0;
-    let mut max_page = DATA_PAGE_START;
+    let mut max_page = sbi.get_data_pages_start_page();
 
     live_inode_vec.try_push(1)?;
 
@@ -394,10 +394,10 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                 if dir_desc.is_initialized() {
                     let parent = dir_desc.get_ino();
                     if let Some(node) = init_dir_pages.get_mut(&parent) {
-                        node.try_push(index + DATA_PAGE_START)?;
+                        node.try_push(index + sbi.get_data_pages_start_page())?;
                     } else {
                         let mut vec = Vec::new();
-                        vec.try_push(index + DATA_PAGE_START)?;
+                        vec.try_push(index + sbi.get_data_pages_start_page())?;
                         init_dir_pages.try_insert(parent, vec)?;
                     }
                 }
@@ -406,15 +406,15 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                 if data_desc.is_initialized() {
                     let parent = data_desc.get_ino();
                     if let Some(node) = init_data_pages.get_mut(&parent) {
-                        node.try_push(index + DATA_PAGE_START)?;
+                        node.try_push(index + sbi.get_data_pages_start_page())?;
                     } else {
                         let mut vec = Vec::new();
-                        vec.try_push(index + DATA_PAGE_START)?;
+                        vec.try_push(index + sbi.get_data_pages_start_page())?;
                         init_data_pages.try_insert(parent, vec)?;
                     }
                 }
             }
-            alloc_page_vec.try_push(index + DATA_PAGE_START)?;
+            alloc_page_vec.try_push(index + sbi.get_data_pages_start_page())?;
         }
     }
     pr_info!("allocated pages: {:?}\n", alloc_page_vec);
@@ -462,16 +462,17 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
 
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
         alloc_page_vec,
-        DATA_PAGE_START,
+        // DATA_PAGE_START,
+        sbi.get_data_pages_start_page(),
         // sbi.num_blocks,
-        if NUM_PAGE_DESCRIPTORS < sbi.num_blocks {
-            NUM_PAGE_DESCRIPTORS
+        if sbi.num_pages < sbi.num_blocks {
+            sbi.num_pages
         } else {
             sbi.num_blocks
         },
         sbi.cpus,
     )?;
-    sbi.inode_allocator = RBInodeAllocator::new_from_alloc_vec(alloc_inode_vec, ROOT_INO)?;
+    sbi.inode_allocator = Some(RBInodeAllocator::new_from_alloc_vec(alloc_inode_vec, ROOT_INO, sbi.num_inodes)?);
 
     Ok(())
 }
@@ -527,13 +528,28 @@ impl PmDevice for SbInfo {
         let pgsize_i64: i64 = HAYLEYFS_PAGESIZE.try_into()?;
         self.size = num_blocks * pgsize_i64;
         self.num_blocks = num_blocks.try_into()?;
+
+        pr_info!("device size size: {:?}\n", self.size);
+        let num_inodes: u64 = (self.size / (16*1024)).try_into()?;
+        let inode_table_size = num_inodes * INODE_SIZE;
+        let num_pages = num_inodes * 4;
+        let page_desc_table_size = num_pages * PAGE_DESCRIPTOR_SIZE;
+        pr_info!("size of inode table in MB: {:?}\n", inode_table_size / (1024 * 1024 ));
+        pr_info!("size of page descriptor table in MB: {:?}\n", page_desc_table_size / (1024 * 1024));
+
+        self.num_inodes = num_inodes;
+        self.inode_table_size = inode_table_size;
+        self.num_pages = num_pages;
+        self.page_desc_table_size = page_desc_table_size;
+
         // self.page_allocator =
         //     Option::<PerCpuPageAllocator>::new_from_range(DATA_PAGE_START, self.num_blocks, self.cpus)?;
         self.page_allocator = Option::<PerCpuPageAllocator>::new_from_range(
-            DATA_PAGE_START,
+            // DATA_PAGE_START,
+            self.get_data_pages_start_page(),
             // NUM_PAGE_DESCRIPTORS, // TODO: have this be the actual number of blocks
-            if NUM_PAGE_DESCRIPTORS < self.num_blocks {
-                NUM_PAGE_DESCRIPTORS
+            if self.num_pages < self.num_blocks {
+                self.num_pages
             } else {
                 self.num_blocks
             },
