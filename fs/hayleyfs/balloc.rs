@@ -32,140 +32,10 @@ pub(crate) trait PageAllocator {
         Self: Sized;
     fn alloc_page(&self) -> Result<PageNum>;
     fn dealloc_data_page<'a>(&self, page: &DataPageWrapper<'a, Clean, Dealloc>) -> Result<()>;
+    fn dealloc_data_page_list(&self, pages: &DataPageListWrapper<Clean, Free>) -> Result<()>;
     fn dealloc_dir_page<'a>(&self, page: &DirPageWrapper<'a, Clean, Dealloc>) -> Result<()>;
-}
-
-// TODO: is this used at all? can yo utake it out?
-pub(crate) struct RBPageAllocator {
-    map: Arc<Mutex<RBTree<PageNum, ()>>>,
-}
-
-impl PageAllocator for Option<RBPageAllocator> {
-    fn new_from_range(val: u64, dev_pages: u64, _cpus: u32) -> Result<Self> {
-        let mut rb = RBTree::new();
-        for i in val..dev_pages {
-            rb.try_insert(i, ())?;
-        }
-        Ok(Some(RBPageAllocator {
-            map: Arc::try_new(Mutex::new(rb))?,
-        }))
-    }
-
-    // alloc_pages must be in sorted order. only pages between start and dev_pages
-    // will be added to the allocator tree
-    fn new_from_alloc_vec(
-        alloc_pages: Vec<PageNum>,
-        start: u64,
-        dev_pages: u64,
-        _cpus: u32,
-    ) -> Result<Self> {
-        let mut rb = RBTree::new();
-        let mut cur_page = start;
-        let mut i = 0;
-        while cur_page < dev_pages && i < alloc_pages.len() {
-            if cur_page < alloc_pages[i] {
-                rb.try_insert(cur_page, ())?;
-                cur_page += 1;
-            } else if cur_page == alloc_pages[i] {
-                cur_page += 1;
-                i += 1;
-            } else {
-                // cur_page > alloc_pages[i]
-                // i don't THINK this can ever happen?
-                pr_info!(
-                    "ERROR: cur_page {:?}, i {:?}, alloc_pages[i] {:?}\n",
-                    cur_page,
-                    i,
-                    alloc_pages[i]
-                );
-                return Err(EINVAL);
-            }
-        }
-        // add all remaining pages to the allocator
-        let dev_pages_usize: usize = dev_pages.try_into()?;
-        if i < dev_pages_usize {
-            for j in i..dev_pages_usize {
-                rb.try_insert(j.try_into()?, ())?;
-            }
-        }
-        Ok(Some(RBPageAllocator {
-            map: Arc::try_new(Mutex::new(rb))?,
-        }))
-    }
-
-    fn alloc_page(&self) -> Result<PageNum> {
-        if let Some(allocator) = self {
-            let map = Arc::clone(&allocator.map);
-            let mut map = map.lock();
-            let iter = map.iter().next();
-
-            let page = match iter {
-                None => {
-                    pr_info!("ERROR: ran out of pages in RB page allocator\n");
-                    return Err(ENOSPC);
-                }
-                Some(page) => *page.0,
-            };
-            map.remove(&page);
-            Ok(page)
-        } else {
-            pr_info!("ERROR: page allocator is uninitialized\n");
-            Err(EINVAL)
-        }
-    }
-
-    fn dealloc_data_page<'a>(&self, page: &DataPageWrapper<'a, Clean, Dealloc>) -> Result<()> {
-        if let Some(allocator) = self {
-            let map = Arc::clone(&allocator.map);
-            let mut map = map.lock();
-            let res = map.try_insert(page.get_page_no(), ());
-            let res = match res {
-                Ok(res) => res,
-                Err(e) => {
-                    pr_info!(
-                        "ERROR: failed to insert {:?} into the page allocator, error {:?}\n",
-                        page.get_page_no(),
-                        e
-                    );
-                    return Err(e);
-                }
-            };
-            // sanity check - the page was not already present in the tree
-            if res.is_some() {
-                pr_info!(
-                    "ERROR: page {:?} was deallocated but was already in allocator\n",
-                    page.get_page_no()
-                );
-                Err(EINVAL)
-            } else {
-                Ok(())
-            }
-        } else {
-            pr_info!("ERROR: page allocator is uninitialized\n");
-            Err(EINVAL)
-        }
-    }
-
-    fn dealloc_dir_page<'a>(&self, page: &DirPageWrapper<'a, Clean, Dealloc>) -> Result<()> {
-        if let Some(allocator) = self {
-            let map = Arc::clone(&allocator.map);
-            let mut map = map.lock();
-            let res = map.try_insert(page.get_page_no(), ())?;
-            // sanity check - the page was not already present in the tree
-            if res.is_some() {
-                pr_info!(
-                    "ERROR: page {:?} was deallocated but was already in allocator\n",
-                    page.get_page_no()
-                );
-                Err(EINVAL)
-            } else {
-                Ok(())
-            }
-        } else {
-            pr_info!("ERROR: page allocator is uninitialized\n");
-            Err(EINVAL)
-        }
-    }
+    fn dealloc_dir_page_list(&self, pages: &DirPageListWrapper<Clean, Free>) -> Result<()>;
+    
 }
 
 // represents one CPU's pool of pages
@@ -186,7 +56,6 @@ pub(crate) struct PerCpuPageAllocator {
 }
 
 impl PageAllocator for Option<PerCpuPageAllocator> {
-    // TODO: test!
     fn new_from_range(val: u64, dev_pages: u64, cpus: u32) -> Result<Self> {
         let total_pages = dev_pages - val;
         let cpus_u64: u64 = cpus.into();
@@ -223,7 +92,6 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
         }))
     }
 
-    // TODO: test!
     /// alloc_pages must be in sorted order. only pages between start and dev_pages
     /// will be added to the allocator
     fn new_from_alloc_vec(
@@ -334,6 +202,7 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                         let free_list = free_list.lock();
                         if free_list.free_pages > num_free_pages {
                             num_free_pages = free_list.free_pages;
+                            pr_info!("free pages on cpu {:?}: {:?} \n", i, num_free_pages);
                             cpuid = i_usize;
                         }
                     }
@@ -376,10 +245,38 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
         }
     }
 
+    fn dealloc_data_page_list(&self, pages: &DataPageListWrapper<Clean, Free>) -> Result<()> {
+        if let Some(allocator) = self {
+            let page_list = pages.get_page_list();
+            for page in page_list {
+                // TODO: refactor to avoid acquiring lock on every iteration
+                allocator.dealloc_page(page.get_page_no())?
+            }
+            Ok(())
+        } else {
+            pr_info!("ERROR: page allocator is uninitialized\n");
+            Err(EINVAL)
+        }
+    }
+
     fn dealloc_dir_page<'a>(&self, page: &DirPageWrapper<'a, Clean, Dealloc>) -> Result<()> {
         if let Some(allocator) = self {
             let page_no = page.get_page_no();
             allocator.dealloc_page(page_no)
+        } else {
+            pr_info!("ERROR: page allocator is uninitialized\n");
+            Err(EINVAL)
+        }
+    }
+
+    fn dealloc_dir_page_list(&self, pages: &DirPageListWrapper<Clean, Free>) -> Result<()> {
+        if let Some(allocator) = self {
+            let page_list = pages.get_page_list();
+            for page in page_list {
+                // TODO: refactor to avoid acquiring lock on every iteration
+                allocator.dealloc_page(page.get_page_no())?
+            }
+            Ok(())
         } else {
             pr_info!("ERROR: page allocator is uninitialized\n");
             Err(EINVAL)
@@ -956,6 +853,12 @@ pub(crate) struct DirPageListWrapper<State, Op> {
 }
 
 impl<State, Op> PmObjWrapper for DirPageListWrapper<State, Op> {}
+
+impl<State, Op> DirPageListWrapper<State, Op> {
+    pub(crate) fn get_page_list(&self) -> &Vec<DirPageInfo> {
+        &self.pages
+    }
+}
 
 impl<'a> DirPageListWrapper<Clean, ToUnmap> {
     // TODO: this should require an inode in the proper state
@@ -1732,6 +1635,10 @@ impl<State, Op> DataPageListWrapper<State, Op> {
     pub(crate) fn get_page(&self, index: usize) -> Option<&DataPageInfo> {
         self.page_nos.get(index)
     }
+
+    pub(crate) fn get_page_list(&self) -> &Vec<DataPageInfo> {
+        &self.page_nos
+    }
 }
 
 impl DataPageListWrapper<Clean, Start> {
@@ -1937,6 +1844,16 @@ impl<'a> DataPageListWrapper<Clean, Dealloc> {
         }
     }
 }
+
+// impl<'a> DataPageListWrapper<Clean, Free> {
+//     pub(crate) fn dealloc_pages_in_deallocator(&self, sbi: &SbInfo) -> Result<()> {
+//         for page in &self.page_nos {
+//             let ph = unsafe { page_no_to_data_header(sbi, page.get_page_no())? };
+//             // unsafe { ph.dealloc() };
+//             // flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
+//         }
+//     }
+// }
 
 impl<Op> DataPageListWrapper<InFlight, Op> {
     pub(crate) fn fence(self) -> DataPageListWrapper<Clean, Op> {

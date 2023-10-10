@@ -637,6 +637,7 @@ fn iterator_rmdir_delete_pages<'a>(
     }
     let pages = DirPageListWrapper::get_dir_pages_to_unmap(delete_dir_info)?;
     let pages = pages.unmap(sbi)?.fence().dealloc(sbi)?.fence().mark_free();
+    sbi.page_allocator.dealloc_dir_page_list(&pages)?;
     Ok(pages)
 }
 
@@ -1602,6 +1603,7 @@ fn iterator_finish_unlink<'a>(
     } else if let Err((pi, pages)) = result {
         // no links left - we need to deallocate all of the pages
         let pages = pages.unmap(sbi)?.fence().dealloc(sbi)?.fence().mark_free();
+        sbi.page_allocator.dealloc_data_page_list(&pages)?;
         unsafe {
             bindings::drop_nlink(inode);
         }

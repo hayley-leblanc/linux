@@ -380,7 +380,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             sbi.inc_inodes_in_use();
         }
     }
-    pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
+    // pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
 
     // 3. scan the page descriptor table to determine which pages are in use
     let page_desc_table = sbi.get_page_desc_table()?;
@@ -422,7 +422,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             alloc_page_vec.try_push(index + sbi.get_data_pages_start_page())?;
         }
     }
-    pr_info!("allocated pages: {:?}\n", alloc_page_vec);
+    // pr_info!("allocated pages: {:?}\n", alloc_page_vec);
 
     // 4. scan the directory entries in live pages to determine which inodes are live
 
@@ -434,9 +434,9 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         }
         let owned_dir_pages = init_dir_pages.get(&live_inode);
         let owned_data_pages = init_data_pages.get(&live_inode);
-        pr_info!("live inode: {:?}\n", live_inode);
-        pr_info!("dir pages owned by inode: {:?}\n", owned_dir_pages);
-        pr_info!("data pages owned by inode: {:?}\n", owned_data_pages);
+        // pr_info!("live inode: {:?}\n", live_inode);
+        // pr_info!("dir pages owned by inode: {:?}\n", owned_dir_pages);
+        // pr_info!("data pages owned by inode: {:?}\n", owned_data_pages);
 
         // iterate over pages owned by this inode, find valid dentries in those
         // pages, and add their inodes to the live inode list. also add the dir pages
@@ -445,7 +445,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             for page in pages {
                 let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
                 let live_dentries = dir_page_wrapper.get_live_dentry_info(sbi)?;
-                pr_info!("live dentries: {:?}\n", live_dentries);
+                // pr_info!("live dentries: {:?}\n", live_dentries);
                 // add these live dentries to the index
                 for dentry in live_dentries {
                     sbi.ino_dentry_tree.insert(live_inode, dentry)?;
@@ -534,13 +534,16 @@ impl PmDevice for SbInfo {
         self.size = num_blocks * pgsize_i64;
         self.num_blocks = num_blocks.try_into()?;
 
-        pr_info!("device size: {:?}\n", self.size);
-        let num_inodes: u64 = (self.size / (16*1024)).try_into()?;
+        let device_size: u64 = self.size.try_into()?;
+        let pages_per_inode = 8;
+        let bytes_per_inode = pages_per_inode*HAYLEYFS_PAGESIZE;
+        pr_info!("device size: {:?}\n", device_size);
+        let num_inodes: u64 = device_size / bytes_per_inode;
         let inode_table_size = num_inodes * INODE_SIZE;
-        let num_pages = num_inodes * 4;
+        let num_pages = num_inodes * pages_per_inode;
         let page_desc_table_size = num_pages * PAGE_DESCRIPTOR_SIZE;
-        pr_info!("size of inode table in MB: {:?}\n", inode_table_size / (1024 * 1024 ));
-        pr_info!("size of page descriptor table in MB: {:?}\n", page_desc_table_size / (1024 * 1024));
+        pr_info!("size of inode table (MB): {:?}\n", inode_table_size / (1024 * 1024 ));
+        pr_info!("size of page descriptor table (MB): {:?}\n", page_desc_table_size / (1024 * 1024));
 
         self.num_inodes = num_inodes;
         self.inode_table_size = inode_table_size;
