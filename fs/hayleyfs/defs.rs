@@ -86,6 +86,10 @@ impl HayleyFsSuperBlock {
         super_block.block_size = HAYLEYFS_PAGESIZE;
         super_block
     }
+
+    pub(crate) fn get_size(&self) -> i64 {
+        self.size
+    }
 }
 
 #[derive(Debug)]

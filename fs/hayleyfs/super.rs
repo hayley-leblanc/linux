@@ -362,7 +362,12 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     live_inode_vec.try_push(1)?;
 
     // 1. check the super block to make sure it is a valid fs and to fill in sbi
-    let _sb = sbi.get_super_block()?;
+    let sbi_size = sbi.get_size();
+    let sb = sbi.get_super_block()?;
+    if sb.get_size() != sbi_size {
+        pr_info!("Expected device of size {:?} but found {:?}\n", sb.get_size(), sbi_size);
+        return Err(EINVAL);
+    }
 
     // 2. scan the inode table to determine which inodes are allocated
     // TODO: this scan will change significantly if the inode table is ever
@@ -529,7 +534,7 @@ impl PmDevice for SbInfo {
         self.size = num_blocks * pgsize_i64;
         self.num_blocks = num_blocks.try_into()?;
 
-        pr_info!("device size size: {:?}\n", self.size);
+        pr_info!("device size: {:?}\n", self.size);
         let num_inodes: u64 = (self.size / (16*1024)).try_into()?;
         let inode_table_size = num_inodes * INODE_SIZE;
         let num_pages = num_inodes * 4;
@@ -555,6 +560,8 @@ impl PmDevice for SbInfo {
             },
             self.cpus,
         )?;
+
+        self.inode_allocator = Some(InodeAllocator::new(ROOT_INO + 1, self.num_inodes)?);
 
         Ok(())
     }
