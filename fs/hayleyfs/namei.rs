@@ -1532,7 +1532,7 @@ fn hayleyfs_unlink<'a>(
 
     // use volatile index to find the persistent dentry
     let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name());
-    
+
     end_timing!(UnlinkLookup, unlink_lookup);
     if let Some(dentry_info) = dentry_info {
         // FIXME?: right now we don't enforce that the dentry has to have pointed
@@ -1803,7 +1803,6 @@ fn init_dentry_with_new_dir_inode<'a>(
     let new_ino = sbi.alloc_ino()?;
     let new_inode = InodeWrapper::get_free_dir_inode_by_ino(sbi, new_ino)?;
     let new_inode = new_inode.allocate_dir_inode(inode, mode)?.flush().fence();
-
     // set the ino in the dentry
     let (dentry, new_inode, parent_inode) = dentry.set_dir_ino(new_inode, parent_inode);
     let dentry = dentry.flush().fence();

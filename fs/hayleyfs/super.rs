@@ -365,7 +365,11 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let sbi_size = sbi.get_size();
     let sb = sbi.get_super_block()?;
     if sb.get_size() != sbi_size {
-        pr_info!("Expected device of size {:?} but found {:?}\n", sb.get_size(), sbi_size);
+        pr_info!(
+            "Expected device of size {:?} but found {:?}\n",
+            sb.get_size(),
+            sbi_size
+        );
         return Err(EINVAL);
     }
 
@@ -380,7 +384,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             sbi.inc_inodes_in_use();
         }
     }
-    // pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
 
     // 3. scan the page descriptor table to determine which pages are in use
     let page_desc_table = sbi.get_page_desc_table()?;
@@ -477,7 +480,11 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         },
         sbi.cpus,
     )?;
-    sbi.inode_allocator = Some(RBInodeAllocator::new_from_alloc_vec(alloc_inode_vec, ROOT_INO, sbi.num_inodes)?);
+    sbi.inode_allocator = Some(RBInodeAllocator::new_from_alloc_vec(
+        alloc_inode_vec,
+        ROOT_INO,
+        sbi.num_inodes,
+    )?);
 
     Ok(())
 }
@@ -536,14 +543,21 @@ impl PmDevice for SbInfo {
 
         let device_size: u64 = self.size.try_into()?;
         let pages_per_inode = 8;
-        let bytes_per_inode = pages_per_inode*HAYLEYFS_PAGESIZE;
+        let bytes_per_inode = pages_per_inode * HAYLEYFS_PAGESIZE;
         pr_info!("device size: {:?}\n", device_size);
         let num_inodes: u64 = device_size / bytes_per_inode;
         let inode_table_size = num_inodes * INODE_SIZE;
         let num_pages = num_inodes * pages_per_inode;
         let page_desc_table_size = num_pages * PAGE_DESCRIPTOR_SIZE;
-        pr_info!("size of inode table (MB): {:?}\n", inode_table_size / (1024 * 1024 ));
-        pr_info!("size of page descriptor table (MB): {:?}\n", page_desc_table_size / (1024 * 1024));
+        pr_info!(
+            "size of inode table (MB): {:?}\n",
+            inode_table_size / (1024 * 1024)
+        );
+        pr_info!(
+            "size of page descriptor table (MB): {:?}\n",
+            page_desc_table_size / (1024 * 1024)
+        );
+        pr_info!("number of inodes: {:?}\n", num_inodes);
 
         self.num_inodes = num_inodes;
         self.inode_table_size = inode_table_size;

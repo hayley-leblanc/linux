@@ -33,7 +33,7 @@ pub(crate) const SB_PAGE: PageNum = 0;
 
 /// Sizes of persistent objects
 /// Update these if they get bigger or are permanently smaller
-pub(crate) const INODE_SIZE: u64 = 64;
+pub(crate) const INODE_SIZE: u64 = 96;
 pub(crate) const PAGE_DESCRIPTOR_SIZE: u64 = 32; // TODO: can we reduce this?
 pub(crate) const SB_SIZE: u64 = HAYLEYFS_PAGESIZE;
 
@@ -282,9 +282,8 @@ impl SbInfo {
             self.virt_addr
                 .offset((HAYLEYFS_PAGESIZE * self.get_page_desc_table_start_page()).try_into()?)
         } as *mut PageDescriptor;
-        let table = unsafe {
-            slice::from_raw_parts_mut(page_desc_table_addr, self.num_pages.try_into()?)
-        };
+        let table =
+            unsafe { slice::from_raw_parts_mut(page_desc_table_addr, self.num_pages.try_into()?) };
         Ok(table)
     }
 
@@ -294,7 +293,8 @@ impl SbInfo {
                 .offset((HAYLEYFS_PAGESIZE * self.get_inode_table_start_page()).try_into()?)
                 as *mut HayleyFsInode
         };
-        let table = unsafe { slice::from_raw_parts_mut(inode_table_addr, self.num_inodes.try_into()?) };
+        let table =
+            unsafe { slice::from_raw_parts_mut(inode_table_addr, self.num_inodes.try_into()?) };
         Ok(table)
     }
 
@@ -383,9 +383,7 @@ impl SbInfo {
 
     pub(crate) fn alloc_ino(&self) -> Result<InodeNum> {
         match &self.inode_allocator {
-            Some(inode_allocator) => {
-                inode_allocator.alloc_ino()
-            } 
+            Some(inode_allocator) => inode_allocator.alloc_ino(),
             None => {
                 pr_info!("ERROR: inode allocator does not exist");
                 Err(EPERM)
@@ -395,9 +393,7 @@ impl SbInfo {
 
     pub(crate) fn dealloc_ino(&self, ino: InodeNum) -> Result<()> {
         match &self.inode_allocator {
-            Some(inode_allocator) => {
-                inode_allocator.dealloc_ino(ino)
-            } 
+            Some(inode_allocator) => inode_allocator.dealloc_ino(ino),
             None => {
                 pr_info!("ERROR: inode allocator does not exist");
                 Err(EPERM)

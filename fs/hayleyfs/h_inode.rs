@@ -43,6 +43,25 @@ pub(crate) struct HayleyFsInode {
     _padding: u64,
 }
 
+impl core::fmt::Debug for HayleyFsInode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HayleyFsInode")
+            .field("inode_type", &self.inode_type)
+            .field("link_count", &self.link_count)
+            .field("mode", &self.mode)
+            .field("uid", &self.uid)
+            .field("gid", &self.gid)
+            .field("ctime", &self.ctime.tv_nsec)
+            .field("atime", &self.atime.tv_nsec)
+            .field("mtime", &self.mtime.tv_nsec)
+            .field("blocks", &self.blocks)
+            .field("size", &self.size)
+            .field("ino", &self.ino)
+            .field("padding", &self._padding)
+            .finish()
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) struct InodeWrapper<'a, State, Op, Type> {
     state: PhantomData<State>,
@@ -52,6 +71,16 @@ pub(crate) struct InodeWrapper<'a, State, Op, Type> {
     vfs_inode: Option<*mut bindings::inode>, // TODO: make this an fs::INode? or point it directly to the inode info structure?
     inode: &'a mut HayleyFsInode,
 }
+
+impl<'a, State, Op, Type> core::fmt::Debug for InodeWrapper<'a, State, Op, Type> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("InodeWrapper")
+            .field("ino", &self.ino)
+            .field("inode", &self.inode)
+            .finish()
+    }
+}
+
 
 impl<'a, State, Op, Type> PmObjWrapper for InodeWrapper<'a, State, Op, Type> {}
 

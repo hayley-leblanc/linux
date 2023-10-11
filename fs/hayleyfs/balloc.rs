@@ -35,7 +35,6 @@ pub(crate) trait PageAllocator {
     fn dealloc_data_page_list(&self, pages: &DataPageListWrapper<Clean, Free>) -> Result<()>;
     fn dealloc_dir_page<'a>(&self, page: &DirPageWrapper<'a, Clean, Dealloc>) -> Result<()>;
     fn dealloc_dir_page_list(&self, pages: &DirPageListWrapper<Clean, Free>) -> Result<()>;
-    
 }
 
 // represents one CPU's pool of pages
@@ -202,7 +201,6 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                         let free_list = free_list.lock();
                         if free_list.free_pages > num_free_pages {
                             num_free_pages = free_list.free_pages;
-                            pr_info!("free pages on cpu {:?}: {:?} \n", i, num_free_pages);
                             cpuid = i_usize;
                         }
                     }
@@ -1065,8 +1063,10 @@ unsafe fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut 
     let page_desc_table = sbi.get_page_desc_table()?;
     let page_index: usize = (page_no - sbi.get_data_pages_start_page()).try_into()?;
     let ph = page_desc_table.get_mut(page_index);
+
     match ph {
         Some(ph) => {
+            // pr_info!("page desc addr {:x}\n", ph as *mut PageDescriptor as u64);
             if ph.get_page_type() != PageType::DATA {
                 pr_info!("Page {:?} is not a data page\n", page_no);
                 Err(EINVAL)
@@ -1097,6 +1097,10 @@ unsafe fn unchecked_new_page_no_to_data_header(
     let ph = page_desc_table.get_mut(page_index);
     match ph {
         Some(ph) => {
+            if page_no == 25605 {
+                let page_header_addr = ph as *mut PageDescriptor;
+                pr_info!("page header addr: {:?}\n", page_header_addr);
+            }
             let ph: &mut DataPageHeader = ph.try_into()?;
             Ok(ph)
         }
@@ -1766,7 +1770,8 @@ impl DataPageListWrapper<Clean, Writeable> {
             } else {
                 HAYLEYFS_PAGESIZE - offset_within_page
             };
-            let bytes_to_write = unsafe { write_to_page(reader, ptr, offset_within_page, bytes_to_write)? };
+            let bytes_to_write =
+                unsafe { write_to_page(reader, ptr, offset_within_page, bytes_to_write)? };
 
             bytes_written += bytes_to_write;
             page_offset += HAYLEYFS_PAGESIZE;
