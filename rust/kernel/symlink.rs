@@ -79,7 +79,7 @@ pub trait Operations {
     /// Corresponds to the `get_link` function pointer in `struct inode_operations`.
     fn get_link(
         dentry: &DEntry,
-        inode: &INode,
+        inode: &mut INode,
         callback: *mut bindings::delayed_call,
     ) -> Result<*const ffi::c_char>;
 }

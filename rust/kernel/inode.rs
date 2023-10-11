@@ -55,7 +55,7 @@ impl<T: Operations> OperationsVtable<T> {
         // FIXME: error output is weird and incorrect in terminal
         from_kernel_result! {
             // TODO: safety notes
-            let dir = unsafe { &*dir.cast() };
+            let dir = unsafe { &mut *dir.cast() };
             let dentry = unsafe { &mut *dentry.cast()};
             T::create(mnt_idmap, dir, dentry, umode, excl)
         }
@@ -210,7 +210,7 @@ pub trait Operations {
     /// Corresponds to the `create` function pointer in `struct inode_operations`.
     fn create(
         mnt_idmap: *mut bindings::mnt_idmap,
-        dir: &INode,
+        dir: &mut INode,
         dentry: &DEntry,
         umode: bindings::umode_t,
         excl: bool,
@@ -229,14 +229,14 @@ pub trait Operations {
     /// Corresponds to the `rename` function pointer in `struct inode_operations`
     fn rename(
         mnt_idmap: *const bindings::mnt_idmap,
-        old_dir: &INode,
+        old_dir: &mut INode,
         old_dentry: &DEntry,
-        new_dir: &INode,
+        new_dir: &mut INode,
         new_dentry: &DEntry,
         flags: u32,
     ) -> Result<()>;
     /// Corresponds to the `unlink` function pointer in `struct inode_operations`
-    fn unlink(dir: &INode, dentry: &DEntry) -> Result<()>;
+    fn unlink(dir: &mut INode, dentry: &DEntry) -> Result<()>;
     /// Corresponds to the `symlink` function pointer in `struct inode_operations`
     fn symlink(
         mnt_idmap: *mut bindings::mnt_idmap,

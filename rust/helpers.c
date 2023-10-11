@@ -853,6 +853,11 @@ bool rust_helper_dir_emit(struct dir_context *ctx, const char *name,
 }
 EXPORT_SYMBOL_GPL(rust_helper_dir_emit);
 
+void rust_helper_file_accessed(struct file *file) {
+	file_accessed(file);
+}
+EXPORT_SYMBOL_GPL(rust_helper_file_accessed);
+
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
  * as the Rust `usize` type, so we can use it in contexts where Rust
