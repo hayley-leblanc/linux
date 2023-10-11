@@ -917,21 +917,44 @@ impl INode {
         unsafe { bindings::i_size_write(self.0.get(), pos) };
     }
 
-    // /// Returns the inner inode wrapped in the Rust binding for its RwSemaphore
-    // ///
-    // /// # Safety
-    // /// TODO: safety. caller must ensure that the inode actually has an irwsem?
-    // pub unsafe fn i_rwsem(&mut self) -> RwSemaphore<&mut Self> {
-    //     let i_rwsem = unsafe { (*self.0.get()).i_rwsem };
-    //     unsafe { RwSemaphore::new_with_sem(self, i_rwsem) }
-    // }
-
     /// Sets the inode's `i_ctime` field to the current time.
     pub fn update_ctime(&mut self) {
         unsafe {
             let ctime = bindings::current_time(self.0.get());
             self.0.get_mut().i_ctime = ctime;
         }
+    }
+
+    /// Sets the inode's `i_ctime` and `i_mtime` fields to the current time.
+    pub fn update_ctime_and_mtime(&mut self) {
+        unsafe {
+            let time = bindings::current_time(self.0.get());
+            self.0.get_mut().i_ctime = time;
+            self.0.get_mut().i_mtime = time;
+        }
+    }
+
+    /// Sets the inode's `i_atime` field to the current time.
+    pub fn update_atime(&mut self) {
+        unsafe {
+            let time = bindings::current_time(self.0.get());
+            self.0.get_mut().i_atime = time;
+        }
+    }
+
+    /// Returns the inode's `i_atime` field
+    pub fn get_atime(&self) -> bindings::timespec64 {
+        unsafe { (*self.0.get()).i_atime }
+    }
+
+    /// Returns the inode's `i_mtime` field
+    pub fn get_mtime(&self) -> bindings::timespec64 {
+        unsafe { (*self.0.get()).i_mtime }
+    }
+
+    /// Returns the inode's `i_ctime` field
+    pub fn get_ctime(&self) -> bindings::timespec64 {
+        unsafe { (*self.0.get()).i_ctime }
     }
 }
 
