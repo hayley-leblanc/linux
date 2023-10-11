@@ -306,7 +306,8 @@ impl<'a, State, Op: Initialized> InodeWrapper<'a, State, Op, DirInode> {
 
 impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
     // this is only called in dirty_inode, so it consumes itself
-    pub(crate) fn update_atime(self, atime: bindings::timespec64) {
+    // the inode is flushed later in dirty_inode
+    pub(crate) fn update_atime_consume(self, atime: bindings::timespec64) {
         unsafe { self.inode.update_atime(atime) };
     }
 
@@ -857,6 +858,28 @@ impl<'a> InodeWrapper<'a, Clean, Complete, RegInode> {
             pr_info!("ERROR: inode {:?} already has a VFS inode\n", self.ino);
             Err(EPERM)
         }
+    }
+}
+
+// timestamp update methods can be used at any time because we don't make any strong guarantees
+// about exactly when timestamps will be updated. The inode still needs to be flushed afterward.
+impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
+    pub(crate) fn update_ctime_and_mtime(self, timestamp: bindings::timespec64) -> InodeWrapper<'a, Dirty, Op, Type> {
+        self.inode.ctime = timestamp;
+        self.inode.mtime = timestamp;
+        self.inode.atime = timestamp;
+        Self::new(self)
+    }
+
+    pub(crate) fn update_ctime(self, timestamp: bindings::timespec64) -> InodeWrapper<'a, Dirty, Op, Type>{
+        self.inode.ctime = timestamp;
+        self.inode.atime = timestamp;
+        Self::new(self)
+    }
+
+    pub(crate) fn update_atime(self, timestamp: bindings::timespec64) -> InodeWrapper<'a, Dirty, Op, Type>{
+        self.inode.atime = timestamp;
+        Self::new(self)
     }
 }
 

@@ -88,7 +88,7 @@ impl file::Operations for FileOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
         unsafe { bindings::inode_lock_shared(inode.get_inner()) };
-        let result = hayleyfs_read(sbi, inode, writer, offset);
+        let result = hayleyfs_read(sbi, file, inode, writer, offset);
         unsafe { bindings::inode_unlock_shared(inode.get_inner()) };
         unsafe { bindings::sb_end_write(sb) }
         match result {
@@ -146,10 +146,14 @@ fn hayleyfs_write<'a>(
     init_timing!(write_inode_lookup);
     start_timing!(write_inode_lookup);
     let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    inode.update_atime();
+    let pi = pi.update_atime(inode.get_atime()).flush().fence();
+
     let pi_info = pi.get_inode_info()?;
     end_timing!(WriteInodeLookup, write_inode_lookup);
 
     // TODO: update timestamp
+
     match sbi.mount_opts.write_type {
         Some(WriteType::Iterator) | None => {
             let (page_list, bytes_written) =
@@ -159,6 +163,8 @@ fn hayleyfs_write<'a>(
 
             // update the VFS inode's size
             inode.i_size_write(inode_size.try_into()?);
+            inode.update_ctime_and_mtime();
+            let pi = pi.update_ctime_and_mtime(inode.get_mtime()).flush().fence();
             end_timing!(FullWrite, full_write);
             Ok((bytes_written, pi))
         }
@@ -176,6 +182,8 @@ fn hayleyfs_write<'a>(
 
             // update the VFS inode's size
             inode.i_size_write(inode_size.try_into()?);
+            inode.update_ctime_and_mtime();
+            let pi = pi.update_ctime_and_mtime(inode.get_mtime()).flush().fence();
             end_timing!(FullWrite, full_write);
             Ok((bytes_written, pi))
         }
@@ -186,6 +194,8 @@ fn hayleyfs_write<'a>(
                 pi.inc_size_runtime_check(bytes_written.try_into()?, offset, page_list);
             // update the VFS inode's size
             inode.i_size_write(inode_size.try_into()?);
+            inode.update_ctime_and_mtime();
+            let pi = pi.update_ctime_and_mtime(inode.get_mtime()).flush().fence();
             end_timing!(FullWrite, full_write);
             Ok((bytes_written, pi))
         }
@@ -376,21 +386,19 @@ fn iterator_write<'a>(
 #[allow(dead_code)]
 fn hayleyfs_read(
     sbi: &SbInfo,
-    // inode: RwSemaphore<&mut fs::INode>,
-    inode: &fs::INode,
+    file: &file::File,
+    inode: &mut fs::INode,
     writer: &mut impl IoBufferWriter,
     mut offset: u64,
 ) -> Result<u64> {
     init_timing!(full_read);
     start_timing!(full_read);
     let mut count: u64 = writer.len().try_into()?;
-    // TODO: update timestamp
-
-    // acquire shared read lock
-    // let inode = inode.read();
     init_timing!(read_inode_lookup);
     start_timing!(read_inode_lookup);
     let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    inode.update_atime();
+    let pi = pi.update_atime(inode.get_atime()).flush().fence();
     let pi_info = pi.get_inode_info()?;
     end_timing!(ReadInodeLookup, read_inode_lookup);
     let size: u64 = inode.i_size_read().try_into()?;
@@ -445,6 +453,9 @@ fn hayleyfs_read(
             count -= to_read;
             bytes_left_in_file -= to_read;
         }
+    }
+    unsafe {
+        bindings::file_accessed(file.get_inner());
     }
     end_timing!(FullRead, full_read);
     Ok(bytes_read)

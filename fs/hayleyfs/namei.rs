@@ -54,7 +54,7 @@ impl inode::Operations for InodeOps {
 
     fn create(
         mnt_idmap: *mut bindings::mnt_idmap,
-        dir: &fs::INode,
+        dir: &mut fs::INode,
         dentry: &fs::DEntry,
         umode: bindings::umode_t,
         excl: bool,
@@ -144,9 +144,9 @@ impl inode::Operations for InodeOps {
 
     fn rename(
         _mnt_idmap: *const bindings::mnt_idmap,
-        old_dir: &fs::INode,
+        old_dir: &mut fs::INode,
         old_dentry: &fs::DEntry,
-        new_dir: &fs::INode,
+        new_dir: &mut fs::INode,
         new_dentry: &fs::DEntry,
         flags: u32,
     ) -> Result<()> {
@@ -166,7 +166,7 @@ impl inode::Operations for InodeOps {
 
     // TODO: if this unlink results in its dir page being emptied, we should
     // deallocate the dir page (at some point)
-    fn unlink(dir: &fs::INode, dentry: &fs::DEntry) -> Result<()> {
+    fn unlink(dir: &mut fs::INode, dentry: &fs::DEntry) -> Result<()> {
         let sb = dir.i_sb();
         // TODO: safety
         let fs_info_raw = unsafe { (*sb).s_fs_info };
@@ -470,7 +470,7 @@ unsafe fn insert_vfs_inode(vfs_inode: *mut bindings::inode, dentry: &fs::DEntry)
 
 fn hayleyfs_create<'a>(
     sbi: &'a SbInfo,
-    dir: &fs::INode,
+    dir: &mut fs::INode,
     dentry: &fs::DEntry,
     umode: bindings::umode_t,
     _excl: bool,
@@ -478,9 +478,12 @@ fn hayleyfs_create<'a>(
     DentryWrapper<'a, Clean, Complete>,
     InodeWrapper<'a, Clean, Complete, RegInode>,
 )> {
-    // TODO: should perhaps take inode wrapper to the parent so that we know
-    // the parent is initialized
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    dir.update_ctime_and_mtime();
+    let parent_inode = parent_inode
+        .update_ctime_and_mtime(dir.get_mtime())
+        .flush()
+        .fence();
     let pd = get_free_dentry(sbi, &parent_inode)?;
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
     let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, dir, pd, umode)?;
@@ -504,7 +507,12 @@ fn hayleyfs_link<'a>(
     // dentry is the dentry for the new name
 
     // first, obtain the inode that's getting the link from old_dentry
-    let target_inode = sbi.get_init_reg_inode_by_vfs_inode(old_dentry.d_inode())?;
+    // TODO: move unsafe cast to the wrapper
+    let inode: &mut fs::INode = unsafe { &mut *old_dentry.d_inode().cast() };
+    let target_inode = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    inode.update_ctime();
+    let target_inode = target_inode.update_ctime(inode.get_atime()).flush().fence();
+
     let target_inode = target_inode.inc_link_count()?.flush().fence();
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let pd = get_free_dentry(sbi, &parent_inode)?;
@@ -521,7 +529,7 @@ fn hayleyfs_link<'a>(
 
 fn hayleyfs_mkdir<'a>(
     sbi: &'a SbInfo,
-    dir: &fs::INode,
+    dir: &mut fs::INode,
     dentry: &fs::DEntry,
     mode: u16,
 ) -> Result<(
@@ -530,6 +538,11 @@ fn hayleyfs_mkdir<'a>(
     InodeWrapper<'a, Clean, Complete, DirInode>, // new inode
 )> {
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    dir.update_ctime_and_mtime();
+    let parent_inode = parent_inode
+        .update_ctime_and_mtime(dir.get_mtime())
+        .flush()
+        .fence();
     // let parent_inode_info = parent_inode.get_inode_info()?;
     let parent_inode = parent_inode.inc_link_count()?.flush().fence();
     let pd = get_free_dentry(sbi, &parent_inode)?;
@@ -551,6 +564,11 @@ fn hayleyfs_rmdir<'a>(
 )> {
     let inode = dentry.d_inode();
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    dir.update_ctime_and_mtime();
+    let parent_inode = parent_inode
+        .update_ctime_and_mtime(dir.get_mtime())
+        .flush()
+        .fence();
     let parent_inode_info = parent_inode.get_inode_info()?;
     let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name());
     match dentry_info {
@@ -575,8 +593,8 @@ fn hayleyfs_rmdir<'a>(
             // we should be able to reuse the regular dec_link_count function (it's a different
             // transition in Alloy). According to Alloy we can wait for the next fence.
             // but that is hard to coordinate with the vectors, so we just do an extra
-            let parent_pi = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
-            let parent_pi = parent_pi.dec_link_count(&pd)?.flush().fence();
+            // let parent_pi = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+            let parent_inode = parent_inode.dec_link_count(&pd)?.flush().fence();
 
             let pi = pi.set_unmap_page_state()?;
 
@@ -599,7 +617,7 @@ fn hayleyfs_rmdir<'a>(
                 bindings::clear_nlink(inode);
             }
 
-            Ok((pi, parent_pi, pd))
+            Ok((pi, parent_inode, pd))
         }
         None => Err(ENOENT),
     }
@@ -687,9 +705,9 @@ fn runtime_rmdir_delete_pages<'a>(
 
 fn hayleyfs_rename<'a>(
     sbi: &'a SbInfo,
-    old_dir: &fs::INode,
+    old_dir: &mut fs::INode,
     old_dentry: &fs::DEntry,
-    new_dir: &fs::INode,
+    new_dir: &mut fs::INode,
     new_dentry: &fs::DEntry,
     _flags: u32,
 ) -> Result<(
@@ -699,6 +717,12 @@ fn hayleyfs_rename<'a>(
     let old_name = old_dentry.d_name();
 
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(old_dir.get_inner())?;
+    old_dir.update_ctime_and_mtime();
+    let parent_inode = parent_inode
+        .update_ctime_and_mtime(old_dir.get_mtime())
+        .flush()
+        .fence();
+
     let old_dentry_info = {
         let parent_inode_info = parent_inode.get_inode_info()?;
         parent_inode_info.lookup_dentry(old_name)
@@ -708,6 +732,13 @@ fn hayleyfs_rename<'a>(
         Some(old_dentry_info) => {
             let inode_type = sbi.check_inode_type_by_vfs_inode(old_dentry.d_inode())?;
             let new_parent_inode = sbi.get_init_dir_inode_by_vfs_inode(new_dir.get_inner())?;
+            // TODO: this leads to unnecessary updates for single-dir renames. only do this if old_dir
+            // and new_dir are actually different.
+            new_dir.update_ctime_and_mtime();
+            let parent_inode = parent_inode
+                .update_ctime_and_mtime(new_dir.get_mtime())
+                .flush()
+                .fence();
             match inode_type {
                 InodeType::REG | InodeType::SYMLINK => reg_inode_rename(
                     sbi,
@@ -752,8 +783,10 @@ fn reg_inode_rename<'a>(
 )> {
     let old_name = cstr_to_filename_array(old_dentry.d_name());
     let new_name = new_dentry.d_name();
-    let old_inode = old_dentry.d_inode();
-    let new_inode = new_dentry.d_inode();
+    // TODO: move unsafe cast to the wrapper
+    let old_inode: &mut fs::INode = unsafe { &mut *old_dentry.d_inode().cast() };
+    // TODO: move unsafe cast to the wrapper
+    let new_inode: &mut fs::INode = unsafe { &mut *new_dentry.d_inode().cast() };
 
     let old_dir_inode_info = old_dir.get_inode_info()?;
     let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
@@ -761,7 +794,9 @@ fn reg_inode_rename<'a>(
     match new_dentry_info {
         Some(new_dentry_info) => {
             // overwriting a dentry
-            let new_pi = sbi.get_init_reg_inode_by_vfs_inode(new_inode)?;
+            let new_pi = sbi.get_init_reg_inode_by_vfs_inode(new_inode.get_inner())?;
+            new_inode.update_ctime();
+            let new_pi = new_pi.update_ctime(new_inode.get_ctime()).flush().fence();
             let (src_dentry, dst_dentry) = if old_dir.get_ino() == new_dir.get_ino() {
                 let (src_dentry, dst_dentry) = rename_overwrite_dentry_file_inode(
                     sbi,
@@ -789,7 +824,9 @@ fn reg_inode_rename<'a>(
         }
         None => {
             // creating a new dentry
-            let pi = sbi.get_init_reg_inode_by_vfs_inode(old_inode)?;
+            let pi = sbi.get_init_reg_inode_by_vfs_inode(old_inode.get_inner())?;
+            old_inode.update_ctime();
+            let pi = pi.update_ctime(old_inode.get_ctime()).flush().fence();
             let (src_dentry, dst_dentry) = if old_dir.get_ino() == new_dir.get_ino() {
                 let dst_dentry = get_free_dentry(sbi, &old_dir)?;
                 let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
@@ -827,15 +864,17 @@ fn dir_inode_rename<'a>(
 )> {
     let old_name = cstr_to_filename_array(old_dentry.d_name());
     let new_name = new_dentry.d_name();
-    let old_inode = old_dentry.d_inode();
-    let new_inode = new_dentry.d_inode();
+    // TODO: move unsafe cast to the wrapper
+    let old_inode: &mut fs::INode = unsafe { &mut *old_dentry.d_inode().cast() };
+    // TODO: move unsafe cast to the wrapper
+    let new_inode: &mut fs::INode = unsafe { &mut *new_dentry.d_inode().cast() };
 
     let old_dir_inode_info = old_dir.get_inode_info()?;
     // let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
 
-    if !new_inode.is_null() {
+    if !new_inode.get_inner().is_null() {
         // TODO: ideally we wouldn't do this twice
-        let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
+        let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode.get_inner())?;
         let new_pi_info = new_pi.get_inode_info()?;
         if new_pi_info.has_dentries() {
             return Err(ENOTEMPTY);
@@ -849,7 +888,9 @@ fn dir_inode_rename<'a>(
         match new_dentry_info {
             Some(new_dentry_info) => {
                 // overwriting another dentry in the same dir
-                let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
+                let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode.get_inner())?;
+                new_inode.update_ctime();
+                let new_pi = new_pi.update_ctime(new_inode.get_ctime()).flush().fence();
                 let (src_dentry, dst_dentry) = rename_overwrite_dentry_dir_inode_single_dir(
                     sbi,
                     old_dentry_info,
@@ -864,7 +905,9 @@ fn dir_inode_rename<'a>(
             }
             None => {
                 // creating a new dentry in the same dir
-                let pi = sbi.get_init_dir_inode_by_vfs_inode(old_inode)?;
+                let pi = sbi.get_init_dir_inode_by_vfs_inode(old_inode.get_inner())?;
+                old_inode.update_ctime();
+                let pi = pi.update_ctime(old_inode.get_ctime()).flush().fence();
                 let dst_dentry = get_free_dentry(sbi, &old_dir)?;
                 let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
                 let (src_dentry, dst_dentry) = rename_new_dentry_dir_inode_single_dir(
@@ -887,7 +930,9 @@ fn dir_inode_rename<'a>(
         match new_dentry_info {
             Some(new_dentry_info) => {
                 // overwriting a dentry in a different directory
-                let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode)?;
+                let new_pi = sbi.get_init_dir_inode_by_vfs_inode(new_inode.get_inner())?;
+                new_inode.update_ctime();
+                let new_pi = new_pi.update_ctime(new_inode.get_ctime()).flush().fence();
                 let (src_dentry, dst_dentry) = rename_overwrite_dentry_dir_inode_single_dir(
                     sbi,
                     old_dentry_info,
@@ -902,7 +947,9 @@ fn dir_inode_rename<'a>(
             }
             None => {
                 // creating a new dentry in a different directory
-                let pi = sbi.get_init_dir_inode_by_vfs_inode(old_inode)?;
+                let pi = sbi.get_init_dir_inode_by_vfs_inode(old_inode.get_inner())?;
+                old_inode.update_ctime();
+                let pi = pi.update_ctime(old_inode.get_ctime()).flush().fence();
                 let dst_dentry = get_free_dentry(sbi, &new_dir)?;
                 let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
                 let (src_dentry, dst_dentry, new_dir) = rename_new_dentry_dir_inode_crossdir(
@@ -1514,7 +1561,7 @@ fn rename_deallocation_file_inode_crossdir<'a>(
 #[allow(dead_code)]
 fn hayleyfs_unlink<'a>(
     sbi: &'a SbInfo,
-    dir: &fs::INode,
+    dir: &mut fs::INode,
     dentry: &fs::DEntry,
 ) -> Result<(
     InodeWrapper<'a, Clean, Complete, RegInode>,
@@ -1524,10 +1571,16 @@ fn hayleyfs_unlink<'a>(
     start_timing!(unlink_full_declink);
     init_timing!(unlink_full_delete);
     start_timing!(unlink_full_delete);
-    let inode = dentry.d_inode();
+    // TODO: move unsafe cast to the wrapper
+    let inode: &mut fs::INode = unsafe { &mut *dentry.d_inode().cast() };
     init_timing!(unlink_lookup);
     start_timing!(unlink_lookup);
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
+    dir.update_ctime_and_mtime();
+    let parent_inode = parent_inode
+        .update_ctime_and_mtime(dir.get_ctime())
+        .flush()
+        .fence();
     let parent_inode_info = parent_inode.get_inode_info()?;
 
     // use volatile index to find the persistent dentry
@@ -1545,7 +1598,9 @@ fn hayleyfs_unlink<'a>(
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
         parent_inode_info.delete_dentry(dentry_info)?;
 
-        let pi = sbi.get_init_reg_inode_by_vfs_inode(inode)?;
+        let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+        inode.update_ctime();
+        let pi = pi.update_ctime(inode.get_ctime()).flush().fence();
         let pd = pd.clear_ino().flush().fence();
 
         // decrement the inode's link count

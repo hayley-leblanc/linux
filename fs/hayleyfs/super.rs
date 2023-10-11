@@ -203,19 +203,19 @@ impl fs::Type for HayleyFs {
                 let inode = sbi
                     .get_init_reg_inode_by_vfs_inode(inode.get_inner())
                     .unwrap();
-                inode.update_atime(atime);
+                inode.update_atime_consume(atime);
             }
             InodeType::DIR => {
                 let inode = sbi
                     .get_init_dir_inode_by_vfs_inode(inode.get_inner())
                     .unwrap();
-                inode.update_atime(atime);
+                inode.update_atime_consume(atime);
             }
             InodeType::SYMLINK => {
                 let inode = sbi
                     .get_init_reg_inode_by_vfs_inode(inode.get_inner())
                     .unwrap();
-                inode.update_atime(atime);
+                inode.update_atime_consume(atime);
             }
             InodeType::NONE => {}
         }

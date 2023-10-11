@@ -10,7 +10,7 @@ pub(crate) struct SymlinkOps;
 impl symlink::Operations for SymlinkOps {
     fn get_link(
         dentry: &fs::DEntry,
-        inode: &fs::INode,
+        inode: &mut fs::INode,
         _callback: *mut bindings::delayed_call,
     ) -> Result<*const ffi::c_char> {
         // unimplemented!()
@@ -28,11 +28,13 @@ impl symlink::Operations for SymlinkOps {
 fn hayleyfs_symlink<'a>(
     sbi: &'a SbInfo,
     _dentry: &fs::DEntry,
-    inode: &fs::INode,
+    inode: &mut fs::INode,
 ) -> Result<*const ffi::c_char> {
     // TODO: update timestamps
 
     let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    inode.update_atime();
+    let pi = pi.update_atime(inode.get_atime()).flush().fence();
     let pi_info = pi.get_inode_info()?;
     let size: u64 = inode.i_size_read().try_into()?;
 
