@@ -353,8 +353,7 @@ int truncate_strong_guarantees(struct super_block *sb, __le64 *node,
 				      unsigned long num_blocks, u32 btype)
 {
 	unsigned long blocknr = 0;
-	unsigned int node_bits, first_index, last_index, i;
-	unsigned int freed = 0;
+	unsigned int first_index, last_index, i;
 	unsigned long prev_blocknr = 0;
 	int j;
 
@@ -407,7 +406,6 @@ static int recursive_truncate_blocks(struct super_block *sb, __le64 block,
 	unsigned int freed = 0, bzero;
 	int start, end;
 	bool mpty, all_range_freed = true;
-	struct pmfs_sb_info *sbi = PMFS_SB(sb);
 	unsigned long prev_blocknr = 0;
 	int j;
 
@@ -758,7 +756,7 @@ static int recursive_alloc_blocks(pmfs_transaction_t *trans,
 	unsigned int first_index, last_index;
 	unsigned int flush_bytes;
 	int num_blocks = 0;
-	int allocated, freed;
+	int allocated;
 	__le64 node_val;
 	bool strong_guarantees = PMFS_SB(sb)->s_mount_opt & PMFS_MOUNT_STRICT;
 
@@ -1105,7 +1103,7 @@ int pmfs_init_inode_table(struct super_block *sb)
 {
 	struct pmfs_inode *pi = pmfs_get_inode_table(sb);
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
-	unsigned long num_blocks = 0, init_inode_table_size;
+	unsigned long init_inode_table_size;
 	int errval;
 
 	if (sbi->num_inodes == 0) {
@@ -1168,9 +1166,6 @@ inline int pmfs_search_inodetree(struct pmfs_sb_info *sbi,
 static int pmfs_read_inode(struct inode *inode, struct pmfs_inode *pi)
 {
 	int ret = -EIO;
-	struct pmfs_inode_info *si = PMFS_I(inode);
-	struct pmfs_inode_info_header *sih = &si->header;
-	struct super_block *sb = inode->i_sb;
 
 	inode->i_mode = le16_to_cpu(pi->i_mode);
 	i_uid_write(inode, le32_to_cpu(pi->i_uid));
@@ -1364,7 +1359,7 @@ static int pmfs_free_inode(struct inode *inode)
 	/* pi->i_links_count = 0;
 	pi->i_xattr = 0; */
 	pi->i_size = 0;
-	pi->i_dtime = cpu_to_le32(get_seconds());
+	pi->i_dtime = cpu_to_le32(ktime_get_real_seconds());
 	pmfs_memlock_inode(sb, pi);
 
 	pmfs_commit_transaction(sb, trans);
@@ -1407,8 +1402,6 @@ static int pmfs_rebuild_dir_inode_tree(struct super_block *sb,
 	struct pmfs_inode *pi, struct inode *inode,
 	struct pmfs_inode_info_header *sih)
 {
-	struct pmfs_sb_info *sbi = PMFS_SB(sb);
-	struct pmfs_dentry *entry = NULL;
 	u64 ino = sih->ino;
 	unsigned long pos = 0;
 	off_t offset = 0;
@@ -1465,8 +1458,6 @@ int pmfs_get_ratio_hugepage_files_in_dir(struct super_block *sb,
 	unsigned long offset;
 	struct pmfs_direntry *de;
 	ino_t ino;
-	struct pmfs_inode_info *si = PMFS_I(inode);
-	struct pmfs_inode_info_header *sih = &(si->header);
 	off_t pos = 0;
 	int num_files = 0;
 	int hugepage_files = 0;
@@ -1538,8 +1529,6 @@ struct inode *pmfs_iget(struct super_block *sb, unsigned long ino)
 	struct inode *inode;
 	struct pmfs_inode *pi;
 	int err;
-	struct pmfs_inode_info_header *sih = NULL;
-
 
 	inode = iget_locked(sb, ino);
 	if (unlikely(!inode))
@@ -1586,7 +1575,6 @@ static int pmfs_free_inode_resource(struct super_block *sb,
 				    struct pmfs_inode *pi, struct pmfs_inode_info_header *sih,
 				    struct inode *inode)
 {
-	unsigned long last_blocknr;
 	int ret = 0;
 	int freed = 0;
 
@@ -1734,46 +1722,46 @@ static int pmfs_alloc_unused_inode(struct super_block *sb, int cpuid,
 	return 0;
 }
 
-static int pmfs_increase_inode_table_size(struct super_block *sb)
-{
-	struct pmfs_sb_info *sbi = PMFS_SB(sb);
-	struct pmfs_inode *pi = pmfs_get_inode_table(sb);
-	pmfs_transaction_t *trans;
-	int errval;
+// static int pmfs_increase_inode_table_size(struct super_block *sb)
+// {
+// 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
+// 	struct pmfs_inode *pi = pmfs_get_inode_table(sb);
+// 	pmfs_transaction_t *trans;
+// 	int errval;
 
-#if 0
-	/* 1 log entry for inode-table inode, 1 lentry for inode-table b-tree */
-	trans = pmfs_new_transaction(sb, MAX_INODE_LENTRIES, pmfs_get_cpuid(sb));
-	if (IS_ERR(trans))
-		return PTR_ERR(trans);
+// #if 0
+// 	/* 1 log entry for inode-table inode, 1 lentry for inode-table b-tree */
+// 	trans = pmfs_new_transaction(sb, MAX_INODE_LENTRIES, pmfs_get_cpuid(sb));
+// 	if (IS_ERR(trans))
+// 		return PTR_ERR(trans);
 
-	pmfs_add_logentry(sb, trans, pi, MAX_DATA_PER_LENTRY, LE_DATA);
+// 	pmfs_add_logentry(sb, trans, pi, MAX_DATA_PER_LENTRY, LE_DATA);
 
-	errval = __pmfs_alloc_blocks_wrapper(trans, sb, pi,
-			le64_to_cpup(&pi->i_size) >> sb->s_blocksize_bits,
-				     1, true, 0);
+// 	errval = __pmfs_alloc_blocks_wrapper(trans, sb, pi,
+// 			le64_to_cpup(&pi->i_size) >> sb->s_blocksize_bits,
+// 				     1, true, 0);
 
-	if (errval == 0) {
-		u64 i_size = le64_to_cpu(pi->i_size);
+// 	if (errval == 0) {
+// 		u64 i_size = le64_to_cpu(pi->i_size);
 
-		sbi->s_free_inode_hint = i_size >> PMFS_INODE_BITS;
-		i_size += pmfs_inode_blk_size(pi);
+// 		sbi->s_free_inode_hint = i_size >> PMFS_INODE_BITS;
+// 		i_size += pmfs_inode_blk_size(pi);
 
-		pmfs_memunlock_inode(sb, pi);
-		pi->i_size = cpu_to_le64(i_size);
-		pmfs_memlock_inode(sb, pi);
+// 		pmfs_memunlock_inode(sb, pi);
+// 		pi->i_size = cpu_to_le64(i_size);
+// 		pmfs_memlock_inode(sb, pi);
 
-		sbi->s_free_inodes_count += INODES_PER_BLOCK(pi->i_blk_type);
-		sbi->s_inodes_count = i_size >> PMFS_INODE_BITS;
-	} else
-		pmfs_dbg_verbose("no space left to inc inode table!\n");
-	/* commit the transaction */
-	pmfs_commit_transaction(sb, trans);
-#endif
-	return errval;
-}
+// 		sbi->s_free_inodes_count += INODES_PER_BLOCK(pi->i_blk_type);
+// 		sbi->s_inodes_count = i_size >> PMFS_INODE_BITS;
+// 	} else
+// 		pmfs_dbg_verbose("no space left to inc inode table!\n");
+// 	/* commit the transaction */
+// 	pmfs_commit_transaction(sb, trans);
+// #endif
+// 	return errval;
+// }
 
-struct inode *pmfs_new_inode(pmfs_transaction_t *trans, struct inode *dir,
+struct inode *pmfs_new_inode(struct mnt_idmap *mnt_idmap, pmfs_transaction_t *trans, struct inode *dir,
 		umode_t mode, const struct qstr *qstr)
 {
 	struct super_block *sb;
@@ -1782,17 +1770,13 @@ struct inode *pmfs_new_inode(pmfs_transaction_t *trans, struct inode *dir,
 	struct pmfs_inode *pi = NULL;
 	struct inode_map *inode_map;
 	struct pmfs_inode *diri = NULL, *inode_table;
-	int i, errval;
-	u32 num_inodes, inodes_per_block;
+	int errval;
+	u32 num_inodes;
 	ino_t ino = 0;
 	struct pmfs_inode_info *si;
 	struct pmfs_inode_info_header *sih = NULL;
 	unsigned long free_ino = 0;
 	int map_id;
-	struct process_numa *proc_numa, *parent_proc_numa;
-	pid_t parent_pid;
-	struct task_struct *parent_task;
-	int parent_cpu, parent_numa;
 
 	sb = dir->i_sb;
 	sbi = (struct pmfs_sb_info *)sb->s_fs_info;
@@ -1800,7 +1784,7 @@ struct inode *pmfs_new_inode(pmfs_transaction_t *trans, struct inode *dir,
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 
-	inode_init_owner(inode, dir, mode);
+	inode_init_owner(mnt_idmap, inode, dir, mode);
 	inode->i_blocks = inode->i_size = 0;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 
@@ -1920,21 +1904,21 @@ inline void pmfs_update_time(struct inode *inode, struct pmfs_inode *pi)
 	pmfs_memlock_inode(inode->i_sb, pi);
 }
 
-/* This function checks if VFS's inode and PMFS's inode are not in sync */
-static bool pmfs_is_inode_dirty(struct inode *inode, struct pmfs_inode *pi)
-{
-	if (inode->i_ctime.tv_sec != le32_to_cpu(pi->i_ctime) ||
-		inode->i_mtime.tv_sec != le32_to_cpu(pi->i_mtime) ||
-		inode->i_size != le64_to_cpu(pi->i_size) ||
-		inode->i_mode != le16_to_cpu(pi->i_mode) ||
-		i_uid_read(inode) != le32_to_cpu(pi->i_uid) ||
-		i_gid_read(inode) != le32_to_cpu(pi->i_gid) ||
-		inode->i_nlink != le16_to_cpu(pi->i_links_count) ||
-		inode->i_blocks != le64_to_cpu(pi->i_blocks) ||
-		inode->i_atime.tv_sec != le32_to_cpu(pi->i_atime))
-		return true;
-	return false;
-}
+// /* This function checks if VFS's inode and PMFS's inode are not in sync */
+// static bool pmfs_is_inode_dirty(struct inode *inode, struct pmfs_inode *pi)
+// {
+// 	if (inode->i_ctime.tv_sec != le32_to_cpu(pi->i_ctime) ||
+// 		inode->i_mtime.tv_sec != le32_to_cpu(pi->i_mtime) ||
+// 		inode->i_size != le64_to_cpu(pi->i_size) ||
+// 		inode->i_mode != le16_to_cpu(pi->i_mode) ||
+// 		i_uid_read(inode) != le32_to_cpu(pi->i_uid) ||
+// 		i_gid_read(inode) != le32_to_cpu(pi->i_gid) ||
+// 		inode->i_nlink != le16_to_cpu(pi->i_links_count) ||
+// 		inode->i_blocks != le64_to_cpu(pi->i_blocks) ||
+// 		inode->i_atime.tv_sec != le32_to_cpu(pi->i_atime))
+// 		return true;
+// 	return false;
+// }
 
 int pmfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 {
@@ -2131,13 +2115,13 @@ void pmfs_setsize(struct inode *inode, loff_t newsize)
 	}
 }
 
-int pmfs_getattr(const struct path *path, struct kstat *stat,
+int pmfs_getattr(struct mnt_idmap *mnt_idmap, const struct path *path, struct kstat *stat,
 		u32 request_mask, unsigned int flags)
 {
 	struct inode *inode;
 
 	inode = path->dentry->d_inode;
-	generic_fillattr(inode, stat);
+	generic_fillattr(mnt_idmap, inode, stat);
 	/* stat->blocks should be the number of 512B blocks */
 	stat->blocks = (inode->i_blocks << inode->i_sb->s_blocksize_bits) >> 9;
 	return 0;
@@ -2176,7 +2160,7 @@ static int pmfs_update_single_field(struct super_block *sb, struct inode *inode,
 	return 0;
 }
 
-int pmfs_notify_change(struct dentry *dentry, struct iattr *attr)
+int pmfs_notify_change(struct mnt_idmap *mnt_idmap, struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = dentry->d_inode;
 	struct super_block *sb = inode->i_sb;
@@ -2188,7 +2172,7 @@ int pmfs_notify_change(struct dentry *dentry, struct iattr *attr)
 	if (!pi)
 		return -EACCES;
 
-	ret = setattr_prepare(dentry, attr);
+	ret = setattr_prepare(mnt_idmap, dentry, attr);
 	if (ret)
 		return ret;
 
@@ -2209,7 +2193,7 @@ int pmfs_notify_change(struct dentry *dentry, struct iattr *attr)
 		/* now it is safe to remove the inode from the truncate list */
 		pmfs_truncate_del(inode);
 	}
-	setattr_copy(inode, attr);
+	setattr_copy(mnt_idmap, inode, attr);
 
 	/* we have already handled ATTR_SIZE above so no need to check for it */
 	attr_mask = ATTR_MODE | ATTR_UID | ATTR_GID | ATTR_ATIME | ATTR_MTIME |

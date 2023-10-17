@@ -63,7 +63,7 @@ static void pmfs_init_free_list(struct super_block *sb,
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
 	unsigned long per_list_blocks;
 	int second_node_cpuid = 0;
-	unsigned long start_block;
+	unsigned long start_block = 0;
 	int effective_index = 0;
 
 	if (sbi->num_numa_nodes == 2) {
@@ -429,9 +429,6 @@ bool pmfs_alloc_superpage(struct super_block *sb,
 	bool found = 0;
 	unsigned long step = 0;
 
-	unsigned int left_margin;
-	unsigned int right_margin;
-
 	if (num_blocks != PAGES_PER_2MB) {
 		pmfs_dbg("%s: wrong number of blocks. Expected = 512. Requested = %lu\n",
 			 __func__, num_blocks);
@@ -473,8 +470,8 @@ static long pmfs_alloc_blocks_in_free_list(struct super_block *sb,
 	unsigned long *new_blocknr)
 {
 	struct rb_root *tree, *huge_tree;
-	struct pmfs_range_node *curr, *node, *next = NULL, *prev = NULL, *blknode;
-	struct rb_node *temp, *temp_huge, *next_node, *prev_node;
+	struct pmfs_range_node *curr, *node, *next = NULL, *blknode;
+	struct rb_node *temp, *next_node;
 	unsigned long curr_blocks;
 	bool found = 0;
 	bool found_hugeblock = 0;
@@ -833,7 +830,6 @@ int pmfs_free_blocks(struct super_block *sb, unsigned long blocknr,
 	int cpuid;
 	int new_node_used = 0;
 	int ret;
-	unsigned long temp_blocknr;
 
 	if (num <= 0) {
 		pmfs_dbg("%s ERROR: free %d\n", __func__, num);
@@ -980,26 +976,26 @@ int pmfs_free_blocks(struct super_block *sb, unsigned long blocknr,
 	return ret;
 }
 
-static int not_enough_holes(struct free_list *free_list,
-			    unsigned long num_blocks)
-{
-	struct pmfs_range_node *first_unaligned = free_list->first_node_unaligned;
-	struct pmfs_range_node *first_huge_aligned = free_list->first_node_huge_aligned;
+// static int not_enough_holes(struct free_list *free_list,
+// 			    unsigned long num_blocks)
+// {
+// 	struct pmfs_range_node *first_unaligned = free_list->first_node_unaligned;
+// 	struct pmfs_range_node *first_huge_aligned = free_list->first_node_huge_aligned;
 
-	unsigned long num_hole_blocks = free_list->num_free_blocks - (free_list->num_blocknode_huge_aligned*PAGES_PER_2MB);
-	if (num_hole_blocks < num_blocks ||
-	    !first_unaligned) {
-		pmfs_dbg_verbose("%s: num_free_blocks=%ld; num_blocks=%ld; "
-				 "first_unaligned=0x%p; "
-				 "first_aligned=0x%p\n",
-				 __func__, free_list->num_free_blocks, num_blocks,
-				 first_unaligned,
-				 first_huge_aligned);
-		return 1;
-	}
+// 	unsigned long num_hole_blocks = free_list->num_free_blocks - (free_list->num_blocknode_huge_aligned*PAGES_PER_2MB);
+// 	if (num_hole_blocks < num_blocks ||
+// 	    !first_unaligned) {
+// 		pmfs_dbg_verbose("%s: num_free_blocks=%ld; num_blocks=%ld; "
+// 				 "first_unaligned=0x%p; "
+// 				 "first_aligned=0x%p\n",
+// 				 __func__, free_list->num_free_blocks, num_blocks,
+// 				 first_unaligned,
+// 				 first_huge_aligned);
+// 		return 1;
+// 	}
 
-	return 0;
-}
+// 	return 0;
+// }
 
 static int not_enough_blocks(struct free_list *free_list,
 	unsigned long num_blocks)
@@ -1087,7 +1083,6 @@ int pmfs_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	unsigned long new_blocknr = 0;
 	long ret_blocks = 0;
 	int retried = 0;
-	timing_t alloc_time;
 
 	num_blocks = num * pmfs_get_numblocks(btype);
 	if (num_blocks == 0) {

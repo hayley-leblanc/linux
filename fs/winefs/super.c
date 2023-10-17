@@ -109,6 +109,7 @@ static int pmfs_get_numa_block_info(struct super_block *sb,
 {
 	void *virt_addr_2 = NULL;
 	phys_addr_t phys_addr_2;
+	unsigned long temp_virt_addr_2 = 0, temp_phys_addr_2 = 0;
 	pfn_t __pfn_t_2;
 	long size_2;
 	unsigned long num_blocks;
@@ -117,6 +118,7 @@ static int pmfs_get_numa_block_info(struct super_block *sb,
 	size_2 = dax_direct_access(sbi->s_dax_dev,
 				   ((long)(sbi->pmem_size) / PAGE_SIZE),
 				   LONG_MAX / PAGE_SIZE,
+				   DAX_ACCESS,
 				   &virt_addr_2, &__pfn_t_2) * PAGE_SIZE;
 	if (size_2 <= 0) {
 		pmfs_err(sb, "second direct_access failed\n");
@@ -130,10 +132,15 @@ static int pmfs_get_numa_block_info(struct super_block *sb,
 	num_blocks -= diff_blocks;
 	phys_addr_2 = pfn_t_to_pfn(__pfn_t_2) << PAGE_SHIFT;
 
-	while ((unsigned long)virt_addr_2 % HUGEPAGE_SIZE != 0) {
-		(unsigned long)(virt_addr_2)++;
-		(unsigned long)(phys_addr_2)++;
+	// janky way to get around complaints from the kernel about casts
+	temp_virt_addr_2 = (unsigned long)virt_addr_2;
+	temp_phys_addr_2 = (unsigned long)phys_addr_2;
+	while (temp_virt_addr_2 % HUGEPAGE_SIZE != 0) {
+		temp_virt_addr_2++;
+		temp_phys_addr_2++;
 	}
+	virt_addr_2 = (void*)temp_virt_addr_2;
+	phys_addr_2 = (phys_addr_t)temp_phys_addr_2;
 
 	sbi->virt_addr_2 = virt_addr_2;
 	sbi->phys_addr_2 = phys_addr_2;
@@ -161,18 +168,12 @@ static int pmfs_get_block_info(struct super_block *sb,
 	void *virt_addr = NULL;
 	pfn_t __pfn_t;
 	long size;
-	int ret;
 	unsigned long num_blocks;
 	unsigned long diff_blocks = 0;
-
-	ret = bdev_dax_supported(sb->s_bdev, PAGE_SIZE);
-	if (!ret) {
-		pmfs_err(sb, "device does not support DAX\n");
-		return -EINVAL;
-	}
+	unsigned long long start_off = 0;
 
 	sbi->s_bdev = sb->s_bdev;
-	dax_dev = fs_dax_get_by_host(sb->s_bdev->bd_disk->disk_name);
+	dax_dev = fs_dax_get_by_bdev(sb->s_bdev, &start_off, NULL, NULL);
 	if (!dax_dev) {
 		pmfs_err(sb, "Couldn't retrieve DAX device\n");
 		return -EINVAL;
@@ -181,7 +182,7 @@ static int pmfs_get_block_info(struct super_block *sb,
 	sbi->s_dax_dev = dax_dev;
 
 	size = dax_direct_access(sbi->s_dax_dev, 0, LONG_MAX / PAGE_SIZE,
-				&virt_addr, &__pfn_t) * PAGE_SIZE;
+				DAX_ACCESS, &virt_addr, &__pfn_t) * PAGE_SIZE;
 	if (size <= 0) {
 		pmfs_err(sb, "direct_access failed\n");
 		return -EINVAL;
@@ -563,7 +564,7 @@ static struct pmfs_inode *pmfs_init(struct super_block *sb,
 	root_i->i_blocks = cpu_to_le64(1);
 	root_i->i_size = cpu_to_le64(sb->s_blocksize);
 	root_i->i_atime = root_i->i_mtime = root_i->i_ctime =
-		cpu_to_le32(get_seconds());
+		cpu_to_le32(ktime_get_real_seconds());
 	root_i->pmfs_ino = cpu_to_le64(PMFS_ROOT_INO);
 	root_i->root = cpu_to_le64(pmfs_get_block_off(sb, blocknr,
 						       PMFS_BLOCK_TYPE_4K));
@@ -995,7 +996,7 @@ setup_sb:
 	if (!(sb->s_flags & SB_RDONLY)) {
 		u64 mnt_write_time;
 		/* update mount time and write time atomically. */
-		mnt_write_time = (get_seconds() & 0xFFFFFFFF);
+		mnt_write_time = (ktime_get_real_seconds() & 0xFFFFFFFF);
 		mnt_write_time = mnt_write_time | (mnt_write_time << 32);
 
 		pmfs_memunlock_range(sb, &super->s_mtime, 8);
@@ -1100,7 +1101,7 @@ int pmfs_remount(struct super_block *sb, int *mntflags, char *data)
 		u64 mnt_write_time;
 		ps = pmfs_get_super(sb);
 		/* update mount time and write time atomically. */
-		mnt_write_time = (get_seconds() & 0xFFFFFFFF);
+		mnt_write_time = (ktime_get_real_seconds() & 0xFFFFFFFF);
 		mnt_write_time = mnt_write_time | (mnt_write_time << 32);
 
 		pmfs_memunlock_range(sb, &ps->s_mtime, 8);
@@ -1126,7 +1127,6 @@ restore_opt:
 static void pmfs_put_super(struct super_block *sb)
 {
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
-	struct list_head *head = &(sbi->block_inuse_head);
 	struct inode_map *inode_map;
 	int i;
 

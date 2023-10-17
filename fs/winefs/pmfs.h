@@ -51,7 +51,7 @@
 #define pmfs_dbg(s, args ...)           pr_info(s, ## args)
 #define pmfs_dbg1(s, args ...)
 #define pmfs_err(sb, s, args ...)       pmfs_error_mng(sb, s, ## args)
-#define pmfs_warn(s, args ...)          pr_warning(s, ## args)
+#define pmfs_warn(s, args ...)          pr_warn(s, ## args)
 #define pmfs_info(s, args ...)          pr_info(s, ## args)
 
 extern unsigned int pmfs_dbgmask;
@@ -159,15 +159,15 @@ extern int support_clwb;
 
 extern atomic64_t fsync_pages;
 
-typedef struct timespec timing_t;
+typedef struct timespec64 timing_t;
 
 #define PMFS_START_TIMING(name, start) \
-	{if (measure_timing) getrawmonotonic(&start);}
+	{if (measure_timing) ktime_get_raw_ts64(&start);}
 
 #define PMFS_END_TIMING(name, start) \
 	{if (measure_timing) { \
 		timing_t end; \
-		getrawmonotonic(&end); \
+		ktime_get_raw_ts64(&end); \
 		Timingstats[name] += \
 			(end.tv_sec - start.tv_sec) * 1000000000 + \
 			(end.tv_nsec - start.tv_nsec); \
@@ -469,7 +469,7 @@ static inline int pmfs_get_reference(struct super_block *sb, u64 block,
 	int rc;
 
 	*nvmm = pmfs_get_block(sb, block);
-	rc = memcpy_mcsafe(dram, *nvmm, size);
+	rc = copy_mc_to_kernel(dram, *nvmm, size);
 	return rc;
 }
 
@@ -515,7 +515,7 @@ static inline void pmfs_memcpy_atomic (void *dst, const void *src, u8 size)
 }
 
 /* assumes the length to be 4-byte aligned */
-noinline static void memset_nt(void *dest, uint32_t dword, size_t length)
+static inline void memset_nt(void *dest, uint32_t dword, size_t length)
 {
 	uint64_t dummy1, dummy2;
 	uint64_t qword = ((uint64_t)dword << 32) | dword;

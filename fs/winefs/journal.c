@@ -533,14 +533,14 @@ static int pmfs_free_logentries(struct super_block *sb, int max_log_entries, int
 	return LOGENTRY_SIZE * freed_entries;
 }
 
-void synthetic_crash(struct super_block *sb)
-{
-	int i = 0;
-	pmfs_journal_t *journal;
-	uint32_t tail;
-	uint32_t head;
+// void synthetic_crash(struct super_block *sb)
+// {
+// 	int i = 0;
+// 	pmfs_journal_t *journal;
+// 	uint32_t tail;
+// 	uint32_t head;
 	
-}
+// }
 
 pmfs_transaction_t *pmfs_new_transaction(struct super_block *sb,
 					 int max_log_entries, int cpu)
@@ -604,8 +604,10 @@ again:
 		tail = 0;
 		ptr = (u64 *)&journal->tail;
 		/* writing 8-bytes atomically setting tail to 0 */
-		set_64bit(ptr, (__force u64)cpu_to_le64((u64)next_gen_id(
-					le16_to_cpu(journal->gen_id)) << 32));
+		// set_64bit(ptr, (__force u64)cpu_to_le64((u64)next_gen_id(
+		// 			le16_to_cpu(journal->gen_id)) << 32));
+		*ptr = (__force u64)cpu_to_le64((u64)next_gen_id(
+					le16_to_cpu(journal->gen_id)) << 32);
 		pmfs_memlock_range(sb, journal, sizeof(*journal));
 		pmfs_dbg_trans("journal wrapped. tail %x gid %d cur tid %d\n",
 			le32_to_cpu(journal->tail),le16_to_cpu(journal->gen_id),
@@ -936,7 +938,6 @@ static int pmfs_recover_redo_journal(struct super_block *sb)
 int pmfs_recover_journal(struct super_block *sb)
 {
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
-	int recover_required = 0;
 	pmfs_journal_t *journal;
 	uint32_t tail;
 	uint32_t head;

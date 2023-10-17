@@ -21,7 +21,7 @@ static inline void pmfs_sync_super(struct pmfs_super_block *ps)
 {
 	u16 crc = 0;
 
-	ps->s_wtime = cpu_to_le32(get_seconds());
+	ps->s_wtime = cpu_to_le32(ktime_get_real_seconds());
 	ps->s_sum = 0;
 	crc = crc16(~0, (__u8 *)ps + sizeof(__le16),
 			PMFS_SB_STATIC_SIZE(ps) - sizeof(__le16));

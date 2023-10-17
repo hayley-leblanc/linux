@@ -33,6 +33,7 @@ long pmfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	struct inode    *inode = mapping->host;
 	struct pmfs_inode *pi;
 	struct super_block *sb = inode->i_sb;
+	struct mnt_idmap *mnt_idmap = file_mnt_idmap(filp);
 	unsigned int flags;
 	int ret;
 	pmfs_transaction_t *trans;
@@ -52,7 +53,7 @@ long pmfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (ret)
 			return ret;
 
-		if (!inode_owner_or_capable(inode)) {
+		if (!inode_owner_or_capable(mnt_idmap, inode)) {
 			ret = -EPERM;
 			goto flags_out;
 		}
@@ -102,7 +103,7 @@ flags_out:
 		return put_user(inode->i_generation, (int __user *)arg);
 	case FS_IOC_SETVERSION: {
 		__u32 generation;
-		if (!inode_owner_or_capable(inode))
+		if (!inode_owner_or_capable(mnt_idmap, inode))
 			return -EPERM;
 		ret = mnt_want_write_file(filp);
 		if (ret)
@@ -132,7 +133,7 @@ setversion_out:
 	}
 	case FS_PMFS_FSYNC: {
 		struct sync_range packet;
-		copy_from_user(&packet, (void *)arg, sizeof(struct sync_range));
+		ret = copy_from_user(&packet, (void *)arg, sizeof(struct sync_range));
 		pmfs_fsync(filp, packet.offset, packet.offset + packet.length, 1);
 		return 0;
 	}

@@ -207,7 +207,6 @@ __pmfs_xip_file_write(struct address_space *mapping, const char __user *buf,
 	timing_t memcpy_time, write_time;
 	loff_t start_pos = pos;
 	loff_t end_pos = start_pos + count - 1;
-	unsigned long start_block = start_pos >> sb->s_blocksize_bits;
 	unsigned long end_block = end_pos >> sb->s_blocksize_bits;
 	timing_t write_find_blocks_time;
 
@@ -385,6 +384,7 @@ static inline void pmfs_copy_from_edge_blk (struct super_block *sb, struct
 	size_t count;
 	unsigned long blknr;
 	u64 bp = 0;
+	int ret;
 
 	if (over_blk) {
 		blknr = block >> (pmfs_inode_blk_shift(pi) -
@@ -401,7 +401,7 @@ static inline void pmfs_copy_from_edge_blk (struct super_block *sb, struct
 
 			*buf = kmalloc(count, GFP_KERNEL);
 			pmfs_memunlock_range(sb, ptr,  pmfs_inode_blk_size(pi));
-			__copy_to_user(*buf, ptr, count);
+			ret = __copy_to_user(*buf, ptr, count);
 			pmfs_memlock_range(sb, ptr,  pmfs_inode_blk_size(pi));
 		}
 	}
@@ -699,7 +699,7 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 			proc_numa->numa_node = pi->numa_node;
 		}
 
-		sched_setaffinity(current->pid, &(sbi->numa_cpus[pi->numa_node].cpumask));
+		// sched_setaffinity(current->pid, &(sbi->numa_cpus[pi->numa_node].cpumask));
 	}
 
 	if (strong_guarantees && pi->huge_aligned_file && pos < i_size_read(inode)) {
@@ -916,7 +916,6 @@ static int pmfs_find_and_alloc_blocks(struct inode *inode,
 	pmfs_dbg_verbose("iblock 0x%lx allocated_block 0x%llx\n", iblock,
 			 block);
 
- set_block:
 	*bno = block;
 	err = 0;
  err:
@@ -930,7 +929,7 @@ int pmfs_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	unsigned int blkbits = inode->i_blkbits;
 	unsigned long first_block = offset >> blkbits;
 	unsigned long max_blocks = (length + (1 << blkbits) - 1) >> blkbits;
-	bool new = false, boundary = false;
+	bool new = false;
 	u64 bno;
 	int ret;
 	unsigned long diff_between_devs, byte_offset_in_dax;
@@ -1004,7 +1003,7 @@ int pmfs_iomap_end(struct inode *inode, loff_t offset, loff_t length,
 
 
 static int pmfs_iomap_begin_lock(struct inode *inode, loff_t offset,
-	loff_t length, unsigned int flags, struct iomap *iomap)
+	loff_t length, unsigned int flags, struct iomap *iomap, struct iomap *srcmap)
 {
 	return pmfs_iomap_begin(inode, offset, length, flags, iomap, true);
 }
@@ -1124,8 +1123,7 @@ int pmfs_insert_write_vma(struct vm_area_struct *vma)
 	struct rb_node **temp, *parent;
 	int compVal;
 	int insert = 0;
-	int ret;
-	timing_t insert_vma_time;
+	int ret = 0;
 	struct pmfs_inode *pi;
 	struct process_numa *proc_numa;
 	int cpu = pmfs_get_cpuid(sb);
@@ -1156,7 +1154,7 @@ int pmfs_insert_write_vma(struct vm_area_struct *vma)
 			proc_numa->numa_node = pi->numa_node;
 		}
 
-		sched_setaffinity(current->pid, &(sbi->numa_cpus[pi->numa_node].cpumask));
+		// sched_setaffinity(current->pid, &(sbi->numa_cpus[pi->numa_node].cpumask));
 	}
 
 	inode_lock(inode);
@@ -1201,13 +1199,11 @@ static int pmfs_remove_write_vma(struct vm_area_struct *vma)
 	struct pmfs_inode_info *si = PMFS_I(inode);
 	struct pmfs_inode_info_header *sih = &si->header;
 	struct super_block *sb = inode->i_sb;
-	struct pmfs_sb_info *sbi = PMFS_SB(sb);
 	struct vma_item *curr = NULL;
 	struct rb_node *temp;
 	int compVal;
 	int found = 0;
 	int remove = 0;
-	timing_t remove_vma_time;
 
 	inode_lock(inode);
 
@@ -1286,7 +1282,8 @@ int pmfs_xip_file_mmap(struct file *file, struct vm_area_struct *vma)
 
 	file_accessed(file);
 
-	vma->vm_flags |= VM_MIXEDMAP | VM_HUGEPAGE;
+	// vma->vm_flags |= VM_MIXEDMAP | VM_HUGEPAGE;
+	vm_flags_set(vma, VM_MIXEDMAP | VM_HUGEPAGE);
 
 	vma->vm_ops = &pmfs_xip_vm_ops;
 

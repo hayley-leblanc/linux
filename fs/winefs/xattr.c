@@ -35,7 +35,7 @@ pmfs_xattr_set(struct inode *inode, const char *name,
 	const char *special_xattr = "file_type";
 	const char *special_xattr_value_mmap = "mmap";
 	const char *special_xattr_value_sys = "sys";
-	u64 bp;
+	void* bp;
 	int ret = 0;
 	unsigned long blocknr = 0;
 	int num_blocks = 0;
@@ -85,7 +85,7 @@ pmfs_xattr_set(struct inode *inode, const char *name,
 	}
 
 	bp = pmfs_get_block(sb, pi->i_xattr);
-	pmfs_update_special_xattr(sb, (void *)bp, &xattr_info);
+	pmfs_update_special_xattr(sb, bp, &xattr_info);
 	pmfs_commit_transaction(sb, trans);
 
  out:
@@ -152,9 +152,7 @@ int pmfs_xattr_get(struct inode *inode, const char *name,
 	struct pmfs_inode *pi;
 	struct super_block *sb = inode->i_sb;
 	const char *special_xattr = "file_type";
-	const char *special_xattr_value_mmap = "mmap";
-	const char *special_xattr_value_sys = "sys";
-	u64 bp;
+	void *bp;
 	int ret = 0;
 	int value = 0;
 

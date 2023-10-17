@@ -308,9 +308,8 @@ int pmfs_remove_entry(pmfs_transaction_t *trans, struct dentry *de,
 	struct inode *dir = de->d_parent->d_inode;
 	struct pmfs_inode *pidir;
 	struct qstr *entry = &de->d_name;
-	struct pmfs_direntry *res_entry, *prev_entry;
+	struct pmfs_direntry *res_entry;
 	int retval = -EINVAL;
-	unsigned long blocks, block;
 	char *blk_base = NULL;
 	struct pmfs_inode_info *si = PMFS_I(dir);
 	struct pmfs_inode_info_header *sih = &si->header;
@@ -387,8 +386,6 @@ static int pmfs_readdir(struct file *file, struct dir_context *ctx)
 	struct pmfs_direntry *de;
 	ino_t ino;
 	timing_t readdir_time;
-	struct pmfs_inode_info *si = PMFS_I(inode);
-	struct pmfs_inode_info_header *sih = &(si->header);
 
 	PMFS_START_TIMING(readdir_t, readdir_time);
 
