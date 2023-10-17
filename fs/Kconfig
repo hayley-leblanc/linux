@@ -328,6 +328,7 @@ endif # MISC_FILESYSTEMS
 
 source "fs/hayleyfs/Kconfig"
 source "fs/nova/Kconfig"
+source "fs/winefs/Kconfig"
 
 menuconfig NETWORK_FILESYSTEMS
 	bool "Network File Systems"
