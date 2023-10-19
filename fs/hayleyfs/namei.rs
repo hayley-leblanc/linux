@@ -608,15 +608,18 @@ fn hayleyfs_rmdir<'a>(
             // if the page that the freed dentry belongs to is now empty, free it
             let parent_page = pd.try_dealloc_parent_page(sbi);
             if let Ok(parent_page) = parent_page {
+                // have to grab parent_inode_info again because the borrow checker thinks
+                // that it is owned by parent_inode, which has been moved
+                let parent_inode_info = parent_inode.get_inode_info()?;
                 let parent_page = parent_page.unmap().flush().fence();
                 let parent_page = parent_page.dealloc().flush().fence();
                 sbi.page_allocator.dealloc_dir_page(&parent_page)?;
+                parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
             }
 
             unsafe {
                 bindings::clear_nlink(inode);
             }
-
             Ok((pi, parent_inode, pd))
         }
         None => Err(ENOENT),
