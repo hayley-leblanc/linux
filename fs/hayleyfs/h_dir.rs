@@ -446,8 +446,6 @@ pub(crate) fn hayleyfs_readdir(
     ctx: *mut bindings::dir_context,
 ) -> Result<u32> {
     // get all dentries currently in this inode
-    // TODO: need to start at the specified position
-
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let parent_inode_info = parent_inode.get_inode_info()?;
     move_dir_inode_tree_to_map(sbi, &parent_inode_info)?;
@@ -459,8 +457,16 @@ pub(crate) fn hayleyfs_readdir(
             return Ok(0);
         }
     }
-    let mut i = unsafe { (*ctx).pos };
-    for dentry in dentries {
+    let mut i = 0;
+    let cur_pos: usize = unsafe { (*ctx).pos.try_into()? };
+    for j in cur_pos..dentries.len() {
+        let dentry = match dentries.get(j) {
+            Some(dentry) => dentry,
+            None => {
+                unsafe { (*ctx).pos += i };
+                return Ok(0);
+            }
+        };
         let name = dentry.get_name_as_cstr();
         let file_type = match sbi.check_inode_type_by_inode_num(dentry.get_ino())? {
             InodeType::REG => bindings::DT_REG,
@@ -481,11 +487,11 @@ pub(crate) fn hayleyfs_readdir(
             )
         };
         if !result {
-            unsafe { (*ctx).pos = i };
+            unsafe { (*ctx).pos += i };
             return Ok(0);
         }
         i += 1;
     }
-    unsafe { (*ctx).pos += num_dentries };
+    unsafe { (*ctx).pos += i };
     Ok(0)
 }
