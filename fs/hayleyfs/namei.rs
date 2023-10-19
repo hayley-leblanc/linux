@@ -68,7 +68,7 @@ impl inode::Operations for InodeOps {
 
         let (_new_dentry, new_inode) = hayleyfs_create(sbi, dir, dentry, umode, excl)?;
 
-        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode)?;
+        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode, None)?;
         unsafe { insert_vfs_inode(vfs_inode, dentry)? };
         Ok(0)
     }
@@ -121,7 +121,7 @@ impl inode::Operations for InodeOps {
 
         dir.inc_nlink();
 
-        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode)?;
+        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode, None)?;
         unsafe { insert_vfs_inode(vfs_inode, dentry)? };
         Ok(0)
     }
@@ -202,8 +202,17 @@ impl inode::Operations for InodeOps {
         let result = hayleyfs_symlink(sbi, dir, dentry, symname, mode);
         if let Err(e) = result {
             return Err(e);
-        } else if let Ok((mut new_inode, _, new_page)) = result {
-            let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, mode)?;
+        } else if let Ok((mut new_inode, _, new_page, pi_info)) = result {
+            let vfs_inode = new_vfs_inode(
+                sb,
+                sbi,
+                mnt_idmap,
+                dir,
+                dentry,
+                &new_inode,
+                mode,
+                Some(pi_info),
+            )?;
             new_inode.set_vfs_inode(vfs_inode)?;
             let pi_info = new_inode.get_inode_info()?;
             pi_info.insert_pages(&new_page, new_page.len()?)?;
@@ -362,6 +371,7 @@ fn new_vfs_inode<'a, Type>(
     _dentry: &fs::DEntry,
     new_inode: &InodeWrapper<'a, Clean, Complete, Type>,
     umode: bindings::umode_t,
+    inode_info: Option<Box<HayleyFsRegInodeInfo>>,
 ) -> Result<*mut bindings::inode> {
     init_timing!(full_vfs_inode);
     start_timing!(full_vfs_inode);
@@ -412,7 +422,13 @@ fn new_vfs_inode<'a, Type>(
         InodeType::SYMLINK => {
             vfs_inode.i_mode = umode;
             // initialize the DRAM info and save it in the private pointer
-            let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
+            // let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
+            let inode_info = if let Some(inode_info) = inode_info {
+                inode_info
+            } else {
+                pr_info!("ERROR: symlink must provide inode info\n");
+                return Err(EINVAL);
+            };
             vfs_inode.i_private = inode_info.into_foreign() as *mut _;
             unsafe {
                 vfs_inode.i_op = symlink::OperationsVtable::<SymlinkOps>::build();
@@ -1734,6 +1750,7 @@ fn hayleyfs_symlink<'a>(
     InodeWrapper<'a, Clean, Complete, RegInode>,
     DentryWrapper<'a, Clean, Complete>,
     DataPageListWrapper<Clean, Written>,
+    Box<HayleyFsRegInodeInfo>,
 )> {
     // obtain and allocate a new persistent dentry
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
@@ -1742,19 +1759,18 @@ fn hayleyfs_symlink<'a>(
     let pd = pd.set_name(dentry.d_name())?.flush().fence();
 
     // obtain and allocate an inode for the symlink
-    // let pi = sbi.inode_allocator.alloc_ino()?;
     let pi = sbi.alloc_ino()?;
     let pi = InodeWrapper::get_free_reg_inode_by_ino(sbi, pi)?;
 
     let pi = pi.allocate_symlink_inode(dir, mode)?.flush().fence();
-    let pi_info = pi.get_inode_info()?;
+    let pi_info = Box::try_new(HayleyFsRegInodeInfo::new(pi.get_ino())?)?;
     sbi.inc_inodes_in_use();
 
     // allocate a page for the symlink
-    let pages = DataPageListWrapper::get_data_page_list(pi_info, 1, 0)?;
+    let pages = DataPageListWrapper::get_data_page_list(&pi_info, 1, 0)?;
     let pages = if let Err(pages) = pages {
         // we expect an error because the inode shouldn't have any pages yet
-        pages.allocate_pages(sbi, pi_info, 1, 0)?.fence()
+        pages.allocate_pages(sbi, &pi_info, 1, 0)?.fence()
     } else {
         pr_info!("ERROR: new symlink file has pages\n");
         return Err(EINVAL);
@@ -1762,8 +1778,6 @@ fn hayleyfs_symlink<'a>(
     // let page = ;
     sbi.inc_blocks_in_use();
 
-    // set data page backpointer - at this point, inode and page are still orphaned
-    // let page = pages.set_data_page_backpointer(&pi).flush().fence();
     let pages = pages.set_backpointers(sbi, pi_info.get_ino())?.fence();
 
     // need to set file size also which will require writing to the page I think
@@ -1787,7 +1801,7 @@ fn hayleyfs_symlink<'a>(
     let parent_inode_info = parent_inode.get_inode_info()?;
     pd.index(&parent_inode_info)?;
 
-    Ok((pi, pd, pages))
+    Ok((pi, pd, pages, pi_info))
 }
 
 fn get_free_dentry<'a, S: Initialized>(

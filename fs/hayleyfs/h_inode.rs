@@ -278,7 +278,7 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
     pub(crate) fn get_vfs_inode(&self) -> Result<*mut bindings::inode> {
         match self.vfs_inode {
             Some(vfs_inode) => Ok(vfs_inode),
-            None => {pr_info!("ERROR: inode is uninitialized\n"); Err(EPERM)}
+            None => {pr_info!("ERROR: inode {:?} is uninitialized\n", self.ino); Err(EPERM)}
         }
     }
 }
@@ -289,7 +289,7 @@ impl<'a, State, Op> InodeWrapper<'a, State, Op, RegInode> {
     pub(crate) fn get_inode_info(&self) -> Result<&HayleyFsRegInodeInfo> {
         match self.vfs_inode {
             Some(vfs_inode) => unsafe {Ok(<Box::<HayleyFsRegInodeInfo> as ForeignOwnable>::borrow((*vfs_inode).i_private))},
-            None => {pr_info!("ERROR: inode is uninitialized\n"); Err(EPERM)}
+            None => {pr_info!("ERROR: inode {:?} is uninitialized\n", self.ino); Err(EPERM)}
         }
     }
 }
