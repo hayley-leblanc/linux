@@ -318,7 +318,7 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
         // we should be using the dir crossdir version
         if self.get_ino() == 0
             && dst_parent_inode_info
-                .lookup_dentry(src_dentry.get_name_as_cstr())
+                .lookup_dentry(src_dentry.get_name_as_cstr())?
                 .is_none()
         {
             return Err(EPERM);

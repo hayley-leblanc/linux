@@ -42,7 +42,7 @@ impl inode::Operations for InodeOps {
         let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
         let parent_inode_info = parent_inode.get_inode_info()?;
         move_dir_inode_tree_to_map(sbi, &parent_inode_info)?;
-        let result = parent_inode_info.lookup_dentry(dentry.d_name());
+        let result = parent_inode_info.lookup_dentry(dentry.d_name())?;
         if let Some(dentry_info) = result {
             // the dentry exists in the specified directory
             Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino())?))
@@ -586,7 +586,7 @@ fn hayleyfs_rmdir<'a>(
         .flush()
         .fence();
     let parent_inode_info = parent_inode.get_inode_info()?;
-    let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name());
+    let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name())?;
     match dentry_info {
         Some(dentry_info) => {
             // check if the directory we are trying to delete is empty
@@ -744,7 +744,7 @@ fn hayleyfs_rename<'a>(
 
     let old_dentry_info = {
         let parent_inode_info = parent_inode.get_inode_info()?;
-        parent_inode_info.lookup_dentry(old_name)
+        parent_inode_info.lookup_dentry(old_name)?
     };
     match old_dentry_info {
         None => Err(ENOENT),
@@ -808,7 +808,7 @@ fn reg_inode_rename<'a>(
     let new_inode: &mut fs::INode = unsafe { &mut *new_dentry.d_inode().cast() };
 
     let old_dir_inode_info = old_dir.get_inode_info()?;
-    let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
+    let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name)?;
 
     match new_dentry_info {
         Some(new_dentry_info) => {
@@ -902,7 +902,7 @@ fn dir_inode_rename<'a>(
 
     // directory rename is different for same dir vs cross dir
     if old_dir.get_ino() == new_dir.get_ino() {
-        let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
+        let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name)?;
         // same dir
         match new_dentry_info {
             Some(new_dentry_info) => {
@@ -945,7 +945,7 @@ fn dir_inode_rename<'a>(
     } else {
         // crossdir
         let new_dir_inode_info = new_dir.get_inode_info()?;
-        let new_dentry_info = new_dir_inode_info.lookup_dentry(new_name);
+        let new_dentry_info = new_dir_inode_info.lookup_dentry(new_name)?;
         match new_dentry_info {
             Some(new_dentry_info) => {
                 // overwriting a dentry in a different directory
@@ -1603,7 +1603,7 @@ fn hayleyfs_unlink<'a>(
     let parent_inode_info = parent_inode.get_inode_info()?;
 
     // use volatile index to find the persistent dentry
-    let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name());
+    let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name())?;
 
     end_timing!(UnlinkLookup, unlink_lookup);
     if let Some(dentry_info) = dentry_info {

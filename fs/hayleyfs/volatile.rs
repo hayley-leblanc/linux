@@ -402,7 +402,7 @@ pub(crate) trait InoDentryMap {
         &self,
         new_dentries: RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>,
     ) -> Result<()>;
-    fn lookup_dentry(&self, name: &CStr) -> Option<DentryInfo>;
+    fn lookup_dentry(&self, name: &CStr) -> Result<Option<DentryInfo>>;
     fn get_all_dentries(&self) -> Result<Vec<DentryInfo>>;
     fn delete_dentry(&self, dentry: DentryInfo) -> Result<()>;
     fn atomic_add_and_delete_dentry<'a>(
@@ -444,14 +444,17 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
         Ok(())
     }
 
-    fn lookup_dentry(&self, name: &CStr) -> Option<DentryInfo> {
+    fn lookup_dentry(&self, name: &CStr) -> Result<Option<DentryInfo>> {
+        if name.len() > MAX_FILENAME_LEN {
+            return Err(ENAMETOOLONG);
+        }
         let dentries = Arc::clone(&self.dentries);
         let dentries = dentries.lock();
         // TODO: can you do this without creating the array?
         let mut full_filename = [0; MAX_FILENAME_LEN];
         full_filename[..name.len()].copy_from_slice(name.as_bytes());
         let dentry = dentries.get(&full_filename);
-        dentry.copied()
+        Ok(dentry.copied())
     }
 
     fn get_all_dentries(&self) -> Result<Vec<DentryInfo>> {
