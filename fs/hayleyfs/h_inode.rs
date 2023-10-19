@@ -926,19 +926,25 @@ impl InodeAllocator for RBInodeAllocator {
         let mut rb = RBTree::new();
         let mut cur_ino = start;
         let mut i = 0;
-        while cur_ino < num_inodes && i < alloc_inodes.len() {
-            if cur_ino < alloc_inodes[i] {
-                rb.try_insert(cur_ino, ())?;
-                cur_ino += 1;
-            } else if cur_ino == alloc_inodes[i] {
-                cur_ino += 1;
-                i += 1;
-            } else {
-                // cur_ino > alloc_pages[i]
-                // shouldn't ever happen
-                pr_info!("ERROR: cur_ino {:?}, i {:?}, alloc_inodes[i] {:?}\n", cur_ino, i, alloc_inodes[i]);
-                return Err(EINVAL);
+        if start <= alloc_inodes.len().try_into()? {
+            while cur_ino < num_inodes && i < alloc_inodes.len() {
+                if cur_ino < alloc_inodes[i] {
+                    rb.try_insert(cur_ino, ())?;
+                    cur_ino += 1;
+                } else if cur_ino == alloc_inodes[i] {
+                    cur_ino += 1;
+                    i += 1;
+                } else {
+                    // cur_ino > alloc_pages[i]
+                    // shouldn't ever happen
+                    pr_info!("ERROR: cur_ino {:?}, i {:?}, alloc_inodes[i] {:?}\n", cur_ino, i, alloc_inodes[i]);
+                    return Err(EINVAL);
+                }
             }
+        } else {
+            // if only the root node is allocated, just put all of the other 
+            // inodes in the allocator
+            i = start.try_into()?;
         }
         // add all remaining inodes to the allocator
         if i < num_inodes.try_into()? {

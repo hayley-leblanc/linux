@@ -107,33 +107,39 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
         let mut current_cpu_start = start; // used to keep track of when to move to the next cpu pool
         let mut i = 0;
         let mut rb_tree = RBTree::new();
-        while current_page < dev_pages && i < alloc_pages.len() {
-            if current_page == current_cpu_start + pages_per_cpu {
-                let free_list = PageFreeList {
-                    free_pages: pages_per_cpu,
-                    list: rb_tree,
-                };
-                free_lists.try_push(Arc::try_new(Mutex::new(free_list))?)?;
-                rb_tree = RBTree::new();
-                current_cpu_start += pages_per_cpu;
+        if alloc_pages.len() > 0 {
+            while current_page < dev_pages && i < alloc_pages.len() {
+                if current_page == current_cpu_start + pages_per_cpu {
+                    let free_list = PageFreeList {
+                        free_pages: pages_per_cpu,
+                        list: rb_tree,
+                    };
+                    free_lists.try_push(Arc::try_new(Mutex::new(free_list))?)?;
+                    rb_tree = RBTree::new();
+                    current_cpu_start += pages_per_cpu;
+                }
+                if current_page < alloc_pages[i] {
+                    rb_tree.try_insert(current_page, ())?;
+                    current_page += 1;
+                } else if current_page == alloc_pages[i] {
+                    current_page += 1;
+                    i += 1;
+                } else {
+                    // current_page > alloc_pages[i]
+                    // i don't THINK this can ever happen?
+                    pr_info!(
+                        "ERROR: cur_page {:?}, i {:?}, alloc_pages[i] {:?}\n",
+                        current_page,
+                        i,
+                        alloc_pages[i]
+                    );
+                    return Err(EINVAL);
+                }
             }
-            if current_page < alloc_pages[i] {
-                rb_tree.try_insert(current_page, ())?;
-                current_page += 1;
-            } else if current_page == alloc_pages[i] {
-                current_page += 1;
-                i += 1;
-            } else {
-                // current_page > alloc_pages[i]
-                // i don't THINK this can ever happen?
-                pr_info!(
-                    "ERROR: cur_page {:?}, i {:?}, alloc_pages[i] {:?}\n",
-                    current_page,
-                    i,
-                    alloc_pages[i]
-                );
-                return Err(EINVAL);
-            }
+        } else {
+            // if no pages are allocated, make sure to start the allocator
+            // from the correct place
+            i = start.try_into()?;
         }
 
         // add all remaining pages to the allocator
@@ -1093,6 +1099,8 @@ unsafe fn unchecked_new_page_no_to_data_header(
     page_no: PageNum,
 ) -> Result<&mut DataPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
+    // pr_info!("page no: {:?}\n", page_no);
+    // pr_info!("data page start: {:?}\n", sbi.get_data_pages_start_page());
     let page_index: usize = (page_no - sbi.get_data_pages_start_page()).try_into()?;
     let ph = page_desc_table.get_mut(page_index);
     match ph {

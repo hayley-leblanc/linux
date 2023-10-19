@@ -482,7 +482,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     )?;
     sbi.inode_allocator = Some(RBInodeAllocator::new_from_alloc_vec(
         alloc_inode_vec,
-        ROOT_INO,
+        ROOT_INO + 1,
         sbi.num_inodes,
     )?);
 
