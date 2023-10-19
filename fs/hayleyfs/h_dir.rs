@@ -459,6 +459,7 @@ pub(crate) fn hayleyfs_readdir(
             return Ok(0);
         }
     }
+    let mut i = unsafe { (*ctx).pos };
     for dentry in dentries {
         let name = dentry.get_name_as_cstr();
         let file_type = match sbi.check_inode_type_by_inode_num(dentry.get_ino())? {
@@ -480,8 +481,10 @@ pub(crate) fn hayleyfs_readdir(
             )
         };
         if !result {
+            unsafe { (*ctx).pos = i };
             return Ok(0);
         }
+        i += 1;
     }
     unsafe { (*ctx).pos += num_dentries };
     Ok(0)
