@@ -925,7 +925,7 @@ impl InodeAllocator for RBInodeAllocator {
     fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64, num_inodes: u64) -> Result<Self> {
         let mut rb = RBTree::new();
         let mut cur_ino = start;
-        let mut i = 0;
+        let mut i = 1; // start at 1 to skip root inode
         if start <= alloc_inodes.len().try_into()? {
             while cur_ino < num_inodes && i < alloc_inodes.len() {
                 if cur_ino < alloc_inodes[i] {
