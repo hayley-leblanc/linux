@@ -701,6 +701,7 @@ impl<'a> InodeWrapper<'a, Clean, UnmapPages, DirInode> {
         self.inode.mode = 0;
         self.inode.uid = 0;
         self.inode.gid = 0;
+        self.inode.link_count = 0;
         self.inode.ctime.tv_sec = 0;
         self.inode.ctime.tv_nsec = 0;
         self.inode.atime.tv_sec = 0;
