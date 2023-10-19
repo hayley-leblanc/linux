@@ -481,7 +481,7 @@ impl<'a> InodeWrapper<'a, Clean, Alloc, RegInode> {
         self,
         bytes_written: u64,
         current_offset: u64,
-        _page: &DataPageWrapper<'a, Clean, Written>,
+        _pages: &DataPageListWrapper<Clean, Written>,
     ) -> (u64, InodeWrapper<'a, Clean, Alloc, RegInode>) {
         let total_size = bytes_written + current_offset;
         if self.inode.size < total_size {

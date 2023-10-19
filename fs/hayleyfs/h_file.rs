@@ -378,9 +378,9 @@ fn iterator_write<'a>(
             page_list
         }
     };
-    let page_list = page_list.write_pages(sbi, reader, count, offset)?.fence();
-
-    Ok((page_list, count))
+    let (bytes_written, page_list) = page_list.write_pages(sbi, reader, count, offset)?;
+    let page_list = page_list.fence();
+    Ok((page_list, bytes_written))
 }
 
 #[allow(dead_code)]

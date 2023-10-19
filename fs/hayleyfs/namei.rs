@@ -206,7 +206,7 @@ impl inode::Operations for InodeOps {
             let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, mode)?;
             new_inode.set_vfs_inode(vfs_inode)?;
             let pi_info = new_inode.get_inode_info()?;
-            pi_info.insert(&new_page)?;
+            pi_info.insert_pages(&new_page, new_page.len()?)?;
             unsafe { insert_vfs_inode(vfs_inode, dentry)? };
             Ok(())
         } else {
@@ -1732,7 +1732,7 @@ fn hayleyfs_symlink<'a>(
 ) -> Result<(
     InodeWrapper<'a, Clean, Complete, RegInode>,
     DentryWrapper<'a, Clean, Complete>,
-    DataPageWrapper<'a, Clean, Written>,
+    DataPageListWrapper<Clean, Written>,
 )> {
     // obtain and allocate a new persistent dentry
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
@@ -1746,16 +1746,24 @@ fn hayleyfs_symlink<'a>(
     let pi = InodeWrapper::get_free_reg_inode_by_ino(sbi, pi)?;
 
     let pi = pi.allocate_symlink_inode(dir, mode)?.flush().fence();
+    let pi_info = pi.get_inode_info()?;
     sbi.inc_inodes_in_use();
 
     // allocate a page for the symlink
-    let page = DataPageWrapper::alloc_data_page(sbi, 0)?.flush().fence();
+    let pages = DataPageListWrapper::get_data_page_list(pi_info, 1, 0)?;
+    let pages = if let Err(pages) = pages {
+        // we expect an error because the inode shouldn't have any pages yet
+        pages.allocate_pages(sbi, pi_info, 1, 0)?.fence()
+    } else {
+        pr_info!("ERROR: new symlink file has pages\n");
+        return Err(EINVAL);
+    };
+    // let page = ;
     sbi.inc_blocks_in_use();
 
     // set data page backpointer - at this point, inode and page are still orphaned
-    let page = page.set_data_page_backpointer(&pi).flush().fence();
-    // let pi_info = pi.get_inode_info()?;
-    // pi_info.insert(&page)?;
+    // let page = pages.set_data_page_backpointer(&pi).flush().fence();
+    let pages = pages.set_backpointers(sbi, pi_info.get_ino())?.fence();
 
     // need to set file size also which will require writing to the page I think
 
@@ -1766,19 +1774,19 @@ fn hayleyfs_symlink<'a>(
     let mut name_reader =
         unsafe { UserSlicePtr::new(symname as *mut core::ffi::c_void, name.len()).reader() };
     let name_len: u64 = name_reader.len().try_into()?;
-    let (bytes_written, page) = page.write_to_page(sbi, &mut name_reader, 0, name_len)?;
-    let page = page.fence();
+    let (bytes_written, pages) = pages.write_pages(sbi, &mut name_reader, 0, name_len)?;
+    let pages = pages.fence();
 
     // set the file size. we'll create the VFS inode based on the persistent inode after
     // this method returns
-    let (_size, pi) = pi.set_size(bytes_written, 0, &page);
+    let (_size, pi) = pi.set_size(bytes_written, 0, &pages);
 
     let (pd, pi) = pd.set_file_ino(pi);
     let pd = pd.flush().fence();
     let parent_inode_info = parent_inode.get_inode_info()?;
     pd.index(&parent_inode_info)?;
 
-    Ok((pi, pd, page))
+    Ok((pi, pd, pages))
 }
 
 fn get_free_dentry<'a, S: Initialized>(

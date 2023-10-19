@@ -1743,7 +1743,7 @@ impl DataPageListWrapper<Clean, Writeable> {
         reader: &mut impl IoBufferReader,
         mut len: u64,
         offset: u64, // the raw offset provided by the user
-    ) -> Result<DataPageListWrapper<InFlight, Written>> {
+    ) -> Result<(u64, DataPageListWrapper<InFlight, Written>)> {
         // this is the value of the `offset` field of the page that
         // we want to write to
         let mut page_offset = page_offset(offset)?;
@@ -1779,12 +1779,15 @@ impl DataPageListWrapper<Clean, Writeable> {
             offset_within_page = 0;
         }
 
-        Ok(DataPageListWrapper {
-            state: PhantomData,
-            op: PhantomData,
-            offset: self.offset,
-            page_nos: self.page_nos,
-        })
+        Ok((
+            bytes_written,
+            DataPageListWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                offset: self.offset,
+                page_nos: self.page_nos,
+            },
+        ))
     }
 }
 
