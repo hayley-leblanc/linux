@@ -1597,7 +1597,6 @@ fn hayleyfs_unlink<'a>(
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
         parent_inode_info.delete_dentry(dentry_info)?;
-
         let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
         inode.update_ctime();
         let pi = pi.update_ctime(inode.get_ctime()).flush().fence();
@@ -1622,7 +1621,6 @@ fn hayleyfs_unlink<'a>(
             let parent_page = parent_page.dealloc().flush().fence();
             sbi.page_allocator.dealloc_dir_page(&parent_page)?;
         }
-
         let pi = finish_unlink(sbi, pi)?;
 
         end_timing!(UnlinkFullDecLink, unlink_full_declink);

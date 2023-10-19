@@ -461,8 +461,15 @@ pub(crate) fn hayleyfs_readdir(
     }
     for dentry in dentries {
         let name = dentry.get_name_as_cstr();
-        // unsafe { CStr::from_char_ptr(dentry.get_name().as_ptr() as *const core::ffi::c_char) };
-        let file_type = bindings::DT_REG; // TODO: get the actual type
+        let file_type = match sbi.check_inode_type_by_inode_num(dentry.get_ino())? {
+            InodeType::REG => bindings::DT_REG,
+            InodeType::DIR => bindings::DT_DIR,
+            InodeType::SYMLINK => bindings::DT_LNK,
+            _ => {
+                pr_info!("ERROR: unrecognized inode type\n");
+                return Err(EINVAL);
+            }
+        };
         let result = unsafe {
             bindings::dir_emit(
                 ctx,

@@ -333,6 +333,11 @@ impl SbInfo {
         Ok(pi.get_type())
     }
 
+    pub(crate) fn check_inode_type_by_inode_num(&self, ino: InodeNum) -> Result<InodeType> {
+        let pi = self.get_inode_by_ino(ino)?;
+        Ok(pi.get_type())
+    }
+
     // TODO: this should be in h_inode.rs
     pub(crate) fn get_init_reg_inode_by_vfs_inode<'a>(
         &self,
