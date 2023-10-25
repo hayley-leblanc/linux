@@ -1309,7 +1309,7 @@ fn rename_overwrite_deallocation_file_inode<'a>(
     sbi: &SbInfo,
     src_dentry: DentryWrapper<'a, Clean, ClearIno>,
     dst_dentry: DentryWrapper<'a, Clean, Complete>,
-    _new_pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
+    new_pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
     old_dir: InodeWrapper<'a, Clean, Start, DirInode>,
     old_name: &[u8; MAX_FILENAME_LEN],
 ) -> Result<(
@@ -1332,6 +1332,9 @@ fn rename_overwrite_deallocation_file_inode<'a>(
     // finish deallocating the new inode and its pages
     // TODO: this should be done in evict_inode, right?
     // finish_unlink(sbi, new_pi)?;
+    unsafe {
+        bindings::drop_nlink(new_pi.get_vfs_inode()?);
+    }
 
     Ok((src_dentry, dst_dentry))
 }
@@ -1633,6 +1636,9 @@ fn hayleyfs_unlink<'a>(
         // decrement the inode's link count
         // according to Alloy we can share the fence with dentry deallocation
         let pi = pi.dec_link_count(&pd)?.flush();
+        unsafe {
+            bindings::drop_nlink(inode.get_inner());
+        }
 
         // deallocate the dentry
         let pd = pd.dealloc_dentry().flush();
@@ -1673,21 +1679,14 @@ fn iterator_finish_unlink<'a>(
     sbi: &'a SbInfo,
     pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
 ) -> Result<InodeWrapper<'a, Clean, Complete, RegInode>> {
-    let inode = pi.get_vfs_inode()?;
     let result = pi.try_complete_unlink_iterator()?;
     if let Ok(result) = result {
-        // there are still links left - just decrement VFS link count and return
-        unsafe {
-            bindings::drop_nlink(inode);
-        }
+        // there are still links left
         Ok(result)
     } else if let Err((pi, pages)) = result {
         // no links left - we need to deallocate all of the pages
         let pages = pages.unmap(sbi)?.fence().dealloc(sbi)?.fence().mark_free();
         sbi.page_allocator.dealloc_data_page_list(&pages)?;
-        unsafe {
-            bindings::drop_nlink(inode);
-        }
         let pi = pi.iterator_dealloc(pages).flush().fence();
         Ok(pi)
     } else {
@@ -1699,12 +1698,8 @@ fn runtime_finish_unlink<'a>(
     sbi: &'a SbInfo,
     pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
 ) -> Result<InodeWrapper<'a, Clean, Complete, RegInode>> {
-    let inode = pi.get_vfs_inode()?;
     let result = pi.try_complete_unlink_runtime(sbi)?;
     if let Ok(result) = result {
-        unsafe {
-            bindings::drop_nlink(inode);
-        }
         Ok(result)
     } else if let Err((pi, mut pages)) = result {
         // go through each page and deallocate it
@@ -1734,10 +1729,6 @@ fn runtime_finish_unlink<'a>(
             sbi.page_allocator.dealloc_data_page(page)?;
         }
         let freed_pages = DataPageWrapper::mark_pages_free(deallocated)?;
-
-        unsafe {
-            bindings::drop_nlink(inode);
-        }
 
         // pages are now deallocated and we can use the freed pages vector
         // to deallocate the inode.

@@ -503,9 +503,9 @@ impl<'a> InodeWrapper<'a, Clean, Alloc, RegInode> {
 }
 
 impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
-    pub(crate) fn get_unlinked_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
+    pub(crate) fn get_unlinked_ino(sbi: &'a SbInfo, ino: InodeNum, inode: *mut bindings::inode) -> Result<Self> {
         let pi = unsafe { sbi.get_inode_by_ino_mut(ino)? };
-        if pi.get_link_count() != 0 || (pi.get_type() != InodeType::REG || pi.get_type() != InodeType::SYMLINK) || pi.is_free() {
+        if pi.get_link_count() != 0 || (pi.get_type() != InodeType::REG && pi.get_type() != InodeType::SYMLINK) || pi.is_free() {
             pr_info!("ERROR: inode {:?} is not unlinked\n", ino);
             pr_info!("inode {:?}: {:?}\n", ino, pi);
             Err(EINVAL)
@@ -514,7 +514,7 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
                 state: PhantomData,
                 op: PhantomData,
                 inode_type: PhantomData,
-                vfs_inode: None,
+                vfs_inode: Some(inode),
                 ino,
                 inode: pi,
             })

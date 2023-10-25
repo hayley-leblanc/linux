@@ -247,9 +247,8 @@ impl fs::Type for HayleyFs {
             start_timing!(evict_reg_inode_pages);
             if link_count == 0 {
                 // free the inode and its pages
-
-                // TODO: handle error
-                let pi = InodeWrapper::get_unlinked_ino(sbi, ino).unwrap();
+                // TODO: handle errors
+                let pi = InodeWrapper::get_unlinked_ino(sbi, ino, inode.get_inner()).unwrap();
                 let _pi = finish_unlink(sbi, pi).unwrap();
 
                 end_timing!(EvictRegInodePages, evict_reg_inode_pages);

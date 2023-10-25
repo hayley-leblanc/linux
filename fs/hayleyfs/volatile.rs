@@ -445,7 +445,7 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
     }
 
     fn lookup_dentry(&self, name: &CStr) -> Result<Option<DentryInfo>> {
-        if name.len() > MAX_FILENAME_LEN {
+        if name.len() >= MAX_FILENAME_LEN {
             return Err(ENAMETOOLONG);
         }
         let dentries = Arc::clone(&self.dentries);
