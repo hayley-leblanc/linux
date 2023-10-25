@@ -941,14 +941,10 @@ impl InodeAllocator for RBInodeAllocator {
                     return Err(EINVAL);
                 }
             }
-        } else {
-            // if only the root node is allocated, just put all of the other 
-            // inodes in the allocator
-            i = start.try_into()?;
-        }
+        } 
         // add all remaining inodes to the allocator
-        if i < num_inodes.try_into()? {
-            for j in i..num_inodes.try_into()? {
+        if cur_ino < num_inodes.try_into()? {
+            for j in cur_ino..num_inodes.try_into()? {
                 rb.try_insert(j.try_into()?, ())?;
             }
         }

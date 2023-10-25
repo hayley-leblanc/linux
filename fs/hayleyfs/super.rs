@@ -426,6 +426,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         }
     }
     // pr_info!("allocated pages: {:?}\n", alloc_page_vec);
+    // pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
 
     // 4. scan the directory entries in live pages to determine which inodes are live
 

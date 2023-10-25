@@ -136,17 +136,10 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                     return Err(EINVAL);
                 }
             }
-        } else {
-            // if no pages are allocated, make sure to start the allocator
-            // from the correct place
-            i = start.try_into()?;
         }
-
-        // add all remaining pages to the allocator
-        let dev_pages_usize: usize = dev_pages.try_into()?;
-        if i < dev_pages_usize {
-            for current_page in i..dev_pages_usize {
-                if current_page == (current_cpu_start + pages_per_cpu).try_into()? {
+        if current_page < dev_pages {
+            for current in current_page..dev_pages {
+                if current == (current_cpu_start + pages_per_cpu).try_into()? {
                     let free_list = PageFreeList {
                         free_pages: pages_per_cpu,
                         list: rb_tree,
@@ -155,7 +148,7 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                     rb_tree = RBTree::new();
                     current_cpu_start += pages_per_cpu;
                 }
-                rb_tree.try_insert(current_page.try_into()?, ())?;
+                rb_tree.try_insert(current.try_into()?, ())?;
             }
         }
 
@@ -434,6 +427,7 @@ impl PageHeader for DirPageHeader {
             let page_no = sbi.page_allocator.alloc_page()?;
             let ph = unsafe { unchecked_new_page_no_to_dir_header(sbi, page_no)? };
             ph.page_type = PageType::DIR;
+            pr_info!("allocated dir page {:?}\n", page_no);
             Ok((ph, page_no))
         }
     }
@@ -1105,10 +1099,6 @@ unsafe fn unchecked_new_page_no_to_data_header(
     let ph = page_desc_table.get_mut(page_index);
     match ph {
         Some(ph) => {
-            if page_no == 25605 {
-                let page_header_addr = ph as *mut PageDescriptor;
-                pr_info!("page header addr: {:?}\n", page_header_addr);
-            }
             let ph: &mut DataPageHeader = ph.try_into()?;
             Ok(ph)
         }
@@ -1663,6 +1653,11 @@ impl DataPageListWrapper<Clean, Start> {
         no_pages: usize,
         mut offset: u64,
     ) -> Result<DataPageListWrapper<InFlight, Alloc>> {
+        // pr_info!(
+        //     "allocating {:?} pages for inode {:?}\n",
+        //     no_pages,
+        //     pi_info.get_ino()
+        // );
         self.page_nos.try_reserve(no_pages)?;
         for _ in 0..no_pages {
             let (ph, page_no) = unsafe { DataPageHeader::alloc(sbi, Some(offset))? };
