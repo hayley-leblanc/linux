@@ -63,6 +63,7 @@ impl file::Operations for FileOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
         unsafe { bindings::inode_lock(inode.get_inner()) };
+        // pr_info!("writing to inode {:?}\n", inode.i_ino());
         let result = hayleyfs_write(sbi, inode, reader, offset);
         unsafe { bindings::inode_unlock(inode.get_inner()) };
         unsafe { bindings::sb_end_write(sb) };
@@ -151,8 +152,6 @@ fn hayleyfs_write<'a>(
 
     let pi_info = pi.get_inode_info()?;
     end_timing!(WriteInodeLookup, write_inode_lookup);
-
-    // TODO: update timestamp
 
     match sbi.mount_opts.write_type {
         Some(WriteType::Iterator) | None => {
@@ -396,6 +395,7 @@ fn hayleyfs_read(
     let mut count: u64 = writer.len().try_into()?;
     init_timing!(read_inode_lookup);
     start_timing!(read_inode_lookup);
+    // pr_info!("read\n");
     let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     inode.update_atime();
     let pi = pi.update_atime(inode.get_atime()).flush().fence();

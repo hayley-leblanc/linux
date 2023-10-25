@@ -200,6 +200,7 @@ impl fs::Type for HayleyFs {
         let atime = unsafe { bindings::current_time(inode.get_inner()) };
         match inode_type {
             InodeType::REG => {
+                // pr_info!("evict reg\n");
                 let inode = sbi
                     .get_init_reg_inode_by_vfs_inode(inode.get_inner())
                     .unwrap();
@@ -212,6 +213,7 @@ impl fs::Type for HayleyFs {
                 inode.update_atime_consume(atime);
             }
             InodeType::SYMLINK => {
+                // pr_info!("evict symlink\n");
                 let inode = sbi
                     .get_init_reg_inode_by_vfs_inode(inode.get_inner())
                     .unwrap();
@@ -237,25 +239,37 @@ impl fs::Type for HayleyFs {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
+        let link_count = unsafe { (*inode.get_inner()).__bindgen_anon_1.i_nlink };
+
         // store the inode's private page list in the global tree so that we
         // can access it later if the inode comes back into the cache
         let mode = unsafe { (*inode.get_inner()).i_mode };
         if unsafe { bindings::S_ISREG(mode.try_into().unwrap()) } {
             init_timing!(evict_reg_inode_pages);
             start_timing!(evict_reg_inode_pages);
-            // using from_foreign should make sure the info structure is dropped here
-            let inode_info = unsafe {
-                <Box<HayleyFsRegInodeInfo> as ForeignOwnable>::from_foreign(
-                    (*inode.get_inner()).i_private,
-                )
-            };
-            unsafe { (*inode.get_inner()).i_private = core::ptr::null_mut() };
-            let pages = inode_info.get_all_pages().unwrap();
-            sbi.ino_data_page_tree.insert_inode(ino, pages).unwrap();
-            end_timing!(EvictRegInodePages, evict_reg_inode_pages);
+            if link_count == 0 {
+                // free the inode and its pages
+
+                // TODO: handle error
+                let pi = InodeWrapper::get_unlinked_ino(sbi, ino).unwrap();
+                let _pi = finish_unlink(sbi, pi).unwrap();
+
+                end_timing!(EvictRegInodePages, evict_reg_inode_pages);
+            } else {
+                // using from_foreign should make sure the info structure is dropped here
+                let inode_info = unsafe {
+                    <Box<HayleyFsRegInodeInfo> as ForeignOwnable>::from_foreign(
+                        (*inode.get_inner()).i_private,
+                    )
+                };
+                unsafe { (*inode.get_inner()).i_private = core::ptr::null_mut() };
+                let pages = inode_info.get_all_pages().unwrap();
+                sbi.ino_data_page_tree.insert_inode(ino, pages).unwrap();
+            }
         } else if unsafe { bindings::S_ISDIR(mode.try_into().unwrap()) } {
             init_timing!(evict_dir_inode_pages);
             start_timing!(evict_dir_inode_pages);
+            // TODO: handle removed open directories?
             // using from_foreign should make sure the info structure is dropped here
             let inode_info = unsafe {
                 <Box<HayleyFsDirInodeInfo> as ForeignOwnable>::from_foreign(
@@ -268,8 +282,6 @@ impl fs::Type for HayleyFs {
             end_timing!(EvictDirInodePages, evict_dir_inode_pages);
         }
         // TODO: handle other cases
-
-        let link_count = unsafe { (*inode.get_inner()).__bindgen_anon_1.i_nlink };
 
         unsafe { bindings::clear_inode(inode.get_inner()) };
 
@@ -425,8 +437,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             alloc_page_vec.try_push(index + sbi.get_data_pages_start_page())?;
         }
     }
-    // pr_info!("allocated pages: {:?}\n", alloc_page_vec);
-    // pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
+    pr_info!("allocated pages: {:?}\n", alloc_page_vec);
+    pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
 
     // 4. scan the directory entries in live pages to determine which inodes are live
 
@@ -468,6 +480,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
 
         processed_live_inodes.try_insert(live_inode, ())?;
     }
+
+    pr_info!("data start page {:?}\n", sbi.get_data_pages_start_page());
 
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
         alloc_page_vec,

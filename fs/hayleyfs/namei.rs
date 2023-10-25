@@ -525,6 +525,7 @@ fn hayleyfs_link<'a>(
     // first, obtain the inode that's getting the link from old_dentry
     // TODO: move unsafe cast to the wrapper
     let inode: &mut fs::INode = unsafe { &mut *old_dentry.d_inode().cast() };
+    // pr_info!("link\n");
     let target_inode = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     inode.update_ctime();
     let target_inode = target_inode.update_ctime(inode.get_atime()).flush().fence();
@@ -813,6 +814,7 @@ fn reg_inode_rename<'a>(
     match new_dentry_info {
         Some(new_dentry_info) => {
             // overwriting a dentry
+            // pr_info!("rename 1\n");
             let new_pi = sbi.get_init_reg_inode_by_vfs_inode(new_inode.get_inner())?;
             new_inode.update_ctime();
             let new_pi = new_pi.update_ctime(new_inode.get_ctime()).flush().fence();
@@ -843,6 +845,7 @@ fn reg_inode_rename<'a>(
         }
         None => {
             // creating a new dentry
+            // pr_info!("rename 2\n");
             let pi = sbi.get_init_reg_inode_by_vfs_inode(old_inode.get_inner())?;
             old_inode.update_ctime();
             let pi = pi.update_ctime(old_inode.get_ctime()).flush().fence();
@@ -1306,7 +1309,7 @@ fn rename_overwrite_deallocation_file_inode<'a>(
     sbi: &SbInfo,
     src_dentry: DentryWrapper<'a, Clean, ClearIno>,
     dst_dentry: DentryWrapper<'a, Clean, Complete>,
-    new_pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
+    _new_pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
     old_dir: InodeWrapper<'a, Clean, Start, DirInode>,
     old_name: &[u8; MAX_FILENAME_LEN],
 ) -> Result<(
@@ -1327,7 +1330,8 @@ fn rename_overwrite_deallocation_file_inode<'a>(
     // TODO is this still right?
     old_parent_inode_info.atomic_add_and_delete_dentry(&dst_dentry, old_name)?;
     // finish deallocating the new inode and its pages
-    finish_unlink(sbi, new_pi)?;
+    // TODO: this should be done in evict_inode, right?
+    // finish_unlink(sbi, new_pi)?;
 
     Ok((src_dentry, dst_dentry))
 }
@@ -1336,7 +1340,7 @@ fn rename_overwrite_deallocation_file_inode_crossdir<'a>(
     sbi: &SbInfo,
     src_dentry: DentryWrapper<'a, Clean, ClearIno>,
     dst_dentry: DentryWrapper<'a, Clean, Complete>,
-    new_pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
+    _new_pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
     old_dir: InodeWrapper<'a, Clean, Start, DirInode>,
     new_dir: InodeWrapper<'a, Clean, Start, DirInode>,
     old_name: &[u8; MAX_FILENAME_LEN],
@@ -1361,8 +1365,10 @@ fn rename_overwrite_deallocation_file_inode_crossdir<'a>(
         new_parent_inode_info,
         &dst_dentry,
         old_name,
-    )?; // finish deallocating the new inode and its pages
-    finish_unlink(sbi, new_pi)?;
+    )?;
+    // finish deallocating the new inode and its pages
+    // TODO: this should be done in evict_inode, right?
+    // finish_unlink(sbi, new_pi)?;
 
     Ok((src_dentry, dst_dentry))
 }
@@ -1583,7 +1589,7 @@ fn hayleyfs_unlink<'a>(
     dir: &mut fs::INode,
     dentry: &fs::DEntry,
 ) -> Result<(
-    InodeWrapper<'a, Clean, Complete, RegInode>,
+    InodeWrapper<'a, Clean, DecLink, RegInode>,
     DentryWrapper<'a, Clean, Free>,
 )> {
     init_timing!(unlink_full_declink);
@@ -1616,6 +1622,7 @@ fn hayleyfs_unlink<'a>(
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
         parent_inode_info.delete_dentry(dentry_info)?;
+        // pr_info!("unlink\n");
         let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
         inode.update_ctime();
         let pi = pi.update_ctime(inode.get_ctime()).flush().fence();
@@ -1640,7 +1647,7 @@ fn hayleyfs_unlink<'a>(
             let parent_page = parent_page.dealloc().flush().fence();
             sbi.page_allocator.dealloc_dir_page(&parent_page)?;
         }
-        let pi = finish_unlink(sbi, pi)?;
+        // let pi = finish_unlink(sbi, pi)?;
 
         end_timing!(UnlinkFullDecLink, unlink_full_declink);
 
@@ -1650,7 +1657,7 @@ fn hayleyfs_unlink<'a>(
     }
 }
 
-fn finish_unlink<'a>(
+pub(crate) fn finish_unlink<'a>(
     sbi: &'a SbInfo,
     pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
 ) -> Result<InodeWrapper<'a, Clean, Complete, RegInode>> {

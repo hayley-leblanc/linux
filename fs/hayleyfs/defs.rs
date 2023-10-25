@@ -353,12 +353,16 @@ impl SbInfo {
         let pi = unsafe { self.get_inode_by_ino_mut(ino)? };
         if pi.get_type() != InodeType::REG && pi.get_type() != InodeType::SYMLINK {
             pr_info!("ERROR: inode {:?} is not a regular inode\n", ino);
+            pr_info!("{:?}\n", pi);
             return Err(EPERM);
         }
         if pi.is_initialized() {
             Ok(InodeWrapper::wrap_inode(inode, pi))
         } else {
-            pr_info!("ERROR: inode {:?} is not initialized\n", ino);
+            pr_info!(
+                "ERROR: inode {:?} is not initialized in get_init_reg\n",
+                ino
+            );
             Err(EPERM)
         }
     }
@@ -381,7 +385,10 @@ impl SbInfo {
         if pi.is_initialized() {
             Ok(InodeWrapper::wrap_inode(inode, pi))
         } else {
-            pr_info!("ERROR: inode {:?} is not initialized\n", ino);
+            pr_info!(
+                "ERROR: inode {:?} is not initialized in get_init_dir\n",
+                ino
+            );
             Err(EPERM)
         }
     }

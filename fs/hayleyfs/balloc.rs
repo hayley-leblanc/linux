@@ -183,6 +183,7 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                 // pr_info!("allocating page {:?} on cpu {:?}\n", page, cpu);
                 free_list.list.remove(&page);
                 free_list.free_pages -= 1;
+                // pr_info!("allocated page {:?}\n", page);
                 Ok(page)
             } else {
                 // drop the free_list lock so that we can't deadlock with other processes that might

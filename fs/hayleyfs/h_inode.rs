@@ -175,7 +175,7 @@ impl HayleyFsInode {
     // TODO: update as fields are added
     pub(crate) fn is_initialized(&self) -> bool {
         self.inode_type != InodeType::NONE && 
-        self.link_count != 0 &&
+        // self.link_count != 0 && // link count may be 0 if the file has been completely unlinked but is still open
         self.mode != 0 &&
         // uid/gid == 0 is root
         // TODO: check timestamps?
@@ -503,6 +503,24 @@ impl<'a> InodeWrapper<'a, Clean, Alloc, RegInode> {
 }
 
 impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
+    pub(crate) fn get_unlinked_ino(sbi: &'a SbInfo, ino: InodeNum) -> Result<Self> {
+        let pi = unsafe { sbi.get_inode_by_ino_mut(ino)? };
+        if pi.get_link_count() != 0 || (pi.get_type() != InodeType::REG || pi.get_type() != InodeType::SYMLINK) || pi.is_free() {
+            pr_info!("ERROR: inode {:?} is not unlinked\n", ino);
+            pr_info!("inode {:?}: {:?}\n", ino, pi);
+            Err(EINVAL)
+        } else {
+            Ok(InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                vfs_inode: None,
+                ino,
+                inode: pi,
+            })
+        }
+    }
+
     // this is horrifying
     pub(crate) fn try_complete_unlink_runtime(self, sbi: &'a SbInfo) -> 
         Result<core::result::Result<InodeWrapper<'a, Clean, Complete, RegInode>, (InodeWrapper<'a, Clean, Dealloc, RegInode>, Vec<DataPageWrapper<'a, Clean, ToUnmap>>)>> 
@@ -964,6 +982,7 @@ impl InodeAllocator for RBInodeAllocator {
             } 
             Some(ino) => *ino.0
         };
+        // pr_info!("allocated ino {:?}\n", ino);
         map.remove(&ino);
         Ok(ino)
     }
@@ -972,6 +991,7 @@ impl InodeAllocator for RBInodeAllocator {
         let map = Arc::clone(&self.map);
         let mut map = map.lock();
         let res = map.try_insert(ino, ())?;
+        // pr_info!("deallocated ino {:?}\n", ino);
         if res.is_some() {
             pr_info!("ERROR: inode {:?} was deallocated but is already in allocator\n", ino);
             Err(EINVAL)
