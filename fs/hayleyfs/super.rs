@@ -206,12 +206,10 @@ impl fs::Type for HayleyFs {
                     .unwrap();
                 inode.update_atime_consume(atime);
             }
-            InodeType::DIR => {
-                let inode = sbi
-                    .get_init_dir_inode_by_vfs_inode(inode.get_inner())
-                    .unwrap();
-                inode.update_atime_consume(atime);
-            }
+            InodeType::DIR => match sbi.get_init_dir_inode_by_vfs_inode(inode.get_inner()) {
+                Ok(inode) => inode.update_atime_consume(atime),
+                Err(_) => {}
+            },
             InodeType::SYMLINK => {
                 // pr_info!("evict symlink\n");
                 let inode = sbi
@@ -269,16 +267,25 @@ impl fs::Type for HayleyFs {
         } else if unsafe { bindings::S_ISDIR(mode.try_into().unwrap()) } {
             init_timing!(evict_dir_inode_pages);
             start_timing!(evict_dir_inode_pages);
-            // TODO: handle removed open directories?
-            // using from_foreign should make sure the info structure is dropped here
-            let inode_info = unsafe {
-                <Box<HayleyFsDirInodeInfo> as ForeignOwnable>::from_foreign(
-                    (*inode.get_inner()).i_private,
-                )
-            };
-            unsafe { (*inode.get_inner()).i_private = core::ptr::null_mut() };
-            let pages = inode_info.get_all_pages().unwrap();
-            sbi.ino_dir_page_tree.insert_inode(ino, pages).unwrap();
+            if sbi.inodes_to_free.check_and_remove(ino) {
+                // pr_info!("{:?} has already been freed\n", ino);
+                let pi = sbi
+                    .get_init_dir_inode_by_vfs_inode(inode.get_inner())
+                    .unwrap();
+                let pi = pi.set_unmap_page_state().unwrap();
+                let _pi = rmdir_delete_pages(sbi, pi).unwrap();
+            } else {
+                // TODO: handle removed open directories?
+                // using from_foreign should make sure the info structure is dropped here
+                let inode_info = unsafe {
+                    <Box<HayleyFsDirInodeInfo> as ForeignOwnable>::from_foreign(
+                        (*inode.get_inner()).i_private,
+                    )
+                };
+                unsafe { (*inode.get_inner()).i_private = core::ptr::null_mut() };
+                let pages = inode_info.get_all_pages().unwrap();
+                sbi.ino_dir_page_tree.insert_inode(ino, pages).unwrap();
+            }
             end_timing!(EvictDirInodePages, evict_dir_inode_pages);
         }
         // TODO: handle other cases
@@ -437,8 +444,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             alloc_page_vec.try_push(index + sbi.get_data_pages_start_page())?;
         }
     }
-    pr_info!("allocated pages: {:?}\n", alloc_page_vec);
-    pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
+    // pr_info!("allocated pages: {:?}\n", alloc_page_vec);
+    // pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
 
     // 4. scan the directory entries in live pages to determine which inodes are live
 

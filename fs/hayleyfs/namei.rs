@@ -38,7 +38,6 @@ impl inode::Operations for InodeOps {
         // TODO: it's probably not safe to just grab s_fs_info and
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
-
         let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
         let parent_inode_info = parent_inode.get_inode_info()?;
         move_dir_inode_tree_to_map(sbi, &parent_inode_info)?;
@@ -613,6 +612,8 @@ fn hayleyfs_rmdir<'a>(
             // let parent_pi = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
             let parent_inode = parent_inode.dec_link_count(&pd)?.flush().fence();
 
+            let pi = pi.dec_link_count(&pd)?.flush().fence();
+
             let pi = pi.set_unmap_page_state()?;
 
             let pi = rmdir_delete_pages(sbi, pi)?;
@@ -643,7 +644,7 @@ fn hayleyfs_rmdir<'a>(
     }
 }
 
-fn rmdir_delete_pages<'a>(
+pub(crate) fn rmdir_delete_pages<'a>(
     sbi: &'a SbInfo,
     // delete_dir_info: &HayleyFsDirInodeInfo,
     pi: InodeWrapper<'a, Clean, UnmapPages, DirInode>,
@@ -735,7 +736,6 @@ fn hayleyfs_rename<'a>(
     DentryWrapper<'a, Clean, Complete>,
 )> {
     let old_name = old_dentry.d_name();
-
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(old_dir.get_inner())?;
     old_dir.update_ctime_and_mtime();
     let parent_inode = parent_inode
@@ -1367,8 +1367,6 @@ fn rename_overwrite_deallocation_file_inode_crossdir<'a>(
         old_name,
     )?;
     // finish deallocating the new inode and its pages
-    // TODO: this should be done in evict_inode, right?
-    // finish_unlink(sbi, new_pi)?;
 
     Ok((src_dentry, dst_dentry))
 }
@@ -1389,10 +1387,12 @@ fn rename_overwrite_deallocation_dir_inode_single_dir<'a>(
     unsafe {
         bindings::drop_nlink(old_dir.get_vfs_inode()?);
     }
+    let new_pi = new_pi.dec_link_count(&src_dentry)?.flush().fence();
     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
     // let delete_dir_info = new_pi.get_inode_info()?; // TODO: this will probably fail
-    let new_pi = new_pi.set_unmap_page_state()?;
-    let _new_pi = rmdir_delete_pages(sbi, new_pi)?;
+    sbi.inodes_to_free.insert(new_pi.get_ino())?;
+    // let new_pi = new_pi.set_unmap_page_state()?;
+    // let _new_pi = rmdir_delete_pages(sbi, new_pi)?;
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
     let old_parent_inode_info = old_dir.get_inode_info()?;
@@ -1427,10 +1427,12 @@ fn rename_overwrite_deallocation_dir_inode_crossdir<'a>(
     unsafe {
         bindings::drop_nlink(old_dir.get_vfs_inode()?);
     }
+    let new_pi = new_pi.dec_link_count(&src_dentry)?.flush().fence();
     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
     // let delete_dir_info = new_pi.get_inode_info()?; // TODO: this will probably fail
-    let new_pi = new_pi.set_unmap_page_state()?;
-    let _new_pi = rmdir_delete_pages(sbi, new_pi)?;
+    sbi.inodes_to_free.insert(new_pi.get_ino())?;
+    // let new_pi = new_pi.set_unmap_page_state()?;
+    // let _new_pi = rmdir_delete_pages(sbi, new_pi)?;
     // if the page that the freed dentry belongs to is now empty, free it
     let parent_page = src_dentry.try_dealloc_parent_page(sbi);
     let old_parent_inode_info = old_dir.get_inode_info()?;

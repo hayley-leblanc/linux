@@ -610,3 +610,37 @@ pub(crate) fn move_dir_inode_tree_to_map(
     }
     Ok(())
 }
+
+pub(crate) struct InodeToFreeList {
+    list: Arc<Mutex<RBTree<InodeNum, ()>>>,
+}
+
+impl InodeToFreeList {
+    pub(crate) fn new() -> Result<Self> {
+        Ok(Self {
+            list: Arc::try_new(Mutex::new(RBTree::new()))?,
+        })
+    }
+
+    pub(crate) fn insert(&self, ino: InodeNum) -> Result<()> {
+        let list = Arc::clone(&self.list);
+        let mut list = list.lock();
+        list.try_insert(ino, ())?;
+        Ok(())
+    }
+
+    // looks up the given inode num and removes it if it is present
+    pub(crate) fn check_and_remove(&self, ino: InodeNum) -> bool {
+        let list = Arc::clone(&self.list);
+        let mut list = list.lock();
+        let val = list.remove(&ino);
+        val.is_some()
+    }
+
+    pub(crate) fn find(&self, ino: InodeNum) -> bool {
+        let list = Arc::clone(&self.list);
+        let list = list.lock();
+        let val = list.get(&ino);
+        val.is_some()
+    }
+}

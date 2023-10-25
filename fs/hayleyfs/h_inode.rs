@@ -658,11 +658,11 @@ impl<'a> InodeWrapper<'a, Clean, Dealloc, RegInode> {
     }
 }
 
-impl<'a> InodeWrapper<'a, Clean, Start, DirInode> {
+impl<'a, Op: DeleteDir> InodeWrapper<'a, Clean, Op, DirInode> {
     /// This function checks that an inode's link count is valid for removing pages and then
     /// puts it in a typestate that allows its pages to be unmapped and deallocated
     pub(crate) fn set_unmap_page_state(self) -> Result<InodeWrapper<'a, Clean, UnmapPages, DirInode>> {
-        if self.inode.link_count != 2 {
+        if self.inode.link_count > 1 {
             pr_info!("ERROR: invalid link count\n");
             Err(EINVAL)
         } else {
@@ -676,36 +676,6 @@ impl<'a> InodeWrapper<'a, Clean, Start, DirInode> {
             })
         }
     }
-
-    // // TODO: this is too general and not right
-    // pub(crate) fn check_rename_link_count(self, src_parent_info: &HayleyFsDirInodeInfo, old_inode_type: InodeType) -> InodeWrapper<'a, Clean, RenameLinkChecked, DirInode> {
-    //     // since there are no hard links between directories, checking if src parent and 
-    //     // self have the same inode should be sufficient to determine if they are 
-    //     // the same directory.
-    //     if self.get_ino() == src_parent_info.get_ino() || old_inode_type == InodeType::REG || old_inode_type == InodeType::SYMLINK {
-    //         InodeWrapper {
-    //             state: PhantomData,
-    //             op: PhantomData,
-    //             inode_type: PhantomData,
-    //             vfs_inode: self.vfs_inode,
-    //             ino: self.ino,
-    //             inode: self.inode,
-    //         }
-    //     } else {
-    //         // src and dst are not the same and we are renaming a directory
-    //         // TODO: but what if you are overwriting an existing directory? then link count
-    //         // should not increase
-    //         unsafe { self.inode.inc_link_count() };
-    //         InodeWrapper {
-    //             state: PhantomData,
-    //             op: PhantomData,
-    //             inode_type: PhantomData,
-    //             vfs_inode: self.vfs_inode,
-    //             ino: self.ino,
-    //             inode: self.inode,
-    //         }
-    //     }
-    // }
 }
 
 impl<'a> InodeWrapper<'a, Clean, UnmapPages, DirInode> {
@@ -715,7 +685,7 @@ impl<'a> InodeWrapper<'a, Clean, UnmapPages, DirInode> {
         self.inode.inode_type = InodeType::NONE;
         // link count should 2 for ./.. but we don't store those in durable PM, so it's safe 
         // to just clear the link count if it is in fact 2
-        assert!(self.inode.link_count == 2);
+        assert!(self.inode.link_count == 1);
         self.inode.mode = 0;
         self.inode.uid = 0;
         self.inode.gid = 0;
@@ -742,8 +712,8 @@ impl<'a> InodeWrapper<'a, Clean, UnmapPages, DirInode> {
 
     pub(crate) fn runtime_dealloc(self, _freed_pages: Vec<DirPageWrapper<'a, Clean, Free>>) -> InodeWrapper<'a, Dirty, Complete, DirInode> {
         self.inode.inode_type = InodeType::NONE;
-        // link count should 2 for ./.. but we don't store those in durable PM, so it's safe 
-        // to just clear the link count if it is in fact 2
+        // link count should 1 for . but we don't store . or .. in durable PM, so it's safe 
+        // to just clear the link count if it is in fact 1
         assert!(self.inode.link_count == 2);
         self.inode.mode = 0;
         self.inode.uid = 0;
@@ -982,7 +952,6 @@ impl InodeAllocator for RBInodeAllocator {
             } 
             Some(ino) => *ino.0
         };
-        // pr_info!("allocated ino {:?}\n", ino);
         map.remove(&ino);
         Ok(ino)
     }

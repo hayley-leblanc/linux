@@ -157,6 +157,8 @@ pub(crate) struct SbInfo {
     pub(crate) page_allocator: Option<PerCpuPageAllocator>,
     pub(crate) inode_allocator: Option<RBInodeAllocator>,
 
+    pub(crate) inodes_to_free: InodeToFreeList,
+
     pub(crate) mount_opts: HayleyfsParams,
 
     pub(crate) num_inodes: u64,
@@ -195,6 +197,7 @@ impl SbInfo {
             ino_dentry_tree: InoDentryTree::new().unwrap(),
             page_allocator: None,
             inode_allocator: None,
+            inodes_to_free: InodeToFreeList::new().unwrap(),
             // inode_allocator: InodeAllocator::new(ROOT_INO + 1).unwrap(),
             mount_opts: HayleyfsParams::default(),
             num_inodes: 0,
@@ -373,6 +376,9 @@ impl SbInfo {
     ) -> Result<InodeWrapper<'a, Clean, Start, DirInode>> {
         // TODO: use &fs::INode to avoid unsafely dereferencing the inode here
         let ino = unsafe { (*inode).i_ino };
+        if self.inodes_to_free.find(ino) {
+            return Err(ENOENT);
+        }
         // we don't use inode 0
         if ino >= self.num_inodes || ino == 0 {
             return Err(EINVAL);
@@ -380,6 +386,7 @@ impl SbInfo {
         let pi = unsafe { self.get_inode_by_ino_mut(ino)? };
         if pi.get_type() != InodeType::DIR {
             pr_info!("ERROR: inode {:?} is not a directory\n", ino);
+            pr_info!("pi: {:?}\n", pi);
             return Err(EPERM);
         }
         if pi.is_initialized() {

@@ -102,7 +102,7 @@ impl<'a> DentryWrapper<'a, Clean, Free> {
     /// CStr are guaranteed to have a `NUL` byte at the end, so we don't have to check
     /// for that.
     pub(crate) fn set_name(self, name: &CStr) -> Result<DentryWrapper<'a, Dirty, Alloc>> {
-        if name.len() > MAX_FILENAME_LEN {
+        if name.len() >= MAX_FILENAME_LEN {
             return Err(ENAMETOOLONG);
         }
         // copy only the number of bytes in the name

@@ -74,3 +74,7 @@ pub(crate) trait InvalidInode {}
 impl InvalidInode for DecLink {}
 impl InvalidInode for Free {}
 impl InvalidInode for Complete {} // TODO: this may not be safe. some Complete inodes are invalid but some aren't
+
+pub(crate) trait DeleteDir {}
+impl DeleteDir for DecLink {}
+impl DeleteDir for Start {}
