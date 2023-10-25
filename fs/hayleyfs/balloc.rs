@@ -427,7 +427,6 @@ impl PageHeader for DirPageHeader {
             let page_no = sbi.page_allocator.alloc_page()?;
             let ph = unsafe { unchecked_new_page_no_to_dir_header(sbi, page_no)? };
             ph.page_type = PageType::DIR;
-            pr_info!("allocated dir page {:?}\n", page_no);
             Ok((ph, page_no))
         }
     }
