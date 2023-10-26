@@ -1733,8 +1733,14 @@ impl DataPageListWrapper<Clean, Writeable> {
             };
 
             page_nos.try_push(data_page_info)?;
-            bytes += HAYLEYFS_PAGESIZE;
-            offset = page_offset + HAYLEYFS_PAGESIZE;
+            if offset % HAYLEYFS_PAGESIZE == 0 {
+                bytes += HAYLEYFS_PAGESIZE;
+                offset = page_offset + HAYLEYFS_PAGESIZE;
+            } else {
+                let bytes_in_page = HAYLEYFS_PAGESIZE - (offset % HAYLEYFS_PAGESIZE);
+                bytes += bytes_in_page;
+                offset += bytes_in_page;
+            }
         }
         Ok(Ok(Self {
             state: PhantomData,
