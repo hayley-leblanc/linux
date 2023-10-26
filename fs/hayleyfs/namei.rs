@@ -1390,7 +1390,12 @@ fn rename_overwrite_deallocation_dir_inode_single_dir<'a>(
     unsafe {
         bindings::drop_nlink(old_dir.get_vfs_inode()?);
     }
+    // TODO: should zero the link count here
     let new_pi = new_pi.dec_link_count(&src_dentry)?.flush().fence();
+    unsafe {
+        bindings::drop_nlink(new_pi.get_vfs_inode()?);
+        bindings::drop_nlink(new_pi.get_vfs_inode()?);
+    }
     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
     // let delete_dir_info = new_pi.get_inode_info()?; // TODO: this will probably fail
     sbi.inodes_to_free.insert(new_pi.get_ino())?;
@@ -1430,7 +1435,12 @@ fn rename_overwrite_deallocation_dir_inode_crossdir<'a>(
     unsafe {
         bindings::drop_nlink(old_dir.get_vfs_inode()?);
     }
+    // TODO: should zero the link count here
     let new_pi = new_pi.dec_link_count(&src_dentry)?.flush().fence();
+    unsafe {
+        bindings::drop_nlink(new_pi.get_vfs_inode()?);
+        bindings::drop_nlink(new_pi.get_vfs_inode()?);
+    }
     let src_dentry = src_dentry.dealloc_dentry().flush().fence();
     // let delete_dir_info = new_pi.get_inode_info()?; // TODO: this will probably fail
     sbi.inodes_to_free.insert(new_pi.get_ino())?;
