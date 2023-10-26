@@ -242,7 +242,9 @@ impl fs::Type for HayleyFs {
         // store the inode's private page list in the global tree so that we
         // can access it later if the inode comes back into the cache
         let mode = unsafe { (*inode.get_inner()).i_mode };
-        if unsafe { bindings::S_ISREG(mode.try_into().unwrap()) } {
+        if unsafe { bindings::S_ISREG(mode.try_into().unwrap()) }
+            || unsafe { bindings::S_ISLNK(mode.try_into().unwrap()) }
+        {
             init_timing!(evict_reg_inode_pages);
             start_timing!(evict_reg_inode_pages);
             if link_count == 0 {
