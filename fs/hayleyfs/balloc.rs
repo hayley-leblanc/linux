@@ -347,7 +347,7 @@ pub(crate) trait PageHeader {
     unsafe fn set_backpointer(&mut self, ino: InodeNum);
     unsafe fn alloc<'a>(sbi: &'a SbInfo, offset: Option<u64>) -> Result<(&mut Self, PageNum)>;
     unsafe fn unmap(&mut self);
-    unsafe fn dealloc(&mut self);
+    unsafe fn dealloc(&mut self, sbi: &SbInfo);
 }
 
 #[repr(C)]
@@ -428,6 +428,7 @@ impl PageHeader for DirPageHeader {
             let page_no = sbi.page_allocator.alloc_page()?;
             let ph = unsafe { unchecked_new_page_no_to_dir_header(sbi, page_no)? };
             ph.page_type = PageType::DIR;
+            sbi.inc_blocks_in_use();
             Ok((ph, page_no))
         }
     }
@@ -436,8 +437,9 @@ impl PageHeader for DirPageHeader {
         self.ino = 0;
     }
 
-    unsafe fn dealloc(&mut self) {
+    unsafe fn dealloc(&mut self, sbi: &SbInfo) {
         self.page_type = PageType::NONE;
+        sbi.dec_blocks_in_use();
     }
 }
 
@@ -713,9 +715,9 @@ impl<'a> DirPageWrapper<'a, Clean, ToUnmap> {
 impl<'a> DirPageWrapper<'a, Clean, ClearIno> {
     /// Returns in Dealloc state, not Free state, because it's still not safe
     /// to drop the pages until they are all persisted
-    pub(crate) fn dealloc(mut self) -> DirPageWrapper<'a, Dirty, Dealloc> {
+    pub(crate) fn dealloc(mut self, sbi: &SbInfo) -> DirPageWrapper<'a, Dirty, Dealloc> {
         unsafe {
-            self.page.dealloc();
+            self.page.dealloc(sbi);
         }
         let page = self.take_and_make_drop_safe();
         DirPageWrapper {
@@ -893,7 +895,7 @@ impl<'a> DirPageListWrapper<Clean, ClearIno> {
     pub(crate) fn dealloc(self, sbi: &SbInfo) -> Result<DirPageListWrapper<InFlight, Dealloc>> {
         for page in &self.pages {
             let ph = unsafe { page_no_to_dir_header(sbi, page.get_page_no())? };
-            unsafe { ph.dealloc() };
+            unsafe { ph.dealloc(sbi) };
             flush_buffer(ph, mem::size_of::<DirPageHeader>(), false);
         }
         Ok(DirPageListWrapper {
@@ -997,6 +999,7 @@ impl PageHeader for DataPageHeader {
         let ph = unsafe { unchecked_new_page_no_to_data_header(sbi, page_no)? };
         ph.page_type = PageType::DATA;
         ph.offset = offset.try_into()?;
+        sbi.inc_blocks_in_use();
         Ok((ph, page_no))
     }
 
@@ -1008,9 +1011,10 @@ impl PageHeader for DataPageHeader {
 
     /// Safety: Should only be called on the data page field of a DataPage wrapper
     /// with <Clean, ClearIno> typestate
-    unsafe fn dealloc(&mut self) {
+    unsafe fn dealloc(&mut self, sbi: &SbInfo) {
         self.page_type = PageType::NONE;
         self.offset = 0;
+        sbi.dec_blocks_in_use();
     }
 }
 
@@ -1314,9 +1318,9 @@ impl<'a, P: PageHeader> CheckedPage<'a, P> {
         }
     }
 
-    unsafe fn dealloc(&mut self) {
+    unsafe fn dealloc(&mut self, sbi: &SbInfo) {
         match &mut self.page {
-            Some(page) => unsafe { page.dealloc() },
+            Some(page) => unsafe { page.dealloc(sbi) },
             None => panic!("ERROR: wrapper does not have a page"),
         }
     }
@@ -1506,9 +1510,9 @@ impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
 impl<'a> DataPageWrapper<'a, Clean, ClearIno> {
     /// Returns in Dealloc state, not Free state, because it's still not safe
     /// to drop the pages until they are all persisted
-    pub(crate) fn dealloc(mut self) -> DataPageWrapper<'a, Dirty, Dealloc> {
+    pub(crate) fn dealloc(mut self, sbi: &SbInfo) -> DataPageWrapper<'a, Dirty, Dealloc> {
         unsafe {
-            self.page.dealloc();
+            self.page.dealloc(sbi);
         }
         let page = self.take_and_make_drop_safe();
         // page.drop_type = DropType::Panic; // TODO: is this necessary?
@@ -1833,7 +1837,7 @@ impl<'a> DataPageListWrapper<Clean, ClearIno> {
     pub(crate) fn dealloc(self, sbi: &SbInfo) -> Result<DataPageListWrapper<InFlight, Dealloc>> {
         for page in &self.page_nos {
             let ph = unsafe { page_no_to_data_header(sbi, page.get_page_no())? };
-            unsafe { ph.dealloc() };
+            unsafe { ph.dealloc(sbi) };
             flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
         }
         Ok(DataPageListWrapper {

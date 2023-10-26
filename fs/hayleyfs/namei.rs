@@ -630,7 +630,7 @@ fn hayleyfs_rmdir<'a>(
                 // that it is owned by parent_inode, which has been moved
                 let parent_inode_info = parent_inode.get_inode_info()?;
                 let parent_page = parent_page.unmap().flush().fence();
-                let parent_page = parent_page.dealloc().flush().fence();
+                let parent_page = parent_page.dealloc(sbi).flush().fence();
                 sbi.page_allocator.dealloc_dir_page(&parent_page)?;
                 parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
             }
@@ -713,7 +713,7 @@ fn runtime_rmdir_delete_pages<'a>(
     }
     let mut to_dealloc = fence_all_vecs!(to_dealloc);
     for page in to_dealloc.drain(..) {
-        let page = page.dealloc().flush();
+        let page = page.dealloc(sbi).flush();
         deallocated.try_push(page)?;
     }
     let deallocated = fence_all_vecs!(deallocated);
@@ -1323,7 +1323,7 @@ fn rename_overwrite_deallocation_file_inode<'a>(
     if let Ok(parent_page) = parent_page {
         old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
-        let parent_page = parent_page.dealloc().flush().fence();
+        let parent_page = parent_page.dealloc(sbi).flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
@@ -1359,7 +1359,7 @@ fn rename_overwrite_deallocation_file_inode_crossdir<'a>(
     if let Ok(parent_page) = parent_page {
         old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
-        let parent_page = parent_page.dealloc().flush().fence();
+        let parent_page = parent_page.dealloc(sbi).flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
@@ -1402,7 +1402,7 @@ fn rename_overwrite_deallocation_dir_inode_single_dir<'a>(
     if let Ok(parent_page) = parent_page {
         old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
-        let parent_page = parent_page.dealloc().flush().fence();
+        let parent_page = parent_page.dealloc(sbi).flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
@@ -1442,7 +1442,7 @@ fn rename_overwrite_deallocation_dir_inode_crossdir<'a>(
     if let Ok(parent_page) = parent_page {
         old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
-        let parent_page = parent_page.dealloc().flush().fence();
+        let parent_page = parent_page.dealloc(sbi).flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
@@ -1478,7 +1478,7 @@ fn rename_new_dentry_deallocation_dir_inode_single_dir<'a>(
     if let Ok(parent_page) = parent_page {
         old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
-        let parent_page = parent_page.dealloc().flush().fence();
+        let parent_page = parent_page.dealloc(sbi).flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
@@ -1515,7 +1515,7 @@ fn rename_new_dentry_deallocation_dir_inode_crossdir<'a>(
     if let Ok(parent_page) = parent_page {
         old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
-        let parent_page = parent_page.dealloc().flush().fence();
+        let parent_page = parent_page.dealloc(sbi).flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
@@ -1546,7 +1546,7 @@ fn rename_deallocation_file_inode_single_dir<'a>(
     if let Ok(parent_page) = parent_page {
         old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
-        let parent_page = parent_page.dealloc().flush().fence();
+        let parent_page = parent_page.dealloc(sbi).flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
@@ -1573,7 +1573,7 @@ fn rename_deallocation_file_inode_crossdir<'a>(
     if let Ok(parent_page) = parent_page {
         old_parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
         let parent_page = parent_page.unmap().flush().fence();
-        let parent_page = parent_page.dealloc().flush().fence();
+        let parent_page = parent_page.dealloc(sbi).flush().fence();
         sbi.page_allocator.dealloc_dir_page(&parent_page)?;
     }
     // atomically update the volatile index
@@ -1652,7 +1652,7 @@ fn hayleyfs_unlink<'a>(
         if let Ok(parent_page) = parent_page {
             parent_inode_info.delete(DirPageInfo::new(parent_page.get_page_no()))?;
             let parent_page = parent_page.unmap().flush().fence();
-            let parent_page = parent_page.dealloc().flush().fence();
+            let parent_page = parent_page.dealloc(sbi).flush().fence();
             sbi.page_allocator.dealloc_dir_page(&parent_page)?;
         }
         // let pi = finish_unlink(sbi, pi)?;
@@ -1721,7 +1721,7 @@ fn runtime_finish_unlink<'a>(
         let mut to_dealloc = fence_all_vecs!(to_dealloc);
         let mut deallocated = Vec::new();
         for page in to_dealloc.drain(..) {
-            let page = page.dealloc().flush();
+            let page = page.dealloc(sbi).flush();
             deallocated.try_push(page)?;
         }
         let deallocated = fence_all_vecs!(deallocated);
@@ -1764,7 +1764,6 @@ fn hayleyfs_symlink<'a>(
 
     let pi = pi.allocate_symlink_inode(dir, mode)?.flush().fence();
     let pi_info = Box::try_new(HayleyFsRegInodeInfo::new(pi.get_ino())?)?;
-    sbi.inc_inodes_in_use();
 
     // allocate a page for the symlink
     let pages = DataPageListWrapper::get_data_page_list(&pi_info, 1, 0)?;
@@ -1775,8 +1774,6 @@ fn hayleyfs_symlink<'a>(
         pr_info!("ERROR: new symlink file has pages\n");
         return Err(EINVAL);
     };
-    // let page = ;
-    sbi.inc_blocks_in_use();
 
     let pages = pages.set_backpointers(sbi, pi_info.get_ino())?.fence();
 
@@ -1832,8 +1829,6 @@ fn alloc_page_for_dentry<'a, S: Initialized>(
     // StaticDirPageWrapper for just this case but it probably will not make
     // a noticeable difference
     let dir_page = DirPageWrapper::alloc_dir_page(sbi)?.flush().fence();
-    // pr_info!("alloc page {:?} for parent {:?}\n", dir_page.get_page_no(), parent_inode_info.get_ino());
-    sbi.inc_blocks_in_use();
     let dir_page = dir_page.zero_page(sbi)?;
     let dir_page = dir_page
         .set_dir_page_backpointer(parent_inode)
@@ -1857,7 +1852,6 @@ fn init_dentry_with_new_reg_inode<'a>(
     let new_ino = sbi.alloc_ino()?;
     let inode = InodeWrapper::get_free_reg_inode_by_ino(sbi, new_ino)?;
     let inode = inode.allocate_file_inode(dir, mode)?.flush().fence();
-    sbi.inc_inodes_in_use();
 
     // set the ino in the dentry
     let (dentry, inode) = dentry.set_file_ino(inode);

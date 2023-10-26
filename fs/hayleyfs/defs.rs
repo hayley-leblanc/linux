@@ -228,12 +228,16 @@ impl SbInfo {
         self.inodes_in_use.load(Ordering::SeqCst)
     }
 
+    pub(crate) fn dec_inodes_in_use(&self) {
+        self.inodes_in_use.fetch_sub(1, Ordering::SeqCst);
+    }
+
     pub(crate) fn inc_blocks_in_use(&self) {
         self.blocks_in_use.fetch_add(1, Ordering::SeqCst);
     }
 
-    pub(crate) fn add_blocks_in_use(&self, new_blocks: u64) {
-        self.blocks_in_use.fetch_add(new_blocks, Ordering::SeqCst);
+    pub(crate) fn dec_blocks_in_use(&self) {
+        self.blocks_in_use.fetch_sub(1, Ordering::SeqCst);
     }
 
     pub(crate) fn get_pages_in_use(&self) -> u64 {
@@ -402,7 +406,7 @@ impl SbInfo {
 
     pub(crate) fn alloc_ino(&self) -> Result<InodeNum> {
         match &self.inode_allocator {
-            Some(inode_allocator) => inode_allocator.alloc_ino(),
+            Some(inode_allocator) => inode_allocator.alloc_ino(&self),
             None => {
                 pr_info!("ERROR: inode allocator does not exist");
                 Err(EPERM)
@@ -412,7 +416,7 @@ impl SbInfo {
 
     pub(crate) fn dealloc_ino(&self, ino: InodeNum) -> Result<()> {
         match &self.inode_allocator {
-            Some(inode_allocator) => inode_allocator.dealloc_ino(ino),
+            Some(inode_allocator) => inode_allocator.dealloc_ino(ino, &self),
             None => {
                 pr_info!("ERROR: inode allocator does not exist");
                 Err(EPERM)

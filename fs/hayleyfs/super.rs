@@ -177,6 +177,13 @@ impl fs::Type for HayleyFs {
             (*buf).f_bfree = sbi.num_blocks - sbi.get_pages_in_use();
             (*buf).f_bavail = sbi.num_blocks - sbi.get_pages_in_use();
             (*buf).f_files = sbi.num_inodes;
+            if sbi.num_inodes < sbi.get_inodes_in_use() {
+                pr_info!(
+                    "{:?} total inodes, {:?} inodes in use\n",
+                    sbi.num_inodes,
+                    sbi.get_inodes_in_use()
+                );
+            }
             (*buf).f_ffree = sbi.num_inodes - sbi.get_inodes_in_use();
             (*buf).f_namelen = MAX_FILENAME_LEN.try_into()?;
         }
@@ -412,7 +419,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             if i > max_page.try_into()? {
                 max_page = i.try_into()?;
             }
-            sbi.inc_blocks_in_use();
             let index: u64 = i.try_into()?;
             // add pages to maps that associate inodes with the pages they own
             // we don't add them to the index yet because an initialized page
@@ -581,6 +587,7 @@ impl PmDevice for SbInfo {
             page_desc_table_size / (1024 * 1024)
         );
         pr_info!("number of inodes: {:?}\n", num_inodes);
+        pr_info!("number of pages: {:?}\n", num_pages);
 
         self.num_inodes = num_inodes;
         self.inode_table_size = inode_table_size;

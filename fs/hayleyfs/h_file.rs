@@ -228,7 +228,6 @@ fn single_page_write<'a>(
         let page = StaticDataPageWrapper::alloc_data_page(sbi, offset)?
             .flush()
             .fence();
-        sbi.inc_blocks_in_use();
         let page = page.set_data_page_backpointer(&pi).flush().fence();
         // add page to the index
         // this is safe to do here because we hold a lock on this inode
@@ -291,7 +290,6 @@ fn runtime_checked_write<'a>(
                 let new_page = DataPageWrapper::alloc_data_page(sbi, page_offset)?
                     .flush()
                     .fence();
-                sbi.inc_blocks_in_use();
                 let new_page = new_page.set_data_page_backpointer(pi).flush().fence();
                 pi_info.insert(&new_page)?;
                 pages.try_push(new_page)?;
@@ -371,7 +369,7 @@ fn iterator_write<'a>(
             let page_list = page_list
                 .allocate_pages(sbi, &pi_info, pages_left.try_into()?, allocation_offset)?
                 .fence();
-            sbi.add_blocks_in_use(pages_left);
+            // sbi.add_blocks_in_use(pages_left);
             let page_list = page_list.set_backpointers(sbi, pi.get_ino())?.fence();
             pi_info.insert_pages(&page_list, pages_to_write)?;
             page_list
