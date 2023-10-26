@@ -167,15 +167,15 @@ impl fs::Type for HayleyFs {
             (*buf).f_type = SUPER_MAGIC;
             (*buf).f_bsize = sbi.blocksize.try_into()?;
             (*buf).f_blocks = sbi.num_blocks;
-            if sbi.num_blocks < sbi.get_pages_in_use() {
+            if sbi.num_blocks < sbi.get_blocks_in_use() {
                 pr_info!(
                     "WARNING: {:?} total blocks but {:?} blocks in use\n",
                     sbi.num_blocks,
-                    sbi.get_pages_in_use()
+                    sbi.get_blocks_in_use()
                 );
             }
-            (*buf).f_bfree = sbi.num_blocks - sbi.get_pages_in_use();
-            (*buf).f_bavail = sbi.num_blocks - sbi.get_pages_in_use();
+            (*buf).f_bfree = sbi.num_blocks - sbi.get_blocks_in_use();
+            (*buf).f_bavail = sbi.num_blocks - sbi.get_blocks_in_use();
             (*buf).f_files = sbi.num_inodes;
             if sbi.num_inodes < sbi.get_inodes_in_use() {
                 pr_info!(
@@ -416,6 +416,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let page_desc_table = sbi.get_page_desc_table()?;
     for (i, desc) in page_desc_table.iter().enumerate() {
         if !desc.is_free() {
+            sbi.inc_blocks_in_use();
             if i > max_page.try_into()? {
                 max_page = i.try_into()?;
             }
@@ -495,8 +496,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         processed_live_inodes.try_insert(live_inode, ())?;
     }
 
-    pr_info!("data start page {:?}\n", sbi.get_data_pages_start_page());
-
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
         alloc_page_vec,
         // DATA_PAGE_START,
@@ -514,7 +513,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         ROOT_INO + 1,
         sbi.num_inodes,
     )?);
-
     Ok(())
 }
 

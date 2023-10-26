@@ -240,7 +240,7 @@ impl SbInfo {
         self.blocks_in_use.fetch_sub(1, Ordering::SeqCst);
     }
 
-    pub(crate) fn get_pages_in_use(&self) -> u64 {
+    pub(crate) fn get_blocks_in_use(&self) -> u64 {
         self.blocks_in_use.load(Ordering::SeqCst)
     }
 
