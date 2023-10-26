@@ -336,7 +336,6 @@ pub(crate) fn hayleyfs_iget(
             end_timing!(InitDirInode, init_dir_inode);
         },
         InodeType::SYMLINK => unsafe {
-            // unimplemented!();
             (*inode).i_op = symlink::OperationsVtable::<SymlinkOps>::build();
             let pages = sbi.ino_data_page_tree.remove(ino);
             // if the inode has any pages associated with it, remove them from the
@@ -384,7 +383,6 @@ fn new_vfs_inode<'a, Type>(
 
     let ino = new_inode.get_ino();
     vfs_inode.i_ino = ino;
-
     // we don't have access to ZST Type, but inode wrapper constructors check types
     // so we can rely on these being correct
     let inode_type = new_inode.get_type();
@@ -431,6 +429,7 @@ fn new_vfs_inode<'a, Type>(
             vfs_inode.i_private = inode_info.into_foreign() as *mut _;
             unsafe {
                 vfs_inode.i_op = symlink::OperationsVtable::<SymlinkOps>::build();
+                bindings::set_nlink(vfs_inode, 1);
             }
         }
         InodeType::NONE => panic!("Inode type is none"),
@@ -1796,7 +1795,7 @@ fn hayleyfs_symlink<'a>(
     let mut name_reader =
         unsafe { UserSlicePtr::new(symname as *mut core::ffi::c_void, name.len()).reader() };
     let name_len: u64 = name_reader.len().try_into()?;
-    let (bytes_written, pages) = pages.write_pages(sbi, &mut name_reader, 0, name_len)?;
+    let (bytes_written, pages) = pages.write_pages(sbi, &mut name_reader, name_len, 0)?;
     let pages = pages.fence();
 
     // set the file size. we'll create the VFS inode based on the persistent inode after
