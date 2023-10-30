@@ -63,7 +63,6 @@ impl file::Operations for FileOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
         unsafe { bindings::inode_lock(inode.get_inner()) };
-        // pr_info!("writing to inode {:?}\n", inode.i_ino());
         let result = hayleyfs_write(sbi, inode, reader, offset);
         unsafe { bindings::inode_unlock(inode.get_inner()) };
         unsafe { bindings::sb_end_write(sb) };
@@ -364,14 +363,15 @@ fn iterator_write<'a>(
                     (remaining_bytes / HAYLEYFS_PAGESIZE) + 2 // +2 for the first and last page
                 }
             };
-            let pages_left = pages_to_write - page_list.len()?;
-            let allocation_offset = page_offset(offset)? + page_list.len()? * HAYLEYFS_PAGESIZE;
+            let pages_left = pages_to_write - page_list.len();
+            let allocation_offset = page_offset(offset)? + page_list.len() * HAYLEYFS_PAGESIZE;
             let page_list = page_list
                 .allocate_pages(sbi, &pi_info, pages_left.try_into()?, allocation_offset)?
                 .fence();
+
             // sbi.add_blocks_in_use(pages_left);
             let page_list = page_list.set_backpointers(sbi, pi.get_ino())?.fence();
-            pi_info.insert_pages(&page_list, pages_to_write)?;
+            // pi_info.insert_pages(&page_list, pages_to_write)?;
             page_list
         }
     };

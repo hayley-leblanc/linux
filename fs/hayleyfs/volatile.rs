@@ -112,8 +112,7 @@ impl DirPageInfo {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-#[allow(dead_code)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct DataPageInfo {
     owner: InodeNum,
     page_no: PageNum,
@@ -136,12 +135,17 @@ impl DataPageInfo {
     pub(crate) fn get_offset(&self) -> u64 {
         self.offset
     }
+
+    pub(crate) fn get_owner(&self) -> InodeNum {
+        self.owner
+    }
 }
 
 // TODO: could just be offset and page number - storing whole DataPageInfo is redundant...
 #[repr(C)]
 pub(crate) struct HayleyFsRegInodeInfo {
     ino: InodeNum,
+    num_pages: u64,
     pages: Arc<Mutex<RBTree<u64, DataPageInfo>>>,
 }
 
@@ -149,19 +153,29 @@ impl HayleyFsRegInodeInfo {
     pub(crate) fn new(ino: InodeNum) -> Result<Self> {
         Ok(Self {
             ino,
+            num_pages: 0,
             pages: Arc::try_new(Mutex::new(RBTree::new()))?,
         })
     }
 
-    pub(crate) fn new_from_tree(ino: InodeNum, tree: RBTree<u64, DataPageInfo>) -> Result<Self> {
+    pub(crate) fn new_from_tree(
+        ino: InodeNum,
+        tree: RBTree<u64, DataPageInfo>,
+        num_pages: u64,
+    ) -> Result<Self> {
         Ok(Self {
             ino,
             pages: Arc::try_new(Mutex::new(tree))?,
+            num_pages,
         })
     }
 
     pub(crate) fn get_ino(&self) -> InodeNum {
         self.ino
+    }
+
+    pub(crate) fn get_num_pages(&self) -> u64 {
+        self.num_pages
     }
 }
 
@@ -178,14 +192,9 @@ pub(crate) trait InoDataPageMap {
         &self,
         page: &StaticDataPageWrapper<'a, Clean, State>,
     ) -> Result<()>;
-    fn insert_pages<'a, State: Initialized>(
-        &self,
-        page_list: &DataPageListWrapper<Clean, State>,
-        pages_added: u64,
-    ) -> Result<()>;
+    fn insert_page_iterator(&self, page_info: DataPageInfo) -> Result<()>;
     fn find(&self, offset: u64) -> Option<DataPageInfo>;
     fn get_all_pages(&self) -> Result<RBTree<u64, DataPageInfo>>;
-    // fn delete(&self) -> Result<DataPageInfo>;
 }
 
 impl InoDataPageMap for HayleyFsRegInodeInfo {
@@ -229,21 +238,11 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         Ok(())
     }
 
-    fn insert_pages<'a, State: Initialized>(
-        &self,
-        page_list: &DataPageListWrapper<Clean, State>,
-        pages_added: u64,
-    ) -> Result<()> {
+    fn insert_page_iterator(&self, page_info: DataPageInfo) -> Result<()> {
         let pages = Arc::clone(&self.pages);
         let mut pages = pages.lock();
-        let num_pages = page_list.len()?;
-        for i in (num_pages - pages_added)..num_pages {
-            let page = page_list.get_page(i.try_into()?);
-            match page {
-                Some(page) => pages.try_insert(page.get_offset(), page.clone())?,
-                None => break,
-            };
-        }
+        pages.try_insert(page_info.get_offset(), page_info)?;
+        // pr_info!("inserted page {:?}\n", page_info);
         Ok(())
     }
 
@@ -253,7 +252,7 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         // let index: usize = (offset / HAYLEYFS_PAGESIZE).try_into().unwrap();
         let result = pages.get(&offset);
         match result {
-            Some(page) => Some(page.clone()),
+            Some(page) => Some(*page),
             None => None,
         }
     }
@@ -264,17 +263,10 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         let mut return_tree = RBTree::new();
         // TODO: can you do this without copying all of the pages?
         for offset in pages.keys() {
-            return_tree.try_insert(*offset, pages.get(offset).unwrap().clone())?;
+            return_tree.try_insert(*offset, *pages.get(offset).unwrap())?;
         }
         Ok(return_tree)
     }
-
-    // /// Deletes the last page in the file from the index and returns it
-    // fn delete(&self) -> Result<DataPageInfo> {
-    //     let pages = Arc::clone(&self.pages);
-    //     let mut pages = pages.lock();
-    //     pages.pop().ok_or(EINVAL)
-    // }
 }
 
 /// maps dir inodes to info about their pages
@@ -369,6 +361,7 @@ impl InoDirPageMap for HayleyFsDirInodeInfo {
         Ok(None)
     }
 
+    // TODO: should this return a linked list?
     fn get_all_pages(&self) -> Result<RBTree<DirPageInfo, ()>> {
         let pages = Arc::clone(&self.pages);
         let pages = pages.lock();

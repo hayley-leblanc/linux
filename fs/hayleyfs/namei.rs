@@ -201,7 +201,7 @@ impl inode::Operations for InodeOps {
         let result = hayleyfs_symlink(sbi, dir, dentry, symname, mode);
         if let Err(e) = result {
             return Err(e);
-        } else if let Ok((mut new_inode, _, new_page, pi_info)) = result {
+        } else if let Ok((mut new_inode, _, _new_page, pi_info)) = result {
             let vfs_inode = new_vfs_inode(
                 sb,
                 sbi,
@@ -213,8 +213,8 @@ impl inode::Operations for InodeOps {
                 Some(pi_info),
             )?;
             new_inode.set_vfs_inode(vfs_inode)?;
-            let pi_info = new_inode.get_inode_info()?;
-            pi_info.insert_pages(&new_page, new_page.len()?)?;
+            // let pi_info = new_inode.get_inode_info()?;
+            // pi_info.insert_pages(&new_page, new_page.len())?;
             unsafe { insert_vfs_inode(vfs_inode, dentry)? };
             Ok(())
         } else {
@@ -300,7 +300,11 @@ pub(crate) fn hayleyfs_iget(
             // if the inode has any pages associated with it, remove them from the
             // global tree and put them in this inode's i_private
             if let Some(pages) = pages {
-                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_tree(ino, pages))?;
+                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_tree(
+                    ino,
+                    pages,
+                    pi.get_blocks(),
+                ))?;
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             } else {
                 let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
@@ -341,7 +345,11 @@ pub(crate) fn hayleyfs_iget(
             // if the inode has any pages associated with it, remove them from the
             // global tree and put them in this inode's i_private
             if let Some(pages) = pages {
-                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_tree(ino, pages))?;
+                let inode_info = Box::try_new(HayleyFsRegInodeInfo::new_from_tree(
+                    ino,
+                    pages,
+                    pi.get_blocks(),
+                ))?;
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             } else {
                 let inode_info = Box::try_new(HayleyFsRegInodeInfo::new(ino))?;
