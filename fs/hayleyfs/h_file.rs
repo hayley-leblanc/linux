@@ -7,12 +7,9 @@ use crate::{end_timing, fence_vec, init_timing, start_timing};
 use core::{marker::Sync, ptr, sync::atomic::Ordering};
 use kernel::prelude::*;
 use kernel::{
-    bindings,
-    error,
-    file,
-    fs,
+    bindings, error, file, fs,
     io_buffer::{IoBufferReader, IoBufferWriter},
-    // sync::RwSemaphore,
+    iomap, mm,
 };
 
 pub(crate) struct Adapter {}
@@ -116,19 +113,15 @@ impl file::Operations for FileOps {
         cmd.dispatch::<Self>(data, file)
     }
 
-    // fn iterate(f: &file::File, ctx: *mut bindings::dir_context) -> Result<u32> {
-    //     let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
-    //     let sb = inode.i_sb();
-    //     let fs_info_raw = unsafe { (*sb).s_fs_info };
-    //     // TODO: it's probably not safe to just grab s_fs_info and
-    //     // get a mutable reference to one of the dram indexes
-    //     let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
-    //     let result = hayleyfs_readdir(sbi, inode, ctx);
-    //     match result {
-    //         Ok(r) => Ok(r),
-    //         Err(e) => Err(e),
-    //     }
-    // }
+    fn mmap(_data: (), f: &file::File, vma: *mut bindings::vm_area_struct) -> Result<()> {
+        unsafe {
+            bindings::file_accessed(f.get_inner());
+            bindings::vm_flags_set(vma, bindings::VM_MIXEDMAP.into());
+            (*vma).vm_ops = mm::OperationsVtable::<VmaOps>::build();
+        }
+        // unsafe { vma.set_ops(mm::OperationsVtable::<VmaOps>::build()) };
+        Ok(())
+    }
 }
 
 #[allow(dead_code)]
@@ -457,4 +450,55 @@ fn hayleyfs_read(
     }
     end_timing!(FullRead, full_read);
     Ok(bytes_read)
+}
+
+pub(crate) struct VmaOps;
+#[vtable]
+impl mm::Operations for VmaOps {
+    fn fault(vmf: &mut bindings::vm_fault) -> bindings::vm_fault_t {
+        Self::huge_fault(vmf, bindings::page_entry_size_PE_SIZE_PTE)
+    }
+
+    fn huge_fault(
+        vmf: &mut bindings::vm_fault,
+        pe: bindings::page_entry_size,
+    ) -> bindings::vm_fault_t {
+        let mut pfn: bindings::pfn_t = bindings::pfn_t { val: 0 };
+        let mut error: i32 = 0;
+        unsafe {
+            bindings::dax_iomap_fault(
+                vmf,
+                pe,
+                &mut pfn,
+                &mut error,
+                iomap::OperationsVtable::<IomapOps>::build(),
+            )
+        }
+    }
+}
+
+pub(crate) struct IomapOps;
+#[vtable]
+impl iomap::Operations for IomapOps {
+    fn iomap_begin(
+        _inode: &fs::INode,
+        _pos: i64,
+        _length: i64,
+        _flags: u32,
+        _iomap: *mut bindings::iomap,
+        _srcmap: *mut bindings::iomap,
+    ) -> Result<i32> {
+        Err(EPERM)
+    }
+
+    fn iomap_end(
+        _inode: &fs::INode,
+        _pos: i64,
+        _length: i64,
+        _written: isize,
+        _flags: u32,
+        _iomap: *mut bindings::iomap,
+    ) -> Result<i32> {
+        Err(EPERM)
+    }
 }
