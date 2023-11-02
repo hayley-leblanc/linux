@@ -11,11 +11,12 @@ use crate::{
     error::{code::*, from_kernel_result, Error, Result},
     io_buffer::{IoBufferReader, IoBufferWriter},
     iov_iter::IovIter,
-    mm,
+    // mm,
     sync::CondVar,
     types::ForeignOwnable,
     user_ptr::{UserSlicePtr, UserSlicePtrReader, UserSlicePtrWriter},
-    ARef, AlwaysRefCounted,
+    ARef,
+    AlwaysRefCounted,
 };
 use core::convert::{TryFrom, TryInto};
 use core::{cell::UnsafeCell, marker, mem, ptr};
@@ -518,13 +519,14 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             // function is running.
             let f = unsafe { T::Data::borrow((*file).private_data) };
 
-            // SAFETY: The C API guarantees that `vma` is valid for the duration of this call.
-            // `area` only lives within this call, so it is guaranteed to be valid.
-            let mut area = unsafe { mm::virt::Area::from_ptr(vma) };
+            // // SAFETY: The C API guarantees that `vma` is valid for the duration of this call.
+            // // `area` only lives within this call, so it is guaranteed to be valid.
+            // let mut area = unsafe { mm::virt::Area::from_ptr(vma) };
 
-            // SAFETY: The C API guarantees that `file` is valid for the duration of this call,
-            // which is longer than the lifetime of the file reference.
-            T::mmap(f, unsafe { File::from_ptr(file) }, &mut area)?;
+            // // SAFETY: The C API guarantees that `file` is valid for the duration of this call,
+            // // which is longer than the lifetime of the file reference.
+            // T::mmap(f, unsafe { File::from_ptr(file) }, &mut area)?;
+            T::mmap(f, unsafe { File::from_ptr(file) }, vma)?;
             Ok(0)
         }
     }
@@ -548,6 +550,16 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             let res = T::fsync(f, unsafe { File::from_ptr(file) }, start, end, datasync)?;
             Ok(res.try_into().unwrap())
         }
+    }
+
+    unsafe extern "C" fn get_unmapped_area_callback(
+        filp: *mut bindings::file,
+        addr: u64,
+        len: u64,
+        pgoff: u64,
+        flags: u64,
+    ) -> u64 {
+        return unsafe { bindings::thp_get_unmapped_area(filp, addr, len, pgoff, flags) };
     }
 
     unsafe extern "C" fn poll_callback(
@@ -599,7 +611,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         flock: None,
         flush: None,
         fsync: Some(Self::fsync_callback),
-        get_unmapped_area: None,
+        get_unmapped_area: Some(Self::get_unmapped_area_callback),
         iterate: None,
         iterate_shared: None,
         iopoll: None,
@@ -609,7 +621,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         } else {
             None
         },
-        mmap_supported_flags: 0,
+        mmap_supported_flags: bindings::MAP_SYNC as u64,
         owner: ptr::null_mut(),
         poll: if T::HAS_POLL {
             Some(Self::poll_callback)
@@ -876,7 +888,8 @@ pub trait Operations {
     fn mmap(
         _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
-        _vma: &mut mm::virt::Area,
+        // _vma: &mut mm::virt::Area,
+        _vma: *mut bindings::vm_area_struct,
     ) -> Result {
         Err(EINVAL)
     }

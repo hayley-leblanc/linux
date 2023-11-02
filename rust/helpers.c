@@ -27,6 +27,7 @@
 #include <linux/fs_parser.h>
 #include <linux/gfp.h>
 #include <linux/highmem.h>
+#include <linux/huge_mm.h>
 #include <linux/io.h>
 #include <linux/irqchip/chained_irq.h>
 #include <linux/irqdomain.h>
@@ -857,6 +858,23 @@ void rust_helper_file_accessed(struct file *file) {
 	file_accessed(file);
 }
 EXPORT_SYMBOL_GPL(rust_helper_file_accessed);
+
+unsigned long rust_helper_thp_get_unmapped_area(
+	struct file *filp, 
+	unsigned long addr,
+	unsigned long len, 
+	unsigned long pgoff, 
+	unsigned long flags
+) 
+{
+	return thp_get_unmapped_area(filp, addr, len, pgoff, flags);
+}
+EXPORT_SYMBOL_GPL(rust_helper_thp_get_unmapped_area);
+
+void rust_helper_vm_flags_set(struct vm_area_struct *vma, vm_flags_t flags) {
+	vm_flags_set(vma, flags);
+}
+EXPORT_SYMBOL_GPL(rust_helper_vm_flags_set);
 
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type

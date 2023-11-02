@@ -17,9 +17,11 @@
 #include <linux/fs_parser.h>
 #include <linux/gfp_types.h>
 #include <linux/gpio/driver.h>
+#include <linux/huge_mm.h>
 #include <linux/hw_random.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/iomap.h>
 #include <linux/irqdomain.h>
 #include <linux/irq.h>
 #include <linux/miscdevice.h>
@@ -39,6 +41,7 @@
 #include <linux/sysctl.h>
 #include <linux/uaccess.h>
 #include <linux/uio.h>
+#include <asm/mman.h>
 
 /* `bindgen` gets confused at certain things. */
 const gfp_t BINDINGS_GFP_KERNEL = GFP_KERNEL;

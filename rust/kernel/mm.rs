@@ -4,7 +4,10 @@
 //!
 //! C header: [`include/linux/mm.h`](../../../../include/linux/mm.h)
 
+#[allow(unused_imports)]
 use crate::{bindings, pages, to_result, Result};
+use core::marker;
+use macros::vtable;
 
 /// Virtual memory.
 pub mod virt {
@@ -28,6 +31,7 @@ pub mod virt {
         ///
         /// Callers must ensure that `vma` is non-null and valid for the duration of the new area's
         /// lifetime.
+        #[allow(dead_code)]
         pub(crate) unsafe fn from_ptr(vma: *mut bindings::vm_area_struct) -> Self {
             // INVARIANTS: The safety requirements guarantee the invariants.
             Self { vma }
@@ -69,6 +73,14 @@ pub mod virt {
             // `address` is already checked by `vm_insert_page`. `self.vma` and `page.pages` are
             // guaranteed by their repective type invariants to be valid.
             to_result(unsafe { bindings::vm_insert_page(self.vma, address as _, page.pages) })
+        }
+
+        /// Sets the VMA's operations to the given structure
+        pub fn set_ops(&self, ops: &bindings::vm_operations_struct) {
+            unsafe { (*self.vma).vm_ops = ops };
+            if unsafe { (*(*self.vma).vm_ops).fault.is_some() } {
+                crate::pr_info!("op fault is set\n");
+            }
         }
     }
 
@@ -148,4 +160,65 @@ pub mod virt {
         /// KSM may merge identical pages.
         pub const MERGEABLE: usize = bindings::VM_MERGEABLE as _;
     }
+}
+
+/// vtable for VMA operations
+pub struct OperationsVtable<T: Operations>(marker::PhantomData<T>);
+
+impl<T: Operations> OperationsVtable<T> {
+    unsafe extern "C" fn fault_callback(vmf: *mut bindings::vm_fault) -> bindings::vm_fault_t {
+        let vmf = unsafe { &mut *vmf.cast() };
+        crate::pr_info!("fault callback\n");
+        T::fault(vmf)
+    }
+
+    unsafe extern "C" fn huge_fault_callback(
+        vmf: *mut bindings::vm_fault,
+        pe: bindings::page_entry_size,
+    ) -> bindings::vm_fault_t {
+        let vmf = unsafe { &mut *vmf.cast() };
+        crate::pr_info!("huge fault callback\n");
+        T::huge_fault(vmf, pe)
+    }
+
+    const VTABLE: bindings::vm_operations_struct = bindings::vm_operations_struct {
+        open: None,
+        close: None,
+        may_split: None,
+        mremap: None,
+        mprotect: None,
+        fault: Some(Self::fault_callback),
+        huge_fault: Some(Self::huge_fault_callback),
+        map_pages: None,
+        page_mkwrite: Some(Self::fault_callback),
+        pfn_mkwrite: Some(Self::fault_callback),
+        access: None,
+        name: None,
+        find_special_page: None,
+        dax_cow: None,
+        get_policy: None,
+        set_policy: None,
+        pagesize: None,
+    };
+
+    /// Builds an instance of [`struct vm_operations_struct`]
+    /// Safety: TODO
+    pub const unsafe fn build() -> &'static bindings::vm_operations_struct {
+        &Self::VTABLE
+    }
+}
+
+/// Corresponds to the kernel's `struct vm_operations_struct`.
+///
+/// You implement this trait whenver you would create a `struct vm_operations_struct`.
+#[vtable]
+pub trait Operations {
+    /// Corresponds to `fault` function pointer in `struct vm_operations_struct`
+    fn fault(vmf: &mut bindings::vm_fault) -> bindings::vm_fault_t;
+
+    /// Corresponds to `huge_fault` function pointer in `struct vm_operations_struct`
+    fn huge_fault(
+        vmf: &mut bindings::vm_fault,
+        pe: bindings::page_entry_size,
+    ) -> bindings::vm_fault_t;
 }
