@@ -168,7 +168,6 @@ pub struct OperationsVtable<T: Operations>(marker::PhantomData<T>);
 impl<T: Operations> OperationsVtable<T> {
     unsafe extern "C" fn fault_callback(vmf: *mut bindings::vm_fault) -> bindings::vm_fault_t {
         let vmf = unsafe { &mut *vmf.cast() };
-        crate::pr_info!("fault callback\n");
         T::fault(vmf)
     }
 
@@ -177,7 +176,6 @@ impl<T: Operations> OperationsVtable<T> {
         pe: bindings::page_entry_size,
     ) -> bindings::vm_fault_t {
         let vmf = unsafe { &mut *vmf.cast() };
-        crate::pr_info!("huge fault callback\n");
         T::huge_fault(vmf, pe)
     }
 
