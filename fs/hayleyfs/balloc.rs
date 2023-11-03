@@ -1772,6 +1772,49 @@ impl<State, Op> DataPageListWrapper<State, Op> {
     pub(crate) fn get_page_list_cursor(&self) -> Cursor<'_, Box<LinkedDataPageInfo>> {
         self.pages.cursor_front()
     }
+
+    // returns the number of PHYSICALLY contiguous pages from the initial offset
+    // in this list to use when handling mmap faults
+    pub(crate) fn num_contiguous_pages_from_start(&self) -> u64 {
+        let mut pages = self.pages.cursor_front();
+        let mut page = pages.current();
+        let mut prev_page_no;
+        let mut num_pages = 0;
+        if let Some(page) = page {
+            prev_page_no = page.get_page_no();
+            num_pages += 1;
+        } else {
+            return num_pages;
+        }
+        pages.move_next();
+        page = pages.current();
+        while page.is_some() {
+            if let Some(page) = page {
+                if page.get_page_no() > prev_page_no {
+                    break;
+                } else {
+                    num_pages += 1;
+                    prev_page_no = page.get_page_no();
+                }
+            }
+            pages.move_next();
+            page = pages.current();
+        }
+        num_pages
+    }
+
+    pub(crate) fn first_page_virt_addr(&self) -> Option<*mut ffi::c_void> {
+        // get first page's page no
+        let pages = self.pages.cursor_front();
+        let page = pages.current();
+        if let Some(page) = page {
+            let page_no = page.get_page_no();
+            let addr = page_no * HAYLEYFS_PAGESIZE;
+            Some(addr as *mut ffi::c_void)
+        } else {
+            None
+        }
+    }
 }
 
 impl DataPageListWrapper<Clean, Start> {
@@ -1811,7 +1854,6 @@ impl DataPageListWrapper<Clean, Alloc> {
         sbi: &'a SbInfo,
         ino: InodeNum,
     ) -> Result<DataPageListWrapper<InFlight, Writeable>> {
-        // for page in self.pages.keys() {
         let mut pages = self.pages.cursor_front();
         let mut page = pages.current();
         while page.is_some() {

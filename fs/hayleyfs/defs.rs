@@ -261,6 +261,10 @@ impl SbInfo {
         self.dax_dev = dax_dev;
     }
 
+    pub(crate) fn get_dax_dev(&mut self) -> *mut bindings::dax_device {
+        self.dax_dev
+    }
+
     pub(crate) fn get_super_block(&mut self) -> Result<&HayleyFsSuperBlock> {
         let super_block = unsafe { &mut *(self.virt_addr as *mut HayleyFsSuperBlock) };
         // assume for now that if the magic is fine, the rest of the super block is fine

@@ -78,3 +78,7 @@ impl InvalidInode for Complete {} // TODO: this may not be safe. some Complete i
 pub(crate) trait DeleteDir {}
 impl DeleteDir for DecLink {}
 impl DeleteDir for Start {}
+
+pub(crate) trait PagesExist {}
+impl PagesExist for Start {}
+impl PagesExist for Writeable {}

@@ -4,7 +4,7 @@ use crate::h_inode::*;
 use crate::typestate::*;
 use crate::volatile::*;
 use crate::{end_timing, fence_vec, init_timing, start_timing};
-use core::{marker::Sync, ptr, sync::atomic::Ordering};
+use core::{ffi, marker::Sync, ptr, sync::atomic::Ordering};
 use kernel::prelude::*;
 use kernel::{
     bindings, error, file, fs,
@@ -337,34 +337,13 @@ fn iterator_write<'a>(
     let page_list = match page_list {
         Ok(page_list) => page_list, // all pages are already allocated
         Err(page_list) => {
-            let pages_to_write = if offset % HAYLEYFS_PAGESIZE == 0 {
-                if count % HAYLEYFS_PAGESIZE == 0 {
-                    count / HAYLEYFS_PAGESIZE
-                } else {
-                    (count / HAYLEYFS_PAGESIZE) + 1
-                }
-            } else {
-                let first_page_bytes = HAYLEYFS_PAGESIZE - (offset % HAYLEYFS_PAGESIZE);
-                let remaining_bytes = if count < first_page_bytes {
-                    count
-                } else {
-                    count - first_page_bytes
-                };
-                if remaining_bytes % HAYLEYFS_PAGESIZE == 0 {
-                    (remaining_bytes / HAYLEYFS_PAGESIZE) + 1 // +1 for the first page
-                } else {
-                    (remaining_bytes / HAYLEYFS_PAGESIZE) + 2 // +2 for the first and last page
-                }
-            };
+            let pages_to_write = get_num_pages_in_region(count, offset);
             let pages_left = pages_to_write - page_list.len();
             let allocation_offset = page_offset(offset)? + page_list.len() * HAYLEYFS_PAGESIZE;
             let page_list = page_list
                 .allocate_pages(sbi, &pi_info, pages_left.try_into()?, allocation_offset)?
                 .fence();
-
-            // sbi.add_blocks_in_use(pages_left);
             let page_list = page_list.set_backpointers(sbi, pi.get_ino())?.fence();
-            // pi_info.insert_pages(&page_list, pages_to_write)?;
             page_list
         }
     };
@@ -481,14 +460,51 @@ pub(crate) struct IomapOps;
 #[vtable]
 impl iomap::Operations for IomapOps {
     fn iomap_begin(
-        _inode: &fs::INode,
-        _pos: i64,
-        _length: i64,
-        _flags: u32,
-        _iomap: *mut bindings::iomap,
+        inode: &fs::INode,
+        pos: i64,
+        length: i64,
+        flags: u32,
+        iomap: *mut bindings::iomap,
         _srcmap: *mut bindings::iomap,
     ) -> Result<i32> {
-        Err(EPERM)
+        // TODO: safe wrapper
+        let blkbits = unsafe { (*inode.get_inner()).i_blkbits };
+        let first_block = pos >> blkbits;
+
+        let sb = inode.i_sb();
+        // TODO: safety
+        let fs_info_raw = unsafe { (*sb).s_fs_info };
+        let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+        let create = flags & bindings::IOMAP_WRITE != 0;
+
+        let (num_pages, addr) =
+            hayleyfs_iomap_get_blocks(sbi, inode, first_block << blkbits, length, create)?;
+
+        // TODO: safe wrapper around iomap
+        unsafe {
+            (*iomap).flags = 0;
+            (*iomap).bdev = (*sb).s_bdev;
+            (*iomap).dax_dev = sbi.get_dax_dev();
+            (*iomap).offset = first_block << blkbits;
+        }
+
+        if num_pages == 0 {
+            unsafe {
+                (*iomap).type_ = bindings::IOMAP_HOLE.try_into()?;
+                (*iomap).addr = bindings::IOMAP_NULL_ADDR.try_into()?;
+                (*iomap).length = 1 << blkbits;
+            }
+        } else {
+            unsafe {
+                (*iomap).type_ = bindings::IOMAP_MAPPED.try_into()?;
+                (*iomap).addr = addr as u64;
+                (*iomap).length = (num_pages * HAYLEYFS_PAGESIZE).try_into()?;
+                let new_flag: u16 = bindings::IOMAP_F_MERGED.try_into()?;
+                (*iomap).flags |= new_flag;
+            }
+        }
+
+        Ok(0)
     }
 
     fn iomap_end(
@@ -500,5 +516,97 @@ impl iomap::Operations for IomapOps {
         _iomap: *mut bindings::iomap,
     ) -> Result<i32> {
         Err(EPERM)
+    }
+}
+
+// returns the number of blocks in this section and the starting block number(?)
+// NOTE: page offset should be a multiple of page size
+fn hayleyfs_iomap_get_blocks(
+    sbi: &SbInfo,
+    inode: &fs::INode,
+    page_offset: i64,
+    length: i64,
+    create: bool,
+) -> Result<(u64, *mut ffi::c_void)> {
+    let pagesize_i64: i64 = HAYLEYFS_PAGESIZE.try_into()?;
+    if page_offset % pagesize_i64 != 0 {
+        pr_info!("ERROR: page offset {:?} is not page aligned\n", page_offset);
+        return Err(EINVAL);
+    }
+    // get the data page list for the requested range
+    let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+    let pi_info = pi.get_inode_info()?;
+
+    let page_list = DataPageListWrapper::get_data_page_list(
+        pi_info,
+        length.try_into()?,
+        page_offset.try_into()?,
+    )?;
+    match page_list {
+        Ok(page_list) => {
+            // in this case, we found the number of pages we want. don't need to allocate
+            // even if create == true, just return the number of pages and the start
+            get_num_pages_and_offset(page_list)
+        }
+        Err(page_list) => {
+            // in this case, we did not get the requested number of pages
+            // if create == false, just return the existing contiguous section
+            if create == false {
+                get_num_pages_and_offset(page_list)
+            } else {
+                // otherwise, allocate the rest of the pages, set their backpointers,
+                // then see how many contiguous pages we can obtain
+                let num_pages =
+                    get_num_pages_in_region(length.try_into()?, page_offset.try_into()?);
+                let pages_left = num_pages - page_list.len();
+                let len_i64: i64 = page_list.len().try_into()?;
+                let allocation_offset = page_offset + len_i64 * pagesize_i64;
+                let page_list = page_list
+                    .allocate_pages(
+                        sbi,
+                        &pi_info,
+                        pages_left.try_into()?,
+                        allocation_offset.try_into()?,
+                    )?
+                    .fence();
+                let page_list = page_list.set_backpointers(sbi, pi.get_ino())?.fence();
+                // TODO: increase page size? Not sure exactly when that should happen
+                get_num_pages_and_offset(page_list)
+            }
+        }
+    }
+}
+
+fn get_num_pages_and_offset<S: PagesExist>(
+    page_list: DataPageListWrapper<Clean, S>,
+) -> Result<(u64, *mut ffi::c_void)> {
+    let num_phys_contiguous_pages = page_list.num_contiguous_pages_from_start();
+    if num_phys_contiguous_pages == 0 {
+        return Err(ENODATA);
+    }
+    // can safely unwrap because we know there is at least one page in the list
+    let addr = page_list.first_page_virt_addr().unwrap();
+    Ok((num_phys_contiguous_pages, addr))
+}
+
+fn get_num_pages_in_region(count: u64, offset: u64) -> u64 {
+    if offset % HAYLEYFS_PAGESIZE == 0 {
+        if count % HAYLEYFS_PAGESIZE == 0 {
+            count / HAYLEYFS_PAGESIZE
+        } else {
+            (count / HAYLEYFS_PAGESIZE) + 1
+        }
+    } else {
+        let first_page_bytes = HAYLEYFS_PAGESIZE - (offset % HAYLEYFS_PAGESIZE);
+        let remaining_bytes = if count < first_page_bytes {
+            count
+        } else {
+            count - first_page_bytes
+        };
+        if remaining_bytes % HAYLEYFS_PAGESIZE == 0 {
+            (remaining_bytes / HAYLEYFS_PAGESIZE) + 1 // +1 for the first page
+        } else {
+            (remaining_bytes / HAYLEYFS_PAGESIZE) + 2 // +2 for the first and last page
+        }
     }
 }
