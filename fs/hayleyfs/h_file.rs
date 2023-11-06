@@ -34,15 +34,32 @@ impl file::Operations for FileOps {
 
     fn release(_data: (), _file: &file::File) {}
 
-    fn fsync(_data: (), file: &file::File, _start: u64, _end: u64, _datasync: bool) -> Result<u32> {
-        unsafe {
-            if bindings::mapping_mapped((*file.get_inner()).f_mapping) != 0 {
-                pr_info!("msync");
-                // TODO: implement msync case
-            }
-        }
+    fn fsync(_data: (), file: &file::File, start: u64, end: u64, _datasync: bool) -> Result<u32> {
+        if unsafe { bindings::mapping_mapped((*file.get_inner()).f_mapping) != 0 } {
+            // if the file is mmapped, flush all cache lines for the mapped area.
+            // just obtain the data page list wrapper for the specified region, flush its data,
+            // and fence.
+            // this is a bit wasteful if the location/lengths are not page aligned, but easier to
+            // implement.
 
-        Ok(0)
+            let inode: &mut fs::INode = unsafe { &mut *file.inode().cast() };
+            let sb = inode.i_sb();
+            unsafe { bindings::sb_start_write(sb) };
+            // TODO: safety
+            let fs_info_raw = unsafe { (*sb).s_fs_info };
+            let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+            let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+            let pi_info = pi.get_inode_info()?;
+            let len = end - start;
+
+            let result = hayleyfs_msync(sbi, pi_info, start, len);
+            match result {
+                Ok(_) => Ok(0),
+                Err(e) => Err(e),
+            }
+        } else {
+            Ok(0)
+        }
     }
 
     fn write(
@@ -618,4 +635,21 @@ fn get_num_pages_in_region(count: u64, offset: u64) -> u64 {
             (remaining_bytes / HAYLEYFS_PAGESIZE) + 2 // +2 for the first and last page
         }
     }
+}
+
+fn hayleyfs_msync(
+    sbi: &SbInfo,
+    pi_info: &HayleyFsRegInodeInfo,
+    start: u64,
+    len: u64,
+) -> Result<DataPageListWrapper<Clean, Msynced>> {
+    let data_pages = DataPageListWrapper::get_data_page_list(pi_info, len, start)?;
+    let data_pages = match data_pages {
+        Ok(data_pages) => data_pages, // we got all of the requested pages
+        Err(_) => {
+            pr_info!("ERROR: did not obtain the expected number of pages in msync on inode\n",);
+            return Err(EINVAL);
+        }
+    };
+    data_pages.msync_pages(sbi)
 }

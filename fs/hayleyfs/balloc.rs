@@ -1991,6 +1991,39 @@ impl DataPageListWrapper<Clean, Writeable> {
             },
         ))
     }
+
+    // persistence typestate breaks down a little here, since someone could have
+    // (and likely has) written to the msync'ed pages and left them in a dirty
+    // and/or inflight state. we can't represent individual page typestates and
+    // the pages are originally obtained as Clean. since we're going to flush
+    // and fence them all anyway the initial persistence typestate is not
+    // important.
+    // TODO: this is done in a kind of unsafe way with direct flush and fence. make it safer
+    pub(crate) fn msync_pages(self, sbi: &SbInfo) -> Result<DataPageListWrapper<Clean, Msynced>> {
+        // go through the list, obtain each page, flush its cache lines
+        let mut page_list = self.get_page_list_cursor();
+        let mut page = page_list.current();
+        while page.is_some() {
+            if let Some(page) = page {
+                let page_no = page.get_page_no();
+                let ptr = unsafe { page_no_to_page(sbi, page_no)? };
+                flush_buffer(ptr, HAYLEYFS_PAGESIZE.try_into()?, false);
+            } else {
+                unreachable!();
+            }
+            page_list.move_next();
+            page = page_list.current();
+        }
+        // fence at the end
+        sfence();
+        Ok(DataPageListWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            offset: self.offset,
+            num_pages: self.num_pages,
+            pages: self.pages,
+        })
+    }
 }
 
 impl DataPageListWrapper<Clean, ToUnmap> {
