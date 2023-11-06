@@ -296,9 +296,10 @@ impl fs::Type for HayleyFs {
             }
             end_timing!(EvictDirInodePages, evict_dir_inode_pages);
         }
-        // TODO: handle other cases
-
-        unsafe { bindings::clear_inode(inode.get_inner()) };
+        unsafe {
+            bindings::truncate_inode_pages(&mut (*inode.get_inner()).i_data, 0);
+            bindings::clear_inode(inode.get_inner());
+        }
 
         // TODO: we might want to make deallocating inode numbers unsafe or
         // require proof that the inode in question has actually been

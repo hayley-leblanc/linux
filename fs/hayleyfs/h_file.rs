@@ -34,13 +34,14 @@ impl file::Operations for FileOps {
 
     fn release(_data: (), _file: &file::File) {}
 
-    fn fsync(
-        _data: (),
-        _file: &file::File,
-        _start: u64,
-        _end: u64,
-        _datasync: bool,
-    ) -> Result<u32> {
+    fn fsync(_data: (), file: &file::File, _start: u64, _end: u64, _datasync: bool) -> Result<u32> {
+        unsafe {
+            if bindings::mapping_mapped((*file.get_inner()).f_mapping) != 0 {
+                pr_info!("msync");
+                // TODO: implement msync case
+            }
+        }
+
         Ok(0)
     }
 
@@ -116,7 +117,7 @@ impl file::Operations for FileOps {
     fn mmap(_data: (), f: &file::File, vma: *mut bindings::vm_area_struct) -> Result<()> {
         unsafe {
             bindings::file_accessed(f.get_inner());
-            bindings::vm_flags_set(vma, bindings::VM_MIXEDMAP.into());
+            bindings::vm_flags_set(vma, (bindings::VM_MIXEDMAP | bindings::VM_HUGEPAGE).into());
             (*vma).vm_ops = mm::OperationsVtable::<VmaOps>::build();
         }
         // unsafe { vma.set_ops(mm::OperationsVtable::<VmaOps>::build()) };
@@ -508,14 +509,22 @@ impl iomap::Operations for IomapOps {
     }
 
     fn iomap_end(
-        _inode: &fs::INode,
+        inode: &fs::INode,
         _pos: i64,
-        _length: i64,
-        _written: isize,
-        _flags: u32,
-        _iomap: *mut bindings::iomap,
+        length: i64,
+        written: isize,
+        flags: u32,
+        iomap: *mut bindings::iomap,
     ) -> Result<i32> {
-        Err(EPERM)
+        unsafe {
+            if u32::from((*iomap).type_) == bindings::IOMAP_MAPPED
+                && written < length.try_into()?
+                && flags & bindings::IOMAP_WRITE != 0
+            {
+                bindings::truncate_pagecache(inode.get_inner(), inode.i_size_read());
+            }
+        }
+        Ok(0)
     }
 }
 

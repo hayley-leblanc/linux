@@ -285,6 +285,7 @@ pub(crate) fn hayleyfs_iget(
         (*inode).i_ctime = pi.get_ctime();
         (*inode).i_mtime = pi.get_mtime();
         (*inode).i_blkbits = bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()?;
+        (*inode).i_flags |= bindings::S_DAX;
         // TODO: set the rest of the fields!
     }
 
@@ -449,6 +450,7 @@ fn new_vfs_inode<'a, Type>(
     vfs_inode.i_size = new_inode.get_size().try_into()?;
     vfs_inode.i_blocks = new_inode.get_blocks();
     vfs_inode.i_blkbits = unsafe { bindings::blksize_bits(sbi.blocksize.try_into()?).try_into()? };
+    vfs_inode.i_flags |= bindings::S_DAX;
 
     unsafe {
         let uid = bindings::le32_to_cpu(new_inode.get_uid());
@@ -456,7 +458,6 @@ fn new_vfs_inode<'a, Type>(
         // TODO: https://elixir.bootlin.com/linux/latest/source/fs/ext2/inode.c#L1395 ?
         bindings::i_uid_write(vfs_inode, uid);
         bindings::i_gid_write(vfs_inode, gid);
-
         // let ret = bindings::insert_inode_locked(vfs_inode);
         // if ret < 0 {
         //     // TODO: from_kernel_errno should really only be pub(crate)
