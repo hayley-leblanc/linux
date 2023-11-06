@@ -9,7 +9,8 @@ pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 /// Taken from Corundum
 /// Flushes cache line back to memory
 #[allow(dead_code)]
-pub(crate) fn flush_buffer<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
+#[inline(never)]
+pub(crate) extern "C" fn hayleyfs_flush_buffer<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
     // #[cfg(not(feature = "no_persist"))]
     {
         let ptr = ptr as *const u8 as *mut u8;
@@ -46,8 +47,8 @@ pub(crate) fn flush_buffer<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
 }
 
 /// Store fence (from Corundum)
-// #[inline(always)]
 #[allow(dead_code)]
+#[inline(never)]
 pub(crate) fn sfence() {
     unsafe {
         asm!("sfence");
@@ -55,6 +56,7 @@ pub(crate) fn sfence() {
 }
 
 #[allow(dead_code)]
+#[inline(never)]
 pub(crate) unsafe fn memcpy_nt<T: ?Sized>(
     src: *const T,
     dst: *mut T,
@@ -84,10 +86,10 @@ pub(crate) unsafe fn memcpy_nt<T: ?Sized>(
 pub(crate) unsafe fn flush_edge_cachelines(ptr: *mut c_void, size: u64) -> Result<()> {
     let raw_ptr = ptr as u64;
     if raw_ptr & 0x7 != 0 {
-        flush_buffer(ptr, 1, false);
+        hayleyfs_flush_buffer(ptr, 1, false);
     }
     if (raw_ptr + size) & 0x7 != 0 {
-        unsafe { flush_buffer(ptr.offset(size.try_into()?), 1, false) };
+        unsafe { hayleyfs_flush_buffer(ptr.offset(size.try_into()?), 1, false) };
     }
 
     Ok(())
@@ -99,6 +101,7 @@ pub(crate) unsafe fn flush_edge_cachelines(ptr: *mut c_void, size: u64) -> Resul
 /// Assumes length and dst+length to be 4-byte aligned. Truncates the region to the
 /// last 4-byte boundary. dst does not have to be 4-byte aligned. dst must be the only
 /// active pointer to the specified region of memory.
+#[inline(never)]
 pub(crate) unsafe fn memset_nt(dst: *mut c_void, dword: u32, size: usize, fence: bool) {
     let qword: u64 = ((dword as u64) << 32) | dword as u64;
 
