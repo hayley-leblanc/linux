@@ -137,7 +137,6 @@ impl file::Operations for FileOps {
             bindings::vm_flags_set(vma, (bindings::VM_MIXEDMAP | bindings::VM_HUGEPAGE).into());
             (*vma).vm_ops = mm::OperationsVtable::<VmaOps>::build();
         }
-        // unsafe { vma.set_ops(mm::OperationsVtable::<VmaOps>::build()) };
         Ok(())
     }
 }
@@ -462,7 +461,13 @@ impl mm::Operations for VmaOps {
     ) -> bindings::vm_fault_t {
         let mut pfn: bindings::pfn_t = bindings::pfn_t { val: 0 };
         let mut error: i32 = 0;
+
         unsafe {
+            // TODO: also update persistent timestamp!!
+            if (*vmf).flags & bindings::fault_flag_FAULT_FLAG_WRITE != 0 {
+                bindings::file_update_time((*(*vmf).__bindgen_anon_1.vma).vm_file);
+            }
+
             bindings::dax_iomap_fault(
                 vmf,
                 pe,
