@@ -876,6 +876,11 @@ void rust_helper_vm_flags_set(struct vm_area_struct *vma, vm_flags_t flags) {
 }
 EXPORT_SYMBOL_GPL(rust_helper_vm_flags_set);
 
+int rust_helper_mapping_mapped(struct address_space *mapping) {
+	return mapping_mapped(mapping);
+}
+EXPORT_SYMBOL_GPL(rust_helper_mapping_mapped);
+
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
  * as the Rust `usize` type, so we can use it in contexts where Rust
