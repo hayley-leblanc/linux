@@ -184,10 +184,8 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                     }
                     Some(page) => *page.0,
                 };
-                // pr_info!("allocating page {:?} on cpu {:?}\n", page, cpu);
                 free_list.list.remove(&page);
                 free_list.free_pages -= 1;
-                // pr_info!("allocated page {:?}\n", page);
                 Ok(page)
             } else {
                 // drop the free_list lock so that we can't deadlock with other processes that might
@@ -303,7 +301,6 @@ impl PerCpuPageAllocator {
     fn dealloc_page(&self, page_no: PageNum) -> Result<()> {
         // rust division rounds down
         let cpu: usize = ((page_no - self.start) / self.pages_per_cpu).try_into()?;
-        // pr_info!("deallocating page {:?} on cpu {:?}\n", page_no, cpu);
         let free_list = Arc::clone(&self.free_lists[cpu]);
         let mut free_list = free_list.lock();
         let res = free_list.list.try_insert(page_no, ());
@@ -498,7 +495,6 @@ impl<'a, State, Op> DirPageWrapper<'a, State, Op> {
 
 impl<'a> DirPageWrapper<'a, Clean, Start> {
     pub(crate) fn from_page_no(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
-        // pr_info!("from page no\n");
         let ph = unsafe { page_no_to_dir_header(&sbi, page_no)? };
         if !ph.is_initialized() {
             pr_info!("ERROR: page {:?} is uninitialized\n", page_no);
@@ -607,6 +603,26 @@ unsafe fn page_no_to_page(sbi: &SbInfo, page_no: PageNum) -> Result<*mut u8> {
     }
 }
 
+// TODO: safety
+fn get_offset_of_page_no(sbi: &SbInfo, page_no: PageNum) -> Result<u64> {
+    if page_no > MAX_PAGES {
+        pr_info!(
+            "ERROR: page no {:?} is higher than max pages {:?}\n",
+            page_no,
+            MAX_PAGES
+        );
+        Err(ENOSPC)
+    } else {
+        let page_desc = unsafe { unchecked_new_page_no_to_data_header(sbi, page_no)? };
+        if page_desc.page_type == PageType::NONE {
+            pr_info!("ERROR: page descriptor is uninitialized\n");
+            Err(EINVAL)
+        } else {
+            Ok(page_desc.get_offset())
+        }
+    }
+}
+
 impl<'a> DirPageWrapper<'a, Dirty, Alloc> {
     /// Allocate a new page and set it to be a directory page.
     /// Does NOT flush the allocated page.
@@ -647,7 +663,6 @@ impl<'a> DirPageWrapper<'a, Clean, Free> {
 
 impl<'a> DirPageWrapper<'a, Clean, Alloc> {
     pub(crate) fn zero_page(mut self, sbi: &SbInfo) -> Result<DirPageWrapper<'a, Clean, Zeroed>> {
-        // pr_info!("zero page {:?}\n", self.page_no);
         let page_addr = unsafe { page_no_to_page(sbi, self.page_no)? };
         unsafe {
             memset_nt(
@@ -813,7 +828,7 @@ impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
 impl<'a, Op> DirPageWrapper<'a, Dirty, Op> {
     pub(crate) fn flush(mut self) -> DirPageWrapper<'a, InFlight, Op> {
         match &self.page.page {
-            Some(page) => flush_buffer(page, mem::size_of::<DirPageHeader>(), false),
+            Some(page) => hayleyfs_flush_buffer(page, mem::size_of::<DirPageHeader>(), false),
             None => panic!("ERROR: Wrapper does not have a page"),
         };
         let page = self.take_and_make_drop_safe();
@@ -952,7 +967,7 @@ impl DirPageListWrapper<Clean, ToUnmap> {
             if let Some(page) = page {
                 let ph = unsafe { page_no_to_dir_header(sbi, page.get_page_no())? };
                 ph.ino = 0;
-                flush_buffer(ph, mem::size_of::<DirPageHeader>(), false);
+                hayleyfs_flush_buffer(ph, mem::size_of::<DirPageHeader>(), false);
             }
             pages.move_next();
             page = pages.current();
@@ -973,7 +988,7 @@ impl DirPageListWrapper<Clean, ClearIno> {
             if let Some(page) = page {
                 let ph = unsafe { page_no_to_dir_header(sbi, page.get_page_no())? };
                 unsafe { ph.dealloc(sbi) };
-                flush_buffer(ph, mem::size_of::<DirPageHeader>(), false);
+                hayleyfs_flush_buffer(ph, mem::size_of::<DirPageHeader>(), false);
             }
             pages.move_next();
             page = pages.current();
@@ -1150,7 +1165,6 @@ unsafe fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut 
 
     match ph {
         Some(ph) => {
-            // pr_info!("page desc addr {:x}\n", ph as *mut PageDescriptor as u64);
             if ph.get_page_type() != PageType::DATA {
                 pr_info!("Page {:?} is not a data page\n", page_no);
                 Err(EINVAL)
@@ -1177,8 +1191,6 @@ unsafe fn unchecked_new_page_no_to_data_header(
     page_no: PageNum,
 ) -> Result<&mut DataPageHeader> {
     let page_desc_table = sbi.get_page_desc_table()?;
-    // pr_info!("page no: {:?}\n", page_no);
-    // pr_info!("data page start: {:?}\n", sbi.get_data_pages_start_page());
     let page_index: usize = (page_no - sbi.get_data_pages_start_page()).try_into()?;
     let ph = page_desc_table.get_mut(page_index);
     match ph {
@@ -1260,12 +1272,6 @@ impl<'a> StaticDataPageWrapper<'a, Clean, Writeable> {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn from_data_page_info(sbi: &'a SbInfo, info: &DataPageInfo) -> Result<Self> {
-        let page_no = info.get_page_no();
-        Self::from_page_no(sbi, page_no)
-    }
-
-    #[allow(dead_code)]
     pub(crate) fn read_from_page(
         &self,
         sbi: &SbInfo,
@@ -1332,7 +1338,7 @@ impl<'a> StaticDataPageWrapper<'a, Clean, Alloc> {
 impl<'a, Op> StaticDataPageWrapper<'a, Dirty, Op> {
     #[allow(dead_code)]
     pub(crate) fn flush(self) -> StaticDataPageWrapper<'a, InFlight, Op> {
-        flush_buffer(self.page, mem::size_of::<DataPageHeader>(), false);
+        hayleyfs_flush_buffer(self.page, mem::size_of::<DataPageHeader>(), false);
         StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
@@ -1488,11 +1494,6 @@ impl<'a> DataPageWrapper<'a, Clean, Writeable> {
         }
     }
 
-    pub(crate) fn from_data_page_info(sbi: &'a SbInfo, info: &DataPageInfo) -> Result<Self> {
-        let page_no = info.get_page_no();
-        Self::from_page_no(sbi, page_no)
-    }
-
     #[allow(dead_code)]
     pub(crate) fn read_from_page(
         &self,
@@ -1563,8 +1564,7 @@ impl<'a> DataPageWrapper<'a, Clean, ToUnmap> {
 
     // TODO: this should take a ClearIno dentry or Dealloc inode
     #[allow(dead_code)]
-    pub(crate) fn mark_to_unmap(sbi: &'a SbInfo, info: &DataPageInfo) -> Result<Self> {
-        let page_no = info.get_page_no();
+    pub(crate) fn mark_to_unmap(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
         let ph = unsafe { page_no_to_data_header(sbi, page_no)? };
         unsafe { Self::wrap_page_to_unmap(ph, page_no) }
     }
@@ -1644,7 +1644,7 @@ impl<'a> DataPageWrapper<'a, Clean, Alloc> {
 impl<'a, Op> DataPageWrapper<'a, Dirty, Op> {
     pub(crate) fn flush(mut self) -> DataPageWrapper<'a, InFlight, Op> {
         match &self.page.page {
-            Some(page) => flush_buffer(page, mem::size_of::<DataPageHeader>(), false),
+            Some(page) => hayleyfs_flush_buffer(page, mem::size_of::<DataPageHeader>(), false),
             None => panic!("ERROR: Wrapper does not have a page"),
         };
 
@@ -1702,15 +1702,14 @@ impl<'a, State, Op> Drop for DataPageWrapper<'a, State, Op> {
 
 // TODO: make generic over data and dir pages
 pub(crate) struct LinkedDataPageInfo {
-    info: DataPageInfo,
+    page_no: PageNum,
     links: Links<LinkedDataPageInfo>,
 }
 
 impl PartialEq for LinkedDataPageInfo {
     fn eq(&self, other: &Self) -> bool {
-        self.info.get_owner() == other.info.get_owner()
-            && self.info.get_page_no() == other.info.get_page_no()
-            && self.info.get_offset() == other.info.get_offset()
+        self.page_no == other.page_no
+        // && self.info.get_offset() == other.info.get_offset()
     }
 }
 
@@ -1718,7 +1717,7 @@ impl Eq for LinkedDataPageInfo {}
 
 impl Ord for LinkedDataPageInfo {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.info.cmp(&other.info)
+        self.page_no.cmp(&other.page_no)
     }
 }
 
@@ -1729,9 +1728,9 @@ impl PartialOrd for LinkedDataPageInfo {
 }
 
 impl Deref for LinkedDataPageInfo {
-    type Target = DataPageInfo;
+    type Target = PageNum;
     fn deref(&self) -> &Self::Target {
-        &self.info
+        &self.page_no
     }
 }
 
@@ -1743,11 +1742,15 @@ impl GetLinks for Box<LinkedDataPageInfo> {
 }
 
 impl LinkedDataPageInfo {
-    pub(crate) fn new(info: DataPageInfo) -> Self {
+    pub(crate) fn new(page_no: PageNum) -> Self {
         Self {
-            info,
+            page_no,
             links: Links::new(),
         }
+    }
+
+    pub(crate) fn get_page_no(&self) -> PageNum {
+        self.page_no
     }
 }
 
@@ -1829,13 +1832,12 @@ impl DataPageListWrapper<Clean, Start> {
     ) -> Result<DataPageListWrapper<InFlight, Alloc>> {
         for _ in 0..no_pages {
             let (ph, page_no) = unsafe { DataPageHeader::alloc(sbi, Some(offset))? };
-            let page_info = DataPageInfo::new(pi_info.get_ino(), page_no, offset);
-            let boxed_page_info = Box::try_new(LinkedDataPageInfo::new(page_info.clone()))?;
+            let boxed_page_info = Box::try_new(LinkedDataPageInfo::new(page_no))?;
             self.pages.push_back(boxed_page_info);
-            flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
-            offset += HAYLEYFS_PAGESIZE;
+            hayleyfs_flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
             // TODO: don't do this on every iteration - lot of lock acquisition
-            pi_info.insert_page_iterator(page_info)?;
+            pi_info.insert_page_iterator(offset, page_no)?;
+            offset += HAYLEYFS_PAGESIZE;
         }
         let no_pages_u64: u64 = no_pages.try_into()?;
         Ok(DataPageListWrapper {
@@ -1862,7 +1864,7 @@ impl DataPageListWrapper<Clean, Alloc> {
                 if ph.get_ino() == 0 {
                     unsafe { ph.set_backpointer(ino) };
                     // TODO: only flush the cache line we changed
-                    flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
+                    hayleyfs_flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
                 }
             }
             pages.move_next();
@@ -1895,8 +1897,8 @@ impl DataPageListWrapper<Clean, Writeable> {
             let page_offset = page_offset(offset)?;
             // determine if the file actually has the page
             let result = pi_info.find(page_offset);
-            let data_page_info = match result {
-                Some(data_page_info) => data_page_info,
+            let data_page_no = match result {
+                Some(data_page_no) => data_page_no,
                 None => {
                     // if we reach the end of the file before getting all of the pages we
                     // want, use the error case to indicate that the pages are not writeable
@@ -1910,7 +1912,8 @@ impl DataPageListWrapper<Clean, Writeable> {
                 }
             };
 
-            pages.push_back(Box::try_new(LinkedDataPageInfo::new(data_page_info))?);
+            // TODO: testing - this might mess things up?
+            pages.push_back(Box::try_new(LinkedDataPageInfo::new(data_page_no))?);
             if offset % HAYLEYFS_PAGESIZE == 0 {
                 bytes += HAYLEYFS_PAGESIZE;
                 offset = page_offset + HAYLEYFS_PAGESIZE;
@@ -1957,7 +1960,7 @@ impl DataPageListWrapper<Clean, Writeable> {
 
                 // skip over pages at the head of the list that we are not writing to
                 // this should pretty much never happen so it won't hurt us performance-wise
-                if page.get_offset() < page_offset {
+                if get_offset_of_page_no(sbi, page_no)? < page_offset {
                     page_list.move_next();
                     continue;
                 }
@@ -2007,7 +2010,7 @@ impl DataPageListWrapper<Clean, Writeable> {
             if let Some(page) = page {
                 let page_no = page.get_page_no();
                 let ptr = unsafe { page_no_to_page(sbi, page_no)? };
-                flush_buffer(ptr, HAYLEYFS_PAGESIZE.try_into()?, false);
+                hayleyfs_flush_buffer(ptr, HAYLEYFS_PAGESIZE.try_into()?, false);
             } else {
                 unreachable!();
             }
@@ -2052,7 +2055,7 @@ impl DataPageListWrapper<Clean, ToUnmap> {
             if let Some(page) = page {
                 let ph = unsafe { page_no_to_data_header(sbi, page.get_page_no())? };
                 ph.ino = 0;
-                flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
+                hayleyfs_flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
             }
             pages.move_next();
             page = pages.current();
@@ -2075,7 +2078,7 @@ impl DataPageListWrapper<Clean, ClearIno> {
             if let Some(page) = page {
                 let ph = unsafe { page_no_to_data_header(sbi, page.get_page_no())? };
                 unsafe { ph.dealloc(sbi) };
-                flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
+                hayleyfs_flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
             }
             pages.move_next();
             page = pages.current();

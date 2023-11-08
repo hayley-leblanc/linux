@@ -229,8 +229,8 @@ fn single_page_write<'a>(
     start_timing!(write_lookup_page);
     let result = pi_info.find(page_offset);
     end_timing!(WriteLookupPage, write_lookup_page);
-    let data_page = if let Some(page_info) = result {
-        StaticDataPageWrapper::from_data_page_info(sbi, &page_info)?
+    let data_page = if let Some(page_no) = result {
+        StaticDataPageWrapper::from_page_no(sbi, page_no)?
     } else {
         init_timing!(write_alloc_page);
         start_timing!(write_alloc_page);
@@ -288,8 +288,8 @@ fn runtime_checked_write<'a>(
         // determine if the file actually has the page
         let result = pi_info.find(page_offset);
         match result {
-            Some(data_page_info) => {
-                let page = DataPageWrapper::from_data_page_info(sbi, &data_page_info)?;
+            Some(page_no) => {
+                let page = DataPageWrapper::from_page_no(sbi, page_no)?;
                 pages.try_push(page)?;
             }
             None => {
@@ -382,7 +382,6 @@ fn hayleyfs_read(
     let mut count: u64 = writer.len().try_into()?;
     init_timing!(read_inode_lookup);
     start_timing!(read_inode_lookup);
-    // pr_info!("read\n");
     let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     inode.update_atime();
     let pi = pi.update_atime(inode.get_atime()).flush().fence();
@@ -420,8 +419,8 @@ fn hayleyfs_read(
         // if the page exists, read from it. Otherwise, return zeroes
         let result = pi_info.find(page_offset.try_into()?);
         end_timing!(LookupDataPage, page_lookup);
-        if let Some(page_info) = result {
-            let data_page = DataPageWrapper::from_data_page_info(sbi, &page_info)?;
+        if let Some(page_no) = result {
+            let data_page = DataPageWrapper::from_page_no(sbi, page_no)?;
             init_timing!(read_page);
             start_timing!(read_page);
             let read = data_page.read_from_page(sbi, writer, offset_in_page, to_read)?;

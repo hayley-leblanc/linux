@@ -288,6 +288,7 @@ impl SbInfo {
         Ok(super_block)
     }
 
+    // TODO: why is this safe?
     pub(crate) fn get_page_desc_table<'a>(&self) -> Result<&'a mut [PageDescriptor]> {
         let page_desc_table_addr = unsafe {
             self.virt_addr

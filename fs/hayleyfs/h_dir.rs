@@ -388,7 +388,7 @@ impl<'a> DentryWrapper<'a, Clean, Complete> {
 
 impl<'a, Op> DentryWrapper<'a, Dirty, Op> {
     pub(crate) fn flush(self) -> DentryWrapper<'a, InFlight, Op> {
-        flush_buffer(self.dentry, mem::size_of::<HayleyFsDentry>(), false);
+        hayleyfs_flush_buffer(self.dentry, mem::size_of::<HayleyFsDentry>(), false);
         DentryWrapper {
             state: PhantomData,
             op: PhantomData,

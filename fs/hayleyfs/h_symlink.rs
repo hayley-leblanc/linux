@@ -41,7 +41,7 @@ fn hayleyfs_symlink<'a>(
     // look up the page containing the symlink path
     let page = pi_info.find(0);
     if let Some(page) = page {
-        let page_wrapper = DataPageWrapper::from_data_page_info(sbi, &page)?;
+        let page_wrapper = DataPageWrapper::from_page_no(sbi, page)?;
         let link = page_wrapper.read_from_page_raw(sbi, 0, size);
         match link {
             Ok(link) => Ok(link.as_ptr() as *const ffi::c_char),

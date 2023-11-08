@@ -384,7 +384,7 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         }
         if self.inode.size < total_size {
             self.inode.size = total_size;
-            flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+            hayleyfs_flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
         }
         (
             self.inode.size,
@@ -419,7 +419,7 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         }
         if self.inode.size < total_size {
             self.inode.size = total_size;
-            flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+            hayleyfs_flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
         }
         (
             self.inode.size,
@@ -453,7 +453,7 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         }
         if self.inode.size < total_size {
             self.inode.size = total_size;
-            flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+            hayleyfs_flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
         }
         (
             self.inode.size,
@@ -486,7 +486,7 @@ impl<'a> InodeWrapper<'a, Clean, Alloc, RegInode> {
         let total_size = bytes_written + current_offset;
         if self.inode.size < total_size {
             self.inode.size = total_size;
-            flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+            hayleyfs_flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
         }
         (
             self.inode.size,
@@ -541,7 +541,7 @@ impl<'a> InodeWrapper<'a, Clean, DecLink, RegInode> {
             let pages = info.get_all_pages()?;
             let mut unmap_vec = Vec::new();
             for page in pages.values() {
-                let p = DataPageWrapper::mark_to_unmap(sbi, page)?;
+                let p = DataPageWrapper::mark_to_unmap(sbi, *page)?;
                 unmap_vec.try_push(p)?;
             }
             Ok(
@@ -874,7 +874,7 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
 
 impl<'a, Op, Type> InodeWrapper<'a, Dirty, Op, Type> {
     pub(crate) fn flush(self) -> InodeWrapper<'a, InFlight, Op, Type> {
-        flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), false);
+        hayleyfs_flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), false);
         Self::new(self)
     }
 }

@@ -230,7 +230,7 @@ impl fs::Type for HayleyFs {
         // TODO: DO THIS SAFELY WITH WRAPPERS
         // raw_pi.atime = unsafe { bindings::current_time(inode.get_inner()) };
         // unsafe { raw_pi.set_atime(bindings::current_time(inode.get_inner())) };
-        flush_buffer(&raw_pi, core::mem::size_of::<HayleyFsInode>(), true);
+        hayleyfs_flush_buffer(&raw_pi, core::mem::size_of::<HayleyFsInode>(), true);
     }
 
     fn evict_inode(inode: &fs::INode) {
@@ -349,8 +349,8 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
         let pi = HayleyFsInode::init_root_inode(sbi, inode)?;
         let super_block = HayleyFsSuperBlock::init_super_block(sbi.get_virt_addr(), sbi.get_size());
 
-        flush_buffer(pi, INODE_SIZE.try_into()?, false);
-        flush_buffer(super_block, SB_SIZE.try_into()?, true);
+        hayleyfs_flush_buffer(pi, INODE_SIZE.try_into()?, false);
+        hayleyfs_flush_buffer(super_block, SB_SIZE.try_into()?, true);
 
         // fill in the new raw inode with info from our persistent inode
         // TODO: safer way of doing this
@@ -466,9 +466,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         }
         let owned_dir_pages = init_dir_pages.get(&live_inode);
         let owned_data_pages = init_data_pages.get(&live_inode);
-        // pr_info!("live inode: {:?}\n", live_inode);
-        // pr_info!("dir pages owned by inode: {:?}\n", owned_dir_pages);
-        // pr_info!("data pages owned by inode: {:?}\n", owned_data_pages);
 
         // iterate over pages owned by this inode, find valid dentries in those
         // pages, and add their inodes to the live inode list. also add the dir pages
@@ -490,7 +487,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
 
         // add data page to the volatile index
         if let Some(pages) = owned_data_pages {
-            let pages = build_tree(sbi, live_inode, pages)?;
+            let pages = build_tree(sbi, pages)?;
             sbi.ino_data_page_tree.insert_inode(live_inode, pages)?;
         }
 
@@ -517,18 +514,13 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     Ok(())
 }
 
-fn build_tree(
-    sbi: &SbInfo,
-    ino: InodeNum,
-    input_vec: &Vec<PageNum>,
-) -> Result<RBTree<u64, DataPageInfo>> {
+fn build_tree(sbi: &SbInfo, input_vec: &Vec<PageNum>) -> Result<RBTree<u64, PageNum>> {
     let mut output_tree = RBTree::new();
 
     for page_no in input_vec {
         let data_page_wrapper = DataPageWrapper::from_page_no(sbi, *page_no)?;
         let offset = data_page_wrapper.get_offset();
-        let page_info = DataPageInfo::new(ino, *page_no, offset);
-        output_tree.try_insert(offset, page_info)?;
+        output_tree.try_insert(offset, *page_no)?;
     }
 
     Ok(output_tree)
