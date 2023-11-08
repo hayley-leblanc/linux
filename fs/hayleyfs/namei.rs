@@ -1826,7 +1826,7 @@ fn get_free_dentry<'a, S: Initialized>(
     let parent_inode_info = parent_inode.get_inode_info()?;
     let result = parent_inode_info.find_page_with_free_dentry(sbi)?;
     let result = if let Some(page_info) = result {
-        let dir_page = DirPageWrapper::from_dir_page_info(sbi, &page_info)?;
+        let dir_page = DirPageWrapper::from_page_no(sbi, page_info.get_page_no())?;
         dir_page.get_free_dentry(sbi)
     } else {
         // no pages have any free dentries

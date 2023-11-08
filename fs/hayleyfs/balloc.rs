@@ -512,13 +512,6 @@ impl<'a> DirPageWrapper<'a, Clean, Start> {
         }
     }
 
-    /// This method returns a DirPageWrapper ONLY if the page is initialized
-    /// Otherwise it returns an error
-    pub(crate) fn from_dir_page_info(sbi: &'a SbInfo, info: &DirPageInfo) -> Result<Self> {
-        let page_no = info.get_page_no();
-        Self::from_page_no(sbi, page_no)
-    }
-
     pub(crate) fn from_dentry<State, Op>(
         sbi: &'a SbInfo,
         dentry: &DentryWrapper<'a, State, Op>,
@@ -876,70 +869,22 @@ impl<'a, State, Op> Drop for DirPageWrapper<'a, State, Op> {
     }
 }
 
-pub(crate) struct LinkedDirPageInfo {
-    info: DirPageInfo,
-    links: Links<LinkedDirPageInfo>,
-}
-
-impl<'a> PartialEq for LinkedDirPageInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.info.get_page_no() == other.info.get_page_no()
-    }
-}
-
-impl Eq for LinkedDirPageInfo {}
-
-impl Ord for LinkedDirPageInfo {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.info.cmp(&other.info)
-    }
-}
-
-impl PartialOrd for LinkedDirPageInfo {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Deref for LinkedDirPageInfo {
-    type Target = DirPageInfo;
-    fn deref(&self) -> &Self::Target {
-        &self.info
-    }
-}
-
-impl GetLinks for Box<LinkedDirPageInfo> {
-    type EntryType = LinkedDirPageInfo;
-    fn get_links(data: &Self::EntryType) -> &Links<Self::EntryType> {
-        &data.links
-    }
-}
-
-impl LinkedDirPageInfo {
-    pub(crate) fn new(info: DirPageInfo) -> Self {
-        Self {
-            info,
-            links: Links::new(),
-        }
-    }
-}
-
 /// represents a typestate-ful section of a directory's pages in no
 /// particular order
 pub(crate) struct DirPageListWrapper<State, Op> {
     state: PhantomData<State>,
     op: PhantomData<Op>,
-    pages: List<Box<LinkedDirPageInfo>>,
+    pages: List<Box<LinkedPage>>,
 }
 
 impl<State, Op> PmObjWrapper for DirPageListWrapper<State, Op> {}
 
 impl<State, Op> DirPageListWrapper<State, Op> {
-    // pub(crate) fn get_page_list(&self) -> &List<Box<LinkedDirPageInfo>> {
+    // pub(crate) fn get_page_list(&self) -> &List<Box<LinkedPage>> {
     //     &self.pages
     // }
 
-    pub(crate) fn get_page_list_cursor(&self) -> Cursor<'_, Box<LinkedDirPageInfo>> {
+    pub(crate) fn get_page_list_cursor(&self) -> Cursor<'_, Box<LinkedPage>> {
         self.pages.cursor_front()
     }
 }
@@ -951,7 +896,7 @@ impl DirPageListWrapper<Clean, ToUnmap> {
         let iter = pages.keys();
         let mut v = List::new();
         for page in iter {
-            v.push_back(Box::try_new(LinkedDirPageInfo::new(*page))?);
+            v.push_back(Box::try_new(LinkedPage::new(page.get_page_no()))?);
         }
         Ok(Self {
             state: PhantomData,
@@ -1701,47 +1646,47 @@ impl<'a, State, Op> Drop for DataPageWrapper<'a, State, Op> {
 }
 
 // TODO: make generic over data and dir pages
-pub(crate) struct LinkedDataPageInfo {
+pub(crate) struct LinkedPage {
     page_no: PageNum,
-    links: Links<LinkedDataPageInfo>,
+    links: Links<LinkedPage>,
 }
 
-impl PartialEq for LinkedDataPageInfo {
+impl PartialEq for LinkedPage {
     fn eq(&self, other: &Self) -> bool {
         self.page_no == other.page_no
         // && self.info.get_offset() == other.info.get_offset()
     }
 }
 
-impl Eq for LinkedDataPageInfo {}
+impl Eq for LinkedPage {}
 
-impl Ord for LinkedDataPageInfo {
+impl Ord for LinkedPage {
     fn cmp(&self, other: &Self) -> Ordering {
         self.page_no.cmp(&other.page_no)
     }
 }
 
-impl PartialOrd for LinkedDataPageInfo {
+impl PartialOrd for LinkedPage {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Deref for LinkedDataPageInfo {
+impl Deref for LinkedPage {
     type Target = PageNum;
     fn deref(&self) -> &Self::Target {
         &self.page_no
     }
 }
 
-impl GetLinks for Box<LinkedDataPageInfo> {
-    type EntryType = LinkedDataPageInfo;
+impl GetLinks for Box<LinkedPage> {
+    type EntryType = LinkedPage;
     fn get_links(data: &Self::EntryType) -> &Links<Self::EntryType> {
         &data.links
     }
 }
 
-impl LinkedDataPageInfo {
+impl LinkedPage {
     pub(crate) fn new(page_no: PageNum) -> Self {
         Self {
             page_no,
@@ -1762,7 +1707,7 @@ pub(crate) struct DataPageListWrapper<State, Op> {
     offset: u64, // offset at which the contiguous chunk of pages starts
     // TODO: what structure should we use here? vec has a size limit
     num_pages: u64,
-    pages: List<Box<LinkedDataPageInfo>>,
+    pages: List<Box<LinkedPage>>,
 }
 
 impl<State, Op> PmObjWrapper for DataPageListWrapper<State, Op> {}
@@ -1772,7 +1717,7 @@ impl<State, Op> DataPageListWrapper<State, Op> {
         self.num_pages
     }
 
-    pub(crate) fn get_page_list_cursor(&self) -> Cursor<'_, Box<LinkedDataPageInfo>> {
+    pub(crate) fn get_page_list_cursor(&self) -> Cursor<'_, Box<LinkedPage>> {
         self.pages.cursor_front()
     }
 
@@ -1832,7 +1777,7 @@ impl DataPageListWrapper<Clean, Start> {
     ) -> Result<DataPageListWrapper<InFlight, Alloc>> {
         for _ in 0..no_pages {
             let (ph, page_no) = unsafe { DataPageHeader::alloc(sbi, Some(offset))? };
-            let boxed_page_info = Box::try_new(LinkedDataPageInfo::new(page_no))?;
+            let boxed_page_info = Box::try_new(LinkedPage::new(page_no))?;
             self.pages.push_back(boxed_page_info);
             hayleyfs_flush_buffer(ph, mem::size_of::<DataPageHeader>(), false);
             // TODO: don't do this on every iteration - lot of lock acquisition
@@ -1913,7 +1858,7 @@ impl DataPageListWrapper<Clean, Writeable> {
             };
 
             // TODO: testing - this might mess things up?
-            pages.push_back(Box::try_new(LinkedDataPageInfo::new(data_page_no))?);
+            pages.push_back(Box::try_new(LinkedPage::new(data_page_no))?);
             if offset % HAYLEYFS_PAGESIZE == 0 {
                 bytes += HAYLEYFS_PAGESIZE;
                 offset = page_offset + HAYLEYFS_PAGESIZE;
@@ -2037,7 +1982,7 @@ impl DataPageListWrapper<Clean, ToUnmap> {
         let pages = pi_info.get_all_pages()?;
         let mut new_page_list = List::new();
         for page in pages.values() {
-            new_page_list.push_back(Box::try_new(LinkedDataPageInfo::new(*page))?);
+            new_page_list.push_back(Box::try_new(LinkedPage::new(*page))?);
         }
         Ok(Self {
             state: PhantomData,
