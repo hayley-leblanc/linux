@@ -27,7 +27,8 @@ pub(crate) trait PageAllocator {
     where
         Self: Sized;
     fn new_from_alloc_vec(
-        alloc_pages: Vec<PageNum>,
+        alloc_pages: List<Box<LinkedPage>>,
+        num_alloc_pages: u64,
         start: u64,
         dev_pages: u64,
         cpus: u32,
@@ -98,7 +99,8 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
     /// alloc_pages must be in sorted order. only pages between start and dev_pages
     /// will be added to the allocator
     fn new_from_alloc_vec(
-        alloc_pages: Vec<PageNum>,
+        alloc_pages: List<Box<LinkedPage>>,
+        num_alloc_pages: u64,
         start: u64,
         dev_pages: u64,
         cpus: u32,
@@ -107,38 +109,41 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
         let cpus_u64: u64 = cpus.into();
         let pages_per_cpu = total_pages / cpus_u64;
         let mut free_lists = Vec::new();
+        let mut page_cursor = alloc_pages.cursor_front();
+        let mut current_alloc_page = page_cursor.current();
         let mut current_page = start;
         let mut current_cpu_start = start; // used to keep track of when to move to the next cpu pool
-        let mut i = 0;
+                                           // let mut i = 0;
         let mut rb_tree = RBTree::new();
-        if alloc_pages.len() > 0 {
-            while current_page < dev_pages && i < alloc_pages.len() {
-                if current_page == current_cpu_start + pages_per_cpu {
-                    let free_list = PageFreeList {
-                        free_pages: pages_per_cpu,
-                        list: rb_tree,
-                    };
-                    free_lists.try_push(Arc::try_new(Mutex::new(free_list))?)?;
-                    rb_tree = RBTree::new();
-                    current_cpu_start += pages_per_cpu;
+        if num_alloc_pages > 0 {
+            while current_alloc_page.is_some() {
+                if let Some(current_alloc_page) = current_alloc_page {
+                    let current_alloc_page_no = current_alloc_page.get_page_no();
+                    if current_alloc_page_no == current_cpu_start + pages_per_cpu {
+                        let free_list = PageFreeList {
+                            free_pages: pages_per_cpu,
+                            list: rb_tree,
+                        };
+                        free_lists.try_push(Arc::try_new(Mutex::new(free_list))?)?;
+                        rb_tree = RBTree::new();
+                        current_cpu_start += pages_per_cpu;
+                    }
+                    if current_page < current_alloc_page_no {
+                        rb_tree.try_insert(current_page, ())?;
+                        current_page += 1;
+                    } else if current_page == current_alloc_page_no {
+                        current_page += 1;
+                        page_cursor.move_next();
+                    } else {
+                        pr_info!(
+                            "ERROR: current page is {:?} but current alloc page is {:?}\n",
+                            current_page,
+                            current_alloc_page_no
+                        );
+                        return Err(EINVAL);
+                    }
                 }
-                if current_page < alloc_pages[i] {
-                    rb_tree.try_insert(current_page, ())?;
-                    current_page += 1;
-                } else if current_page == alloc_pages[i] {
-                    current_page += 1;
-                    i += 1;
-                } else {
-                    // current_page > alloc_pages[i]
-                    // i don't THINK this can ever happen?
-                    pr_info!(
-                        "ERROR: cur_page {:?}, i {:?}, alloc_pages[i] {:?}\n",
-                        current_page,
-                        i,
-                        alloc_pages[i]
-                    );
-                    return Err(EINVAL);
-                }
+                current_alloc_page = page_cursor.current();
             }
         }
         if current_page < dev_pages {
@@ -541,7 +546,7 @@ unsafe fn unchecked_new_page_no_to_dir_header<'a>(
         }
         None => {
             pr_info!(
-                "No space left in page descriptor table - index {:?} out of bounds\n",
+                "[unchecked_new_page_no_to_dir_header] No space left in page descriptor table - index {:?} out of bounds\n",
                 page_index
             );
             Err(ENOSPC)
@@ -572,7 +577,7 @@ unsafe fn page_no_to_dir_header<'a>(
         }
         None => {
             pr_info!(
-                "No space left in page descriptor table - index {:?} out of bounds\n",
+                "[page_no_to_dir_header] No space left in page descriptor table - index {:?} out of bounds\n",
                 page_index
             );
             Err(ENOSPC)
@@ -1120,7 +1125,7 @@ unsafe fn page_no_to_data_header(sbi: &SbInfo, page_no: PageNum) -> Result<&mut 
         }
         None => {
             pr_info!(
-                "No space left in page descriptor table - index {:?} out of bounds\n",
+                "[page_no_to_data_header] No space left in page descriptor table - index {:?} out of bounds\n",
                 page_index
             );
             Err(ENOSPC)
@@ -1145,7 +1150,7 @@ unsafe fn unchecked_new_page_no_to_data_header(
         }
         None => {
             pr_info!(
-                "No space left in page descriptor table - index {:?} out of bounds\n",
+                "[unchecked_new_page_no_to_data_header] No space left in page descriptor table - index {:?} out of bounds\n",
                 page_index
             );
             Err(ENOSPC)

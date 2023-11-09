@@ -8,7 +8,7 @@ use defs::*;
 use h_dir::*;
 use h_inode::*;
 use kernel::prelude::*;
-use kernel::{bindings, c_str, fs, rbtree::RBTree, types::ForeignOwnable};
+use kernel::{bindings, c_str, fs, linked_list::List, rbtree::RBTree, types::ForeignOwnable};
 use namei::*;
 use pm::*;
 use volatile::*;
@@ -377,7 +377,8 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
 
 fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut alloc_inode_vec: Vec<InodeNum> = Vec::new();
-    let mut alloc_page_vec: Vec<PageNum> = Vec::new(); // TODO: do we use this?
+    let mut alloc_page_list: List<Box<LinkedPage>> = List::new();
+    let mut num_alloc_pages = 0;
     let mut init_dir_pages: RBTree<InodeNum, Vec<PageNum>> = RBTree::new();
     let mut init_data_pages: RBTree<InodeNum, Vec<PageNum>> = RBTree::new();
     let mut live_inode_vec: Vec<InodeNum> = Vec::new();
@@ -450,11 +451,13 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                     }
                 }
             }
-            alloc_page_vec.try_push(index + sbi.get_data_pages_start_page())?;
+            // alloc_page_vec.try_push(index + sbi.get_data_pages_start_page())?;
+            alloc_page_list.push_back(Box::try_new(LinkedPage::new(
+                index + sbi.get_data_pages_start_page(),
+            ))?);
+            num_alloc_pages += 1;
         }
     }
-    // pr_info!("allocated pages: {:?}\n", alloc_page_vec);
-    // pr_info!("allocated inodes: {:?}\n", alloc_inode_vec);
 
     // 4. scan the directory entries in live pages to determine which inodes are live
 
@@ -495,10 +498,9 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     }
 
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
-        alloc_page_vec,
-        // DATA_PAGE_START,
+        alloc_page_list,
+        num_alloc_pages,
         sbi.get_data_pages_start_page(),
-        // sbi.num_blocks,
         if sbi.num_pages < sbi.num_blocks {
             sbi.num_pages
         } else {
