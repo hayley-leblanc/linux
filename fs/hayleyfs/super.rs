@@ -376,19 +376,20 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
 }
 
 fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
-    let mut alloc_inode_vec: Vec<InodeNum> = Vec::new();
+    let mut alloc_inode_list: List<Box<LinkedInode>> = List::new();
+    let mut num_alloc_inodes = 0;
     let mut alloc_page_list: List<Box<LinkedPage>> = List::new();
     let mut num_alloc_pages = 0;
     let mut init_dir_pages: RBTree<InodeNum, Vec<PageNum>> = RBTree::new();
     let mut init_data_pages: RBTree<InodeNum, Vec<PageNum>> = RBTree::new();
-    let mut live_inode_vec: Vec<InodeNum> = Vec::new();
+    let mut live_inode_list: List<Box<LinkedInode>> = List::new();
     let mut processed_live_inodes: RBTree<InodeNum, ()> = RBTree::new(); // rbtree as a set
 
     // keeps track of maximum inode/page number in use to recreate the allocator
     let mut max_inode = 0;
     let mut max_page = sbi.get_data_pages_start_page();
 
-    live_inode_vec.try_push(1)?;
+    live_inode_list.push_back(Box::try_new(LinkedInode::new(1))?);
 
     // 1. check the super block to make sure it is a valid fs and to fill in sbi
     let sbi_size = sbi.get_size();
@@ -406,11 +407,11 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     // TODO: this scan will change significantly if the inode table is ever
     // not a single contiguous array
     let inode_table = sbi.get_inode_table()?;
-
     for inode in inode_table {
         if !inode.is_free() && inode.get_ino() != 0 {
-            alloc_inode_vec.try_push(inode.get_ino())?;
+            alloc_inode_list.push_back(Box::try_new(LinkedInode::new(inode.get_ino()))?);
             sbi.inc_inodes_in_use();
+            num_alloc_inodes += 1;
         }
     }
 
@@ -460,41 +461,43 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     }
 
     // 4. scan the directory entries in live pages to determine which inodes are live
-
-    while !live_inode_vec.is_empty() {
-        // TODO: implement a VecDeque to get better perf
-        let live_inode = live_inode_vec.remove(0);
-        if live_inode > max_inode {
-            max_inode = live_inode;
-        }
-        let owned_dir_pages = init_dir_pages.get(&live_inode);
-        let owned_data_pages = init_data_pages.get(&live_inode);
-
-        // iterate over pages owned by this inode, find valid dentries in those
-        // pages, and add their inodes to the live inode list. also add the dir pages
-        // to the volatile index
-        if let Some(pages) = owned_dir_pages {
-            for page in pages {
-                let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
-                let live_dentries = dir_page_wrapper.get_live_dentry_info(sbi)?;
-                // pr_info!("live dentries: {:?}\n", live_dentries);
-                // add these live dentries to the index
-                for dentry in live_dentries {
-                    sbi.ino_dentry_tree.insert(live_inode, dentry)?;
-                    live_inode_vec.try_push(dentry.get_ino())?;
-                }
-                let page_info = DirPageInfo::new(dir_page_wrapper.get_page_no());
-                sbi.ino_dir_page_tree.insert_one(live_inode, page_info)?;
+    let mut current_live_inode = live_inode_list.pop_front();
+    while current_live_inode.is_some() {
+        if let Some(current_live_inode) = current_live_inode {
+            let live_inode = current_live_inode.get_ino();
+            if live_inode > max_inode {
+                max_inode = live_inode;
             }
-        }
+            let owned_dir_pages = init_dir_pages.get(&live_inode);
+            let owned_data_pages = init_data_pages.get(&live_inode);
 
-        // add data page to the volatile index
-        if let Some(pages) = owned_data_pages {
-            let pages = build_tree(sbi, pages)?;
-            sbi.ino_data_page_tree.insert_inode(live_inode, pages)?;
-        }
+            // iterate over pages owned by this inode, find valid dentries in those
+            // pages, and add their inodes to the live inode list. also add the dir pages
+            // to the volatile index
+            if let Some(pages) = owned_dir_pages {
+                for page in pages {
+                    let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
+                    let live_dentries = dir_page_wrapper.get_live_dentry_info(sbi)?;
+                    // add these live dentries to the index
+                    for dentry in live_dentries {
+                        sbi.ino_dentry_tree.insert(live_inode, dentry)?;
+                        live_inode_list
+                            .push_back(Box::try_new(LinkedInode::new(dentry.get_ino()))?);
+                    }
+                    let page_info = DirPageInfo::new(dir_page_wrapper.get_page_no());
+                    sbi.ino_dir_page_tree.insert_one(live_inode, page_info)?;
+                }
+            }
 
-        processed_live_inodes.try_insert(live_inode, ())?;
+            // add data page to the volatile index
+            if let Some(pages) = owned_data_pages {
+                let pages = build_tree(sbi, pages)?;
+                sbi.ino_data_page_tree.insert_inode(live_inode, pages)?;
+            }
+
+            processed_live_inodes.try_insert(live_inode, ())?;
+        }
+        current_live_inode = live_inode_list.pop_front()
     }
 
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
@@ -509,7 +512,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         sbi.cpus,
     )?;
     sbi.inode_allocator = Some(RBInodeAllocator::new_from_alloc_vec(
-        alloc_inode_vec,
+        alloc_inode_list,
+        num_alloc_inodes,
         ROOT_INO + 1,
         sbi.num_inodes,
     )?);
@@ -569,8 +573,10 @@ impl PmDevice for SbInfo {
         pr_info!("device size: {:?}\n", device_size);
         let num_inodes: u64 = device_size / bytes_per_inode;
         let inode_table_size = num_inodes * INODE_SIZE;
+        let inode_table_pages = (inode_table_size / HAYLEYFS_PAGESIZE) + 1; // account for possible rounding down
         let num_pages = num_inodes * pages_per_inode;
         let page_desc_table_size = num_pages * PAGE_DESCRIPTOR_SIZE;
+        let page_desc_table_pages = (page_desc_table_size / HAYLEYFS_PAGESIZE) + 1;
         pr_info!(
             "size of inode table (MB): {:?}\n",
             inode_table_size / (1024 * 1024)
@@ -584,8 +590,10 @@ impl PmDevice for SbInfo {
 
         self.num_inodes = num_inodes;
         self.inode_table_size = inode_table_size;
+        self.inode_table_pages = inode_table_pages;
         self.num_pages = num_pages;
         self.page_desc_table_size = page_desc_table_size;
+        self.page_desc_table_pages = page_desc_table_pages;
 
         // self.page_allocator =
         //     Option::<PerCpuPageAllocator>::new_from_range(DATA_PAGE_START, self.num_blocks, self.cpus)?;

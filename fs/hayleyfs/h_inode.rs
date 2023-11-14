@@ -7,9 +7,10 @@ use crate::volatile::*;
 use core::{
     marker::PhantomData,
     mem,
+    ops::Deref,
 };
 use kernel::prelude::*;
-use kernel::{bindings, ForeignOwnable, fs, sync::{Arc, smutex::Mutex}, rbtree::RBTree};
+use kernel::{bindings, linked_list::{List, Links, GetLinks}, ForeignOwnable, fs, sync::{Arc, smutex::Mutex}, rbtree::RBTree};
 
 // ZSTs for representing inode types
 // These are not typestate since they don't change, but they are a generic
@@ -59,6 +60,46 @@ impl core::fmt::Debug for HayleyFsInode {
             .field("ino", &self.ino)
             .field("padding", &self._padding)
             .finish()
+    }
+}
+
+pub(crate) struct LinkedInode {
+    inode: InodeNum,
+    links: Links<LinkedInode>,
+}
+
+impl PartialEq for LinkedInode {
+    fn eq(&self, other: &Self) -> bool {
+        self.inode == other.inode
+    }
+}
+
+impl Eq for LinkedInode {}
+
+impl Deref for LinkedInode {
+    type Target = InodeNum;
+    fn deref(&self) -> &Self::Target {
+        &self.inode
+    }
+}
+
+impl GetLinks for Box<LinkedInode> {
+    type EntryType = LinkedInode;
+    fn get_links(data: &Self::EntryType) -> &Links<Self::EntryType> {
+        &data.links
+    }
+}
+
+impl LinkedInode {
+    pub(crate) fn new(inode: InodeNum) -> Self {
+        Self {
+            inode,
+            links: Links::new(),
+        }
+    }
+
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.inode
     }
 }
 
@@ -889,7 +930,7 @@ impl<'a, Op, Type> InodeWrapper<'a, InFlight, Op, Type> {
 /// Interface for volatile inode allocator structures
 pub(crate) trait InodeAllocator {
     fn new(val: u64, num_inodes: u64) -> Result<Self> where Self: Sized;
-    fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64, num_inodes: u64) -> Result<Self> where Self: Sized;
+    fn new_from_alloc_vec(alloc_inodes: List<Box<LinkedInode>>, num_alloc_inodes: u64, start: u64, num_inodes: u64) -> Result<Self> where Self: Sized;
     fn alloc_ino(&self, sbi: &SbInfo) -> Result<InodeNum>;
     // TODO: should this be unsafe or require a free inode wrapper?
     fn dealloc_ino(&self, ino: InodeNum, sbi: &SbInfo) -> Result<()>;
@@ -910,24 +951,30 @@ impl InodeAllocator for RBInodeAllocator {
         })
     }
 
-    fn new_from_alloc_vec(alloc_inodes: Vec<InodeNum>, start: u64, num_inodes: u64) -> Result<Self> {
+    fn new_from_alloc_vec(alloc_inodes: List<Box<LinkedInode>>, num_alloc_inodes: u64, start: u64, num_inodes: u64) -> Result<Self> {
         let mut rb = RBTree::new();
         let mut cur_ino = start;
-        let mut i = 1; // start at 1 to skip root inode
-        if start <= alloc_inodes.len().try_into()? {
-            while cur_ino < num_inodes && i < alloc_inodes.len() {
-                if cur_ino < alloc_inodes[i] {
-                    rb.try_insert(cur_ino, ())?;
-                    cur_ino += 1;
-                } else if cur_ino == alloc_inodes[i] {
-                    cur_ino += 1;
-                    i += 1;
-                } else {
-                    // cur_ino > alloc_pages[i]
-                    // shouldn't ever happen
-                    pr_info!("ERROR: cur_ino {:?}, i {:?}, alloc_inodes[i] {:?}\n", cur_ino, i, alloc_inodes[i]);
-                    return Err(EINVAL);
+        let mut page_cursor = alloc_inodes.cursor_front();
+        let mut current_alloc_inode = page_cursor.current();
+
+        // if start <= alloc_inodes.len().try_into()? {
+        if num_alloc_inodes > 0 {
+            while current_alloc_inode.is_some() {
+                if let Some(current_alloc_inode) = current_alloc_inode {
+                    let current_alloc_ino = current_alloc_inode.get_ino();
+                    if cur_ino < current_alloc_ino {
+                        rb.try_insert(cur_ino, ())?;
+                        cur_ino += 1;
+                    } else if cur_ino == current_alloc_ino {
+                        cur_ino += 1;
+                        page_cursor.move_next();
+                    } else {
+                        // shouldn't ever happen
+                        pr_info!("ERROR: current inode is {:?} but current inode is {:?}\n", cur_ino, current_alloc_ino);
+                        return Err(EINVAL);
+                    }
                 }
+                current_alloc_inode = page_cursor.current();
             }
         } 
         // add all remaining inodes to the allocator

@@ -163,8 +163,10 @@ pub(crate) struct SbInfo {
 
     pub(crate) num_inodes: u64,
     pub(crate) inode_table_size: u64,
+    pub(crate) inode_table_pages: u64,
     pub(crate) num_pages: u64,
     pub(crate) page_desc_table_size: u64,
+    pub(crate) page_desc_table_pages: u64,
 }
 
 // SbInfo must be Send and Sync for it to be used as the Context's data.
@@ -202,8 +204,10 @@ impl SbInfo {
             mount_opts: HayleyfsParams::default(),
             num_inodes: 0,
             inode_table_size: 0,
+            inode_table_pages: 0,
             num_pages: 0,
             page_desc_table_size: 0,
+            page_desc_table_pages: 0,
         }
     }
 
@@ -212,11 +216,11 @@ impl SbInfo {
     }
 
     pub(crate) fn get_page_desc_table_start_page(&self) -> PageNum {
-        self.get_inode_table_start_page() + self.inode_table_size / HAYLEYFS_PAGESIZE
+        self.get_inode_table_start_page() + self.inode_table_pages
     }
 
     pub(crate) fn get_data_pages_start_page(&self) -> PageNum {
-        self.get_page_desc_table_start_page() + self.page_desc_table_size / HAYLEYFS_PAGESIZE
+        self.get_page_desc_table_start_page() + self.page_desc_table_pages
     }
 
     // TODO: do these really need to be SeqCst?

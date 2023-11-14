@@ -1650,7 +1650,6 @@ impl<'a, State, Op> Drop for DataPageWrapper<'a, State, Op> {
     }
 }
 
-// TODO: make generic over data and dir pages
 pub(crate) struct LinkedPage {
     page_no: PageNum,
     links: Links<LinkedPage>,
@@ -1659,7 +1658,6 @@ pub(crate) struct LinkedPage {
 impl PartialEq for LinkedPage {
     fn eq(&self, other: &Self) -> bool {
         self.page_no == other.page_no
-        // && self.info.get_offset() == other.info.get_offset()
     }
 }
 
