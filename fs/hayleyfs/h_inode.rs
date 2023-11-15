@@ -954,8 +954,16 @@ impl InodeAllocator for RBInodeAllocator {
     fn new_from_alloc_vec(alloc_inodes: List<Box<LinkedInode>>, num_alloc_inodes: u64, start: u64, num_inodes: u64) -> Result<Self> {
         let mut rb = RBTree::new();
         let mut cur_ino = start;
-        let mut page_cursor = alloc_inodes.cursor_front();
-        let mut current_alloc_inode = page_cursor.current();
+        let mut inode_cursor = alloc_inodes.cursor_front();
+        let mut current_alloc_inode = inode_cursor.current();
+
+        // skip inode 1
+        if let Some(inode) = current_alloc_inode {
+            if inode.get_ino() == 1 {
+                inode_cursor.move_next();
+                current_alloc_inode = inode_cursor.current();
+            }
+        }
 
         // if start <= alloc_inodes.len().try_into()? {
         if num_alloc_inodes > 0 {
@@ -967,14 +975,14 @@ impl InodeAllocator for RBInodeAllocator {
                         cur_ino += 1;
                     } else if cur_ino == current_alloc_ino {
                         cur_ino += 1;
-                        page_cursor.move_next();
+                        inode_cursor.move_next();
                     } else {
                         // shouldn't ever happen
-                        pr_info!("ERROR: current inode is {:?} but current inode is {:?}\n", cur_ino, current_alloc_ino);
+                        pr_info!("ERROR: current inode is {:?} but current alloc inode is {:?}\n", cur_ino, current_alloc_ino);
                         return Err(EINVAL);
                     }
                 }
-                current_alloc_inode = page_cursor.current();
+                current_alloc_inode = inode_cursor.current();
             }
         } 
         // add all remaining inodes to the allocator
