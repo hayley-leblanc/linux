@@ -193,8 +193,10 @@ pub(crate) trait InoDataPageMap {
         page: &StaticDataPageWrapper<'a, Clean, State>,
     ) -> Result<()>;
     fn insert_page_iterator(&self, offset: u64, page_no: PageNum) -> Result<()>;
+    fn insert_pages(&self, page_list: DataPageListWrapper<Clean, Written>) -> Result<()>;
     fn find(&self, offset: u64) -> Option<PageNum>;
     fn get_all_pages(&self) -> Result<RBTree<u64, PageNum>>;
+    fn remove_pages(&self, page_list: &DataPageListWrapper<Clean, Free>) -> Result<()>;
 }
 
 impl InoDataPageMap for HayleyFsRegInodeInfo {
@@ -231,6 +233,23 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         Ok(())
     }
 
+    fn insert_pages(&self, page_list: DataPageListWrapper<Clean, Written>) -> Result<()> {
+        let pages = Arc::clone(&self.pages);
+        let mut pages = pages.lock();
+        let mut cursor = page_list.get_page_list_cursor();
+        let mut current = cursor.current();
+        let mut offset = page_list.get_offset();
+        while current.is_some() {
+            if let Some(current) = current {
+                pages.try_insert(offset, current.get_page_no())?;
+            }
+            cursor.move_next();
+            current = cursor.current();
+            offset += HAYLEYFS_PAGESIZE;
+        }
+        Ok(())
+    }
+
     fn find(&self, offset: u64) -> Option<PageNum> {
         let pages = Arc::clone(&self.pages);
         let pages = pages.lock();
@@ -250,6 +269,21 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
             return_tree.try_insert(*offset, *pages.get(offset).unwrap())?;
         }
         Ok(return_tree)
+    }
+
+    fn remove_pages(&self, page_list: &DataPageListWrapper<Clean, Free>) -> Result<()> {
+        let pages = Arc::clone(&self.pages);
+        let mut pages = pages.lock();
+        let mut cursor = page_list.get_page_list_cursor();
+        let mut current = cursor.current();
+        while current.is_some() {
+            if let Some(current) = current {
+                pages.remove(&current);
+            }
+            cursor.move_next();
+            current = cursor.current();
+        }
+        Ok(())
     }
 }
 

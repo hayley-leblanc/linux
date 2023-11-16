@@ -1764,6 +1764,10 @@ impl<State, Op> DataPageListWrapper<State, Op> {
             None
         }
     }
+
+    pub(crate) fn get_offset(&self) -> u64 {
+        self.offset
+    }
 }
 
 impl DataPageListWrapper<Clean, Start> {

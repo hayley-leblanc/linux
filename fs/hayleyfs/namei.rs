@@ -1624,7 +1624,6 @@ fn rename_deallocation_file_inode_crossdir<'a>(
     Ok((src_dentry, dst_dentry))
 }
 
-// TODO: delete the dir page if this dentry was the last one in it
 #[allow(dead_code)]
 fn hayleyfs_unlink<'a>(
     sbi: &'a SbInfo,
@@ -1664,7 +1663,6 @@ fn hayleyfs_unlink<'a>(
         // obtain target inode and then invalidate the directory entry
         let pd = DentryWrapper::get_init_dentry(dentry_info)?;
         parent_inode_info.delete_dentry(dentry_info)?;
-        // pr_info!("unlink\n");
         let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
         inode.update_ctime();
         let pi = pi.update_ctime(inode.get_ctime()).flush().fence();
@@ -1692,7 +1690,7 @@ fn hayleyfs_unlink<'a>(
             let parent_page = parent_page.dealloc(sbi).flush().fence();
             sbi.page_allocator.dealloc_dir_page(&parent_page)?;
         }
-        // let pi = finish_unlink(sbi, pi)?;
+        // we don't finish the unlink here because the file may still be open somewhere
 
         end_timing!(UnlinkFullDecLink, unlink_full_declink);
 
@@ -1859,16 +1857,25 @@ fn hayleyfs_truncate<'a>(
             bindings::i_size_write(pi.get_vfs_inode()?, new_size.try_into()?);
         }
         let (new_size, pi) = pi.dec_size(new_size);
-        let pages =
-            DataPageListWrapper::get_data_pages_to_truncate(&pi, new_size, pi_size - new_size)?;
+        // if the old end and the new end fit on the same page, we are done;
+        // we don't have to deallocate any pages
+        if new_size % HAYLEYFS_PAGESIZE == pi_size % HAYLEYFS_PAGESIZE {
+            Ok(())
+        } else {
+            let pages =
+                DataPageListWrapper::get_data_pages_to_truncate(&pi, new_size, pi_size - new_size)?;
+            // TODO: don't get pi_info twice. just doing it to placate the borrow checker
+            let pi_info = pi.get_inode_info()?;
+            // then free the pages
+            let pages = pages.unmap(sbi)?.fence();
+            let pages = pages.dealloc(sbi)?.fence().mark_free();
 
-        // then free the pages
-        let pages = pages.unmap(sbi)?.fence();
-        let _pages = pages.dealloc(sbi)?.fence();
+            sbi.page_allocator.dealloc_data_page_list(&pages)?;
+            // TODO: should this be done earlier or is it protected by locks?
+            pi_info.remove_pages(&pages)?;
 
-        // TODO: finalize in some way - mark free?
-
-        Ok(())
+            Ok(())
+        }
     } else {
         // truncate increases
 
@@ -1908,10 +1915,13 @@ fn hayleyfs_truncate<'a>(
         };
 
         // then: increase inode size
-        let (new_size, pi) = pi.inc_size_iterator(bytes_written, pi_size, pages);
+        let (new_size, pi) = pi.inc_size_iterator(bytes_written, pi_size, &pages);
         unsafe {
             bindings::i_size_write(pi.get_vfs_inode()?, new_size.try_into()?);
         }
+        // TODO: don't get pi_info twice. just doing it to placate the borrow checker
+        let pi_info = pi.get_inode_info()?;
+        pi_info.insert_pages(pages)?;
         Ok(())
     }
 }

@@ -167,7 +167,7 @@ fn hayleyfs_write<'a>(
             let (page_list, bytes_written) =
                 iterator_write(sbi, &pi, &pi_info, reader, len, offset)?;
             let (inode_size, pi) =
-                pi.inc_size_iterator(bytes_written.try_into()?, offset, page_list);
+                pi.inc_size_iterator(bytes_written.try_into()?, offset, &page_list);
 
             // update the VFS inode's size
             inode.i_size_write(inode_size.try_into()?);
