@@ -508,6 +508,38 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
             },
         )
     }
+
+    pub(crate) fn dec_size(
+        self, 
+        new_size: u64,
+    ) -> (u64, InodeWrapper<'a, Clean, DecSize, Type>) {
+        let old_size = self.inode.size;
+        // also update the inode's ctime and mtime. the time update may be reordered with the size change
+        // we make no guarantees about ordering of these two updates
+        if let Some(vfs_inode) = self.vfs_inode {
+            let time = unsafe { bindings::current_time(vfs_inode) };
+            self.inode.ctime = time;
+            self.inode.mtime = time;
+        } else {
+            panic!("ERROR: no vfs inode for inode {:?} in dec_link_count\n", self.ino);
+        }
+        if self.inode.size < new_size {
+            self.inode.size = new_size;
+            hayleyfs_flush_buffer(self.inode, mem::size_of::<HayleyFsInode>(), true);
+        }
+        (
+            old_size, 
+            InodeWrapper {
+                state: PhantomData,
+                op: PhantomData,
+                inode_type: PhantomData,
+                vfs_inode: self.vfs_inode,
+                ino: self.ino,
+                inode: self.inode,
+            }
+        )
+        
+    }
 }
 
 impl<'a> InodeWrapper<'a, Clean, Alloc, RegInode> {

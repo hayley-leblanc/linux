@@ -1858,7 +1858,6 @@ impl DataPageListWrapper<Clean, Writeable> {
                 }
             };
 
-            // TODO: testing - this might mess things up?
             pages.push_back(Box::try_new(LinkedPage::new(data_page_no))?);
             if offset % HAYLEYFS_PAGESIZE == 0 {
                 bytes += HAYLEYFS_PAGESIZE;
@@ -2046,9 +2045,69 @@ impl DataPageListWrapper<Clean, Writeable> {
 }
 
 impl DataPageListWrapper<Clean, ToUnmap> {
+    pub(crate) fn get_data_pages_to_truncate<'a>(
+        pi: &InodeWrapper<'a, Clean, DecSize, RegInode>,
+        mut offset: u64,
+        len: u64,
+    ) -> Result<Self> {
+        // basically the same as get_data_page_list, except that we need to SKIP the
+        // first page in the range unless the offset to start at is page-aligned
+        // TODO: better error handling if we try to look up a page that isn't there
+
+        let pi_info = pi.get_inode_info()?;
+        let mut bytes = 0;
+        let mut pages = List::new();
+        let mut num_pages = 0;
+        let first_page_offset = page_offset(offset)?;
+
+        if first_page_offset % HAYLEYFS_PAGESIZE == 0 {
+            let result = pi_info.find(first_page_offset);
+            let data_page_no = match result {
+                Some(data_page_no) => data_page_no,
+                None => {
+                    return Err(EINVAL);
+                }
+            };
+            pages.push_back(Box::try_new(LinkedPage::new(data_page_no))?);
+            offset = first_page_offset + HAYLEYFS_PAGESIZE;
+            bytes += HAYLEYFS_PAGESIZE;
+            num_pages += 1;
+        } else {
+            let bytes_at_end = HAYLEYFS_PAGESIZE - (first_page_offset % HAYLEYFS_PAGESIZE);
+            offset += bytes_at_end;
+            bytes += bytes_at_end;
+        }
+
+        while bytes < len {
+            // get offset of the next page in the file
+            let page_offset = page_offset(offset)?;
+            // determine if the file actually has the page
+            let result = pi_info.find(page_offset);
+            let data_page_no = match result {
+                Some(data_page_no) => data_page_no,
+                None => {
+                    return Err(EINVAL);
+                }
+            };
+            pages.push_back(Box::try_new(LinkedPage::new(data_page_no))?);
+            offset += HAYLEYFS_PAGESIZE;
+            bytes += HAYLEYFS_PAGESIZE;
+            num_pages += 1
+        }
+
+        Ok(Self {
+            state: PhantomData,
+            op: PhantomData,
+            offset: first_page_offset,
+            num_pages,
+            pages,
+        })
+    }
+
     // inode try_complete_unlink_runtime can return a list of pages in the ToUnmap state
     // probably just need a different version that returns the wrapper
     // instead of straight vector of wrapped stateful pages
+    // TODO: guard this better
     pub(crate) fn get_data_pages_to_unmap(pi_info: &HayleyFsRegInodeInfo) -> Result<Self> {
         let pages = pi_info.get_all_pages()?;
         let mut new_page_list = List::new();

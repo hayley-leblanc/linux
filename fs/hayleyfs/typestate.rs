@@ -26,6 +26,7 @@ pub(crate) struct Writeable {}
 #[derive(Debug)]
 pub(crate) struct Written {}
 pub(crate) struct IncSize {}
+pub(crate) struct DecSize {}
 #[derive(Debug)]
 pub(crate) struct ClearIno {}
 pub(crate) struct DecLink {}

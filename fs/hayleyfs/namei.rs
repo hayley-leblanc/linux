@@ -1853,12 +1853,27 @@ fn hayleyfs_truncate<'a>(
 
     if pi_size > new_size {
         // truncate decreases
+
+        // first, decrease the inode's size
+        unsafe {
+            bindings::i_size_write(pi.get_vfs_inode()?, new_size.try_into()?);
+        }
+        let (new_size, pi) = pi.dec_size(new_size);
+        let pages =
+            DataPageListWrapper::get_data_pages_to_truncate(&pi, new_size, pi_size - new_size)?;
+
+        // then free the pages
+        let pages = pages.unmap(sbi)?.fence();
+        let _pages = pages.dealloc(sbi)?.fence();
+
+        // TODO: finalize in some way - mark free?
+
+        Ok(())
     } else {
         // truncate increases
 
         // first: allocate pages, zero them out
         // get pages from the end of the file to the end of the new region
-
         let pages =
             DataPageListWrapper::get_data_page_list(pi_info, new_size - pi_size, pi.get_size())?;
         let mut bytes_to_truncate = new_size - pi_size;
@@ -1897,8 +1912,8 @@ fn hayleyfs_truncate<'a>(
         unsafe {
             bindings::i_size_write(pi.get_vfs_inode()?, new_size.try_into()?);
         }
+        Ok(())
     }
-    Ok(())
 }
 
 fn get_free_dentry<'a, S: Initialized>(
