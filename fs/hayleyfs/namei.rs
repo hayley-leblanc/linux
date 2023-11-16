@@ -228,8 +228,12 @@ impl inode::Operations for InodeOps {
         iattr: *mut bindings::iattr,
     ) -> Result<()> {
         let inode = dentry.d_inode();
-
         unsafe {
+            if (*iattr).ia_valid & bindings::ATTR_SIZE != 0 {
+                pr_info!("ERROR: truncate is not supported\n");
+                return Err(ENOTSUPP);
+            }
+
             let ret = bindings::setattr_prepare(mnt_idmap, dentry.get_inner(), iattr);
             if ret < 0 {
                 return Err(error::Error::from_kernel_errno(ret));
