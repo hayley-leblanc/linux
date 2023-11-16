@@ -227,20 +227,35 @@ impl inode::Operations for InodeOps {
         dentry: &fs::DEntry,
         iattr: *mut bindings::iattr,
     ) -> Result<()> {
-        let inode = dentry.d_inode();
-        unsafe {
-            if (*iattr).ia_valid & bindings::ATTR_SIZE != 0 {
-                pr_info!("ERROR: truncate is not supported\n");
-                return Err(ENOTSUPP);
-            }
+        let inode: &mut fs::INode = unsafe { &mut *dentry.d_inode().cast() };
+
+        let truncate = unsafe {
+            // if (*iattr).ia_valid & bindings::ATTR_SIZE != 0 {
+            //     pr_info!("ERROR: truncate is not supported\n");
+            //     return Err(ENOTSUPP);
+            // }
 
             let ret = bindings::setattr_prepare(mnt_idmap, dentry.get_inner(), iattr);
             if ret < 0 {
                 return Err(error::Error::from_kernel_errno(ret));
             }
-            bindings::setattr_copy(mnt_idmap, inode, iattr);
+            bindings::setattr_copy(mnt_idmap, inode.get_inner(), iattr);
+
+            (*iattr).ia_valid & bindings::ATTR_SIZE != 0 && (*iattr).ia_size != inode.i_size_read()
+        };
+
+        if truncate {
+            let sb = inode.i_sb();
+            let fs_info_raw = unsafe { (*sb).s_fs_info };
+            // TODO: it's probably not safe to just grab s_fs_info and
+            // get a mutable reference to one of the dram indexes
+            let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
+            let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
+            hayleyfs_truncate(sbi, pi, unsafe { (*iattr).ia_size })
+        } else {
+            // TODO: should be enotsupp?
+            Ok(())
         }
-        Ok(())
     }
 }
 
@@ -1821,6 +1836,69 @@ fn hayleyfs_symlink<'a>(
     pd.index(&parent_inode_info)?;
 
     Ok((pi, pd, pages, pi_info))
+}
+
+// TODO: return a type indicating that the truncate has completed
+fn hayleyfs_truncate<'a>(
+    sbi: &SbInfo,
+    pi: InodeWrapper<'a, Clean, Start, RegInode>,
+    size: i64,
+) -> Result<()> {
+    // we don't have to check if pi is a regular inode because we already
+    // did that when we obtained its wrapper
+
+    let pi_size = pi.get_size();
+    let new_size: u64 = size.try_into()?;
+    let pi_info = pi.get_inode_info()?;
+
+    if pi_size > new_size {
+        // truncate decreases
+    } else {
+        // truncate increases
+
+        // first: allocate pages, zero them out
+        // get pages from the end of the file to the end of the new region
+
+        let pages =
+            DataPageListWrapper::get_data_page_list(pi_info, new_size - pi_size, pi.get_size())?;
+        let mut bytes_to_truncate = new_size - pi_size;
+        let mut alloc_offset = pi_size;
+        if pi_size % HAYLEYFS_PAGESIZE != 0 {
+            // if the end of the file isn't page aligned, we don't
+            // count bytes at the end of the last page
+            let bytes_at_end = HAYLEYFS_PAGESIZE - (pi_size % HAYLEYFS_PAGESIZE);
+            bytes_to_truncate -= bytes_at_end;
+            alloc_offset += bytes_at_end;
+        }
+        let pages_to_truncate = if bytes_to_truncate % HAYLEYFS_PAGESIZE == 0 {
+            bytes_to_truncate / HAYLEYFS_PAGESIZE
+        } else {
+            (bytes_to_truncate / HAYLEYFS_PAGESIZE) + 1 // to account for division rounding down
+        };
+        let (bytes_written, pages) = match pages {
+            Ok(pages) => {
+                // we don't need to allocate any more pages
+                // just zero out the range that we are extending to
+                let (bytes_written, pages) = pages.zero_pages(sbi, bytes_to_truncate, pi_size)?;
+                (bytes_written, pages.fence())
+            }
+            Err(pages) => {
+                let pages = pages
+                    .allocate_pages(sbi, &pi_info, pages_to_truncate.try_into()?, alloc_offset)?
+                    .fence();
+                let pages = pages.set_backpointers(sbi, pi_info.get_ino())?.fence();
+                let (bytes_written, pages) = pages.zero_pages(sbi, bytes_to_truncate, pi_size)?;
+                (bytes_written, pages.fence())
+            }
+        };
+
+        // then: increase inode size
+        let (new_size, pi) = pi.inc_size_iterator(bytes_written, pi_size, pages);
+        unsafe {
+            bindings::i_size_write(pi.get_vfs_inode()?, new_size.try_into()?);
+        }
+    }
+    Ok(())
 }
 
 fn get_free_dentry<'a, S: Initialized>(
