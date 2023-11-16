@@ -155,8 +155,10 @@ impl<T: Operations> OperationsVtable<T> {
         from_kernel_result! {
             // TODO: safety notes
             let dentry = unsafe { &mut *dentry.cast() };
-            T::setattr(mnt_idmap, dentry, iattr)?;
-            Ok(0)
+            match T::setattr(mnt_idmap, dentry, iattr) {
+                Ok(()) => Ok(0),
+                Err(e) => Err(e),
+            }
         }
     }
 
