@@ -230,11 +230,6 @@ impl inode::Operations for InodeOps {
         let inode: &mut fs::INode = unsafe { &mut *dentry.d_inode().cast() };
 
         let truncate = unsafe {
-            // if (*iattr).ia_valid & bindings::ATTR_SIZE != 0 {
-            //     pr_info!("ERROR: truncate is not supported\n");
-            //     return Err(ENOTSUPP);
-            // }
-
             let ret = bindings::setattr_prepare(mnt_idmap, dentry.get_inner(), iattr);
             if ret < 0 {
                 return Err(error::Error::from_kernel_errno(ret));
@@ -777,6 +772,15 @@ fn hayleyfs_rename<'a>(
     match old_dentry_info {
         None => Err(ENOENT),
         Some(old_dentry_info) => {
+            let test_dentry = DentryWrapper::get_init_dentry(old_dentry_info);
+            match test_dentry {
+                Ok(_) => {}
+                Err(_) => pr_info!(
+                    "dentry {:?} is in the index but not on the device\n",
+                    old_name
+                ),
+            }
+
             let inode_type = sbi.check_inode_type_by_vfs_inode(old_dentry.d_inode())?;
             let new_parent_inode = sbi.get_init_dir_inode_by_vfs_inode(new_dir.get_inner())?;
             // TODO: this leads to unnecessary updates for single-dir renames. only do this if old_dir
@@ -891,7 +895,6 @@ fn reg_inode_rename<'a>(
                     sbi, src_dentry, dst_dentry, old_dir, new_dir, &old_name,
                 )?
             };
-
             Ok((src_dentry, dst_dentry))
         }
     }
@@ -919,7 +922,6 @@ fn dir_inode_rename<'a>(
     let new_inode: &mut fs::INode = unsafe { &mut *new_dentry.d_inode().cast() };
 
     let old_dir_inode_info = old_dir.get_inode_info()?;
-    // let new_dentry_info = old_dir_inode_info.lookup_dentry(new_name);
 
     if !new_inode.get_inner().is_null() {
         // TODO: ideally we wouldn't do this twice
@@ -1693,7 +1695,6 @@ fn hayleyfs_unlink<'a>(
         // we don't finish the unlink here because the file may still be open somewhere
 
         end_timing!(UnlinkFullDecLink, unlink_full_declink);
-
         Ok((pi, pd))
     } else {
         Err(ENOENT)
@@ -1873,7 +1874,6 @@ fn hayleyfs_truncate<'a>(
             sbi.page_allocator.dealloc_data_page_list(&pages)?;
             // TODO: should this be done earlier or is it protected by locks?
             pi_info.remove_pages(&pages)?;
-
             Ok(())
         }
     } else {
@@ -1883,20 +1883,8 @@ fn hayleyfs_truncate<'a>(
         // get pages from the end of the file to the end of the new region
         let pages =
             DataPageListWrapper::get_data_page_list(pi_info, new_size - pi_size, pi.get_size())?;
-        let mut bytes_to_truncate = new_size - pi_size;
+        let bytes_to_truncate = new_size - pi_size;
         let mut alloc_offset = pi_size;
-        if pi_size % HAYLEYFS_PAGESIZE != 0 {
-            // if the end of the file isn't page aligned, we don't
-            // count bytes at the end of the last page
-            let bytes_at_end = HAYLEYFS_PAGESIZE - (pi_size % HAYLEYFS_PAGESIZE);
-            bytes_to_truncate -= bytes_at_end;
-            alloc_offset += bytes_at_end;
-        }
-        let pages_to_truncate = if bytes_to_truncate % HAYLEYFS_PAGESIZE == 0 {
-            bytes_to_truncate / HAYLEYFS_PAGESIZE
-        } else {
-            (bytes_to_truncate / HAYLEYFS_PAGESIZE) + 1 // to account for division rounding down
-        };
         let (bytes_written, pages) = match pages {
             Ok(pages) => {
                 // we don't need to allocate any more pages
@@ -1905,6 +1893,21 @@ fn hayleyfs_truncate<'a>(
                 (bytes_written, pages.fence())
             }
             Err(pages) => {
+                // calculate # of pages to allocate
+                let new_page_bytes = if pi_size % HAYLEYFS_PAGESIZE != 0 {
+                    // if the end of the file isn't page aligned, we don't
+                    // count bytes at the end of the last page
+                    let bytes_at_end = HAYLEYFS_PAGESIZE - (pi_size % HAYLEYFS_PAGESIZE);
+                    alloc_offset += bytes_at_end;
+                    bytes_to_truncate - bytes_at_end
+                } else {
+                    bytes_to_truncate
+                };
+                let pages_to_truncate = if new_page_bytes % HAYLEYFS_PAGESIZE == 0 {
+                    new_page_bytes / HAYLEYFS_PAGESIZE
+                } else {
+                    (new_page_bytes / HAYLEYFS_PAGESIZE) + 1 // to account for division rounding down
+                };
                 let pages = pages
                     .allocate_pages(sbi, &pi_info, pages_to_truncate.try_into()?, alloc_offset)?
                     .fence();

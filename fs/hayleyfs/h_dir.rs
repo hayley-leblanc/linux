@@ -228,15 +228,6 @@ impl<'a> DentryWrapper<'a, Clean, Start> {
             dentry,
         })
     }
-
-    // pub(crate) fn clear_ino(self) -> DentryWrapper<'a, Dirty, ClearIno> {
-    //     self.dentry.ino = 0;
-    //     DentryWrapper {
-    //         state: PhantomData,
-    //         op: PhantomData,
-    //         dentry: self.dentry,
-    //     }
-    // }
 }
 
 impl<'a, Op: DeletableDentry> DentryWrapper<'a, Clean, Op> {

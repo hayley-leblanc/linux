@@ -119,7 +119,7 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
             while current_alloc_page.is_some() {
                 if let Some(current_alloc_page) = current_alloc_page {
                     let current_alloc_page_no = current_alloc_page.get_page_no();
-                    if current_alloc_page_no == current_cpu_start + pages_per_cpu {
+                    if current_page == current_cpu_start + pages_per_cpu {
                         let free_list = PageFreeList {
                             free_pages: pages_per_cpu,
                             list: rb_tree,
@@ -1911,31 +1911,32 @@ impl DataPageListWrapper<Clean, Writeable> {
                 // this should pretty much never happen so it won't hurt us performance-wise
                 if get_offset_of_page_no(sbi, page_no)? < page_offset {
                     page_list.move_next();
-                    continue;
-                }
-                // TODO: safe wrapper
-                let ptr = unsafe { page_no_to_page(sbi, page_no)? };
-                let bytes_to_write = if len < HAYLEYFS_PAGESIZE - offset_within_page {
-                    len
                 } else {
-                    HAYLEYFS_PAGESIZE - offset_within_page
-                };
-                // let bytes_to_write =
-                //     unsafe { write_to_page(reader, ptr, offset_within_page, bytes_to_write)? };
-                unsafe {
-                    memset_nt(
-                        (ptr as *mut u8).offset(offset_within_page.try_into()?) as *mut ffi::c_void,
-                        0,
-                        bytes_to_write.try_into()?,
-                        false,
-                    );
-                }
+                    // TODO: safe wrapper
+                    let ptr = unsafe { page_no_to_page(sbi, page_no)? };
+                    let bytes_to_write = if len < HAYLEYFS_PAGESIZE - offset_within_page {
+                        len
+                    } else {
+                        HAYLEYFS_PAGESIZE - offset_within_page
+                    };
+                    // let bytes_to_write =
+                    //     unsafe { write_to_page(reader, ptr, offset_within_page, bytes_to_write)? };
+                    unsafe {
+                        memset_nt(
+                            (ptr as *mut u8).offset(offset_within_page.try_into()?)
+                                as *mut ffi::c_void,
+                            0,
+                            bytes_to_write.try_into()?,
+                            false,
+                        );
+                    }
 
-                bytes_written += bytes_to_write;
-                page_offset += HAYLEYFS_PAGESIZE;
-                len -= bytes_to_write;
-                offset_within_page = 0;
-                page_list.move_next();
+                    bytes_written += bytes_to_write;
+                    page_offset += HAYLEYFS_PAGESIZE;
+                    len -= bytes_to_write;
+                    offset_within_page = 0;
+                    page_list.move_next();
+                }
             }
             page = page_list.current();
         }
@@ -1981,23 +1982,23 @@ impl DataPageListWrapper<Clean, Writeable> {
                 // this should pretty much never happen so it won't hurt us performance-wise
                 if get_offset_of_page_no(sbi, page_no)? < page_offset {
                     page_list.move_next();
-                    continue;
-                }
-                // TODO: safe wrapper
-                let ptr = unsafe { page_no_to_page(sbi, page_no)? };
-                let bytes_to_write = if len < HAYLEYFS_PAGESIZE - offset_within_page {
-                    len
                 } else {
-                    HAYLEYFS_PAGESIZE - offset_within_page
-                };
-                let bytes_to_write =
-                    unsafe { write_to_page(reader, ptr, offset_within_page, bytes_to_write)? };
+                    // TODO: safe wrapper
+                    let ptr = unsafe { page_no_to_page(sbi, page_no)? };
+                    let bytes_to_write = if len < HAYLEYFS_PAGESIZE - offset_within_page {
+                        len
+                    } else {
+                        HAYLEYFS_PAGESIZE - offset_within_page
+                    };
+                    let bytes_to_write =
+                        unsafe { write_to_page(reader, ptr, offset_within_page, bytes_to_write)? };
 
-                bytes_written += bytes_to_write;
-                page_offset += HAYLEYFS_PAGESIZE;
-                len -= bytes_to_write;
-                offset_within_page = 0;
-                page_list.move_next();
+                    bytes_written += bytes_to_write;
+                    page_offset += HAYLEYFS_PAGESIZE;
+                    len -= bytes_to_write;
+                    offset_within_page = 0;
+                    page_list.move_next();
+                }
             }
             page = page_list.current();
         }

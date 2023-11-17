@@ -88,6 +88,20 @@ impl fs::Type for HayleyFs {
 
             let inode = unsafe { init_fs(&mut data, &sb)? };
 
+            data.page_allocator = Option::<PerCpuPageAllocator>::new_from_range(
+                // DATA_PAGE_START,
+                data.get_data_pages_start_page(),
+                // NUM_PAGE_DESCRIPTORS, // TODO: have this be the actual number of blocks
+                if data.num_pages < data.num_blocks {
+                    data.num_pages
+                } else {
+                    data.num_blocks
+                },
+                data.cpus,
+            )?;
+
+            data.inode_allocator = Some(InodeAllocator::new(ROOT_INO + 1, data.num_inodes)?);
+
             // initialize superblock
             let sb = sb.init(
                 data,
@@ -594,22 +608,6 @@ impl PmDevice for SbInfo {
         self.num_pages = num_pages;
         self.page_desc_table_size = page_desc_table_size;
         self.page_desc_table_pages = page_desc_table_pages;
-
-        // self.page_allocator =
-        //     Option::<PerCpuPageAllocator>::new_from_range(DATA_PAGE_START, self.num_blocks, self.cpus)?;
-        self.page_allocator = Option::<PerCpuPageAllocator>::new_from_range(
-            // DATA_PAGE_START,
-            self.get_data_pages_start_page(),
-            // NUM_PAGE_DESCRIPTORS, // TODO: have this be the actual number of blocks
-            if self.num_pages < self.num_blocks {
-                self.num_pages
-            } else {
-                self.num_blocks
-            },
-            self.cpus,
-        )?;
-
-        self.inode_allocator = Some(InodeAllocator::new(ROOT_INO + 1, self.num_inodes)?);
 
         Ok(())
     }
