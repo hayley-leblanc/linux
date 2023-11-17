@@ -197,6 +197,10 @@ impl HayleyFsInode {
         self.blocks
     }
 
+    pub(crate) fn get_ino(&self) -> InodeNum {
+        self.ino
+    }
+
     pub(crate) unsafe fn inc_link_count(&mut self) {
         self.link_count += 1
     }

@@ -395,6 +395,44 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
     }
 }
 
+fn recover_all_renames(
+    sbi: &SbInfo,
+    init_dir_pages: &RBTree<InodeNum, Vec<PageNum>> 
+    ) -> Result<()> {
+    let mut src_to_dst = RBTree::new();
+    let mut renames_in_progress = Vec::new();
+
+    let inode_table = sbi.get_inode_table()?;
+
+    
+    for desc in inode_table.iter().filter(|i| i.get_type() == InodeType::DIR) {
+        if let Some(pages) = init_dir_pages.get(&desc.get_ino()) {
+            for page in pages {
+                let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
+
+                for dinfo in dir_page_wrapper.get_alloc_dentry_info(sbi)? {
+                    let mut dst = DentryWrapper::get_recovering_dentry(dinfo)?;
+                    if let Some(src) = dst.rename_ptr(sbi) {
+                        let dst_ptr = dst.get_dentry() as *mut HayleyFsDentry;
+                        let src_inode = src.get_ino();
+
+                        src_to_dst.try_insert(src_inode, dst_ptr)?;
+                        renames_in_progress.try_push(dst)?;
+                    }
+                }
+            }
+        }
+    }
+
+    for dentry in renames_in_progress {
+        dentry.recover_rename(sbi, &src_to_dst)?;
+    }
+
+
+    Ok(())
+}
+
+
 fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut alloc_inode_list: List<Box<LinkedInode>> = List::new();
     let mut num_alloc_inodes = 0;
@@ -583,6 +621,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             &mut persistent_link_counts,
         )?;
         fix_link_counts(sbi, persistent_link_counts, real_link_counts)?;
+        recover_all_renames(sbi, &init_dir_pages)?;
     }
 
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(

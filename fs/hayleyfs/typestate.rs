@@ -41,6 +41,7 @@ pub(crate) struct UnmapPages {}
 pub(crate) struct Msynced {} // TODO: is this necessary?
 pub(crate) struct Recovery {}
 pub(crate) struct TooManyLinks {}
+pub(crate) struct Recovering {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}
@@ -69,6 +70,7 @@ impl StartOrAlloc for Alloc {}
 pub(crate) trait DeletableDentry {}
 impl DeletableDentry for Start {}
 impl DeletableDentry for Renamed {}
+impl DeletableDentry for Recovering {}
 
 pub(crate) trait CanDeletePages {}
 impl CanDeletePages for ClearIno {}
