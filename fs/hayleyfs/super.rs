@@ -399,6 +399,10 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut live_inode_list: List<Box<LinkedInode>> = List::new();
     let mut processed_live_inodes: RBTree<InodeNum, ()> = RBTree::new(); // rbtree as a set
 
+    let mut orphaned_inodes: RBTree<InodeNum, ()> = RBTree::new();
+    let mut orphaned_pages: RBTree<PageNum, ()> = RBTree::new();
+    let mut orphaned_dentries: Vec<DentryInfo> = Vec::new(); // this is unlikely to get large enough to cause problems
+
     // keeps track of maximum inode/page number in use to recreate the allocator
     let mut max_inode = 0;
     let mut max_page = sbi.get_data_pages_start_page();
@@ -424,6 +428,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     for inode in inode_table {
         if !inode.is_free() && inode.get_ino() != 0 {
             alloc_inode_list.push_back(Box::try_new(LinkedInode::new(inode.get_ino()))?);
+            // if this inode is not orphaned, we'll remove it during our scan later
+            orphaned_inodes.try_insert(inode.get_ino(), ())?;
             sbi.inc_inodes_in_use();
             num_alloc_inodes += 1;
         }
@@ -466,10 +472,11 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                     }
                 }
             }
-            // alloc_page_vec.try_push(index + sbi.get_data_pages_start_page())?;
             alloc_page_list.push_back(Box::try_new(LinkedPage::new(
                 index + sbi.get_data_pages_start_page(),
             ))?);
+            // if this page is not orphaned we'll remove it from the set later
+            orphaned_pages.try_insert(index + sbi.get_data_pages_start_page(), ())?;
             num_alloc_pages += 1;
         }
     }
@@ -490,13 +497,24 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             // to the volatile index
             if let Some(pages) = owned_dir_pages {
                 for page in pages {
+                    // page is live - remove it from the orphan set
+                    orphaned_pages.remove(page);
                     let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
-                    let live_dentries = dir_page_wrapper.get_live_dentry_info(sbi)?;
-                    // add these live dentries to the index
-                    for dentry in live_dentries {
-                        sbi.ino_dentry_tree.insert(live_inode, dentry)?;
-                        live_inode_list
-                            .push_back(Box::try_new(LinkedInode::new(dentry.get_ino()))?);
+                    let allocated_dentries = dir_page_wrapper.get_alloc_dentry_info(sbi)?;
+                    // add live dentries to the index
+                    for dentry in allocated_dentries {
+                        // if the dentry is live (i.e. has an inode number), add its inode
+                        // to the live inode list. otherwise, add it to the list of dentries
+                        // to free. note that we do not have to worry about dentries in
+                        // unallocated pages because we'll zero them out before we reuse the page
+                        if dentry.get_ino() != 0 {
+                            sbi.ino_dentry_tree.insert(live_inode, dentry)?;
+                            live_inode_list
+                                .push_back(Box::try_new(LinkedInode::new(dentry.get_ino()))?);
+                            orphaned_inodes.remove(&dentry.get_ino());
+                        } else {
+                            orphaned_dentries.try_push(dentry)?;
+                        }
                     }
                     let page_info = DirPageInfo::new(dir_page_wrapper.get_page_no());
                     sbi.ino_dir_page_tree.insert_one(live_inode, page_info)?;
@@ -505,7 +523,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
 
             // add data page to the volatile index
             if let Some(pages) = owned_data_pages {
-                let pages = build_tree(sbi, pages)?;
+                // we remove live pages from the orphan set in build_tree()
+                let pages = build_tree(sbi, pages, &mut orphaned_pages)?;
                 sbi.ino_data_page_tree.insert_inode(live_inode, pages)?;
             }
 
@@ -513,6 +532,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         }
         current_live_inode = live_inode_list.pop_front()
     }
+
+    free_orphans(sbi, orphaned_inodes, orphaned_pages, orphaned_dentries)?;
 
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
         alloc_page_list,
@@ -534,16 +555,31 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     Ok(())
 }
 
-fn build_tree(sbi: &SbInfo, input_vec: &Vec<PageNum>) -> Result<RBTree<u64, PageNum>> {
+fn build_tree(
+    sbi: &SbInfo,
+    input_vec: &Vec<PageNum>,
+    orphaned_pages: &mut RBTree<PageNum, ()>,
+) -> Result<RBTree<u64, PageNum>> {
     let mut output_tree = RBTree::new();
 
     for page_no in input_vec {
+        orphaned_pages.remove(page_no);
         let data_page_wrapper = DataPageWrapper::from_page_no(sbi, *page_no)?;
         let offset = data_page_wrapper.get_offset();
         output_tree.try_insert(offset, *page_no)?;
     }
 
     Ok(output_tree)
+}
+
+fn free_orphans(
+    sbi: &SbInfo,
+    orphaned_inodes: RBTree<InodeNum, ()>,
+    orphaned_pages: RBTree<PageNum, ()>,
+    orphaned_dentries: Vec<DentryInfo>,
+) -> Result<()> {
+    // for each orphaned object, follow its regular deallocation process
+    // TODO: reconcile what you do here with Nathan's recovery typestates
 }
 
 pub(crate) trait PmDevice {

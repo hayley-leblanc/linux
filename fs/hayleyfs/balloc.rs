@@ -415,7 +415,8 @@ impl DirPage<'_> {
         let mut dentry_vec = Vec::new();
         for d in self.dentries.iter() {
             let ino = d.get_ino();
-            if ino != 0 {
+            // if ino != 0 {
+            if !d.is_free() {
                 let name = d.get_name();
                 let virt_addr = d as *const HayleyFsDentry as *const ffi::c_void;
                 dentry_vec.try_push(DentryInfo::new(ino, virt_addr, name))?;
@@ -758,7 +759,7 @@ impl<'a> DirPageWrapper<'a, Clean, ClearIno> {
 }
 
 impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
-    pub(crate) fn get_live_dentry_info(&self, sbi: &SbInfo) -> Result<Vec<DentryInfo>> {
+    pub(crate) fn get_alloc_dentry_info(&self, sbi: &SbInfo) -> Result<Vec<DentryInfo>> {
         let dir_page = self.get_dir_page(sbi)?;
         dir_page.get_dentry_info_from_dentries()
     }
