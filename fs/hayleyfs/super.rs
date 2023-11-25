@@ -403,6 +403,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut orphaned_pages: RBTree<PageNum, ()> = RBTree::new();
     let mut orphaned_dentries: Vec<DentryInfo> = Vec::new(); // this is unlikely to get large enough to cause problems
 
+    // TODO: decrement link counts that are too high
+
     // keeps track of maximum inode/page number in use to recreate the allocator
     let mut max_inode = 0;
     let mut max_page = sbi.get_data_pages_start_page();
@@ -580,6 +582,34 @@ fn free_orphans(
 ) -> Result<()> {
     // for each orphaned object, follow its regular deallocation process
     // TODO: reconcile what you do here with Nathan's recovery typestates
+    // TODO: parallelize
+    // TODO: don't flush after every operation
+    // TODO: finalization check to make sure everything is clean
+
+    // 1. inodes
+    // we don't have any indexed information about this inode, so
+    // we just want to persistently deallocate it - skip the other parts
+    // that occur in unlink/rmdir to deal with pages
+    for (iter, _) in orphaned_inodes.iter() {
+        let pi = unsafe { InodeWrapper::get_recovery_inode(sbi, *iter)? };
+        let _pi = pi.recovery_dealloc().flush().fence();
+    }
+
+    // 2. pages
+    // we use static data page wrappers here since the DataPageListWrapper
+    // abstraction doesn't really make sense here
+    for (iter, _) in orphaned_pages.iter() {
+        let page = unsafe { StaticDataPageWrapper::get_recovery_page(sbi, *iter)? };
+        let _page = page.recovery_dealloc(sbi).flush().fence();
+    }
+
+    // 3. dentries
+    for dentry in orphaned_dentries {
+        let dentry = unsafe { DentryWrapper::get_recovery_dentry(&dentry)? };
+        let _dentry = dentry.recovery_dealloc().flush().fence();
+    }
+
+    Ok(())
 }
 
 pub(crate) trait PmDevice {

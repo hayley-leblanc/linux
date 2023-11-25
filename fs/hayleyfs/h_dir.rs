@@ -230,6 +230,32 @@ impl<'a> DentryWrapper<'a, Clean, Start> {
     }
 }
 
+impl<'a> DentryWrapper<'a, Clean, Recovery> {
+    // SAFETY: this function is only safe to call on orphaned directory entries during recovery.
+    // it is missing validity checks because it needs to be used on invalid dentries
+    pub(crate) unsafe fn get_recovery_dentry(dentry: &DentryInfo) -> Result<Self> {
+        let dentry: &mut HayleyFsDentry =
+            unsafe { &mut *(dentry.get_virt_addr() as *mut HayleyFsDentry) };
+        Ok(Self {
+            state: PhantomData,
+            op: PhantomData,
+            dentry,
+        })
+    }
+
+    pub(crate) fn recovery_dealloc(self) -> DentryWrapper<'a, Dirty, Free> {
+        self.dentry.ino = 0;
+        self.dentry.name.iter_mut().for_each(|c| *c = 0);
+        self.dentry.rename_ptr = 0;
+
+        DentryWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            dentry: self.dentry,
+        }
+    }
+}
+
 impl<'a, Op: DeletableDentry> DentryWrapper<'a, Clean, Op> {
     pub(crate) fn clear_ino(self) -> DentryWrapper<'a, Dirty, ClearIno> {
         self.dentry.ino = 0;

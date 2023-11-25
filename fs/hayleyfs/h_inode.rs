@@ -704,22 +704,9 @@ impl<'a> InodeWrapper<'a, Clean, Dealloc, RegInode> {
     // NOTE: data page wrappers don't actually need to be free, they just need to be in ClearIno
     // TODO: combine with runtime version using a trait for the data page wrapper 
     pub(crate) fn iterator_dealloc(self, _freed_pages: DataPageListWrapper<Clean, Free>) -> InodeWrapper<'a, Dirty, Complete, RegInode> {
-        self.inode.inode_type = InodeType::NONE;
         // link count should already be 0
         assert!(self.inode.link_count == 0);
-        self.inode.mode = 0;
-        self.inode.uid = 0;
-        self.inode.gid = 0;
-        self.inode.ctime.tv_sec = 0;
-        self.inode.ctime.tv_nsec = 0;
-        self.inode.atime.tv_sec = 0;
-        self.inode.atime.tv_nsec = 0;
-        self.inode.mtime.tv_sec = 0;
-        self.inode.mtime.tv_nsec = 0;
-        self.inode.blocks = 0;
-        self.inode.size = 0;
-        self.inode.ino = 0;
-
+        unsafe { dealloc_pm_inode(self.inode)} ;
         InodeWrapper {
             state: PhantomData,
             op: PhantomData,
@@ -729,6 +716,56 @@ impl<'a> InodeWrapper<'a, Clean, Dealloc, RegInode> {
             inode: self.inode
         }
     }
+}
+
+impl<'a> InodeWrapper<'a, Clean, Recovery, RegInode> {
+    // SAFETY: this function is only safe to call on orphaned inodes during recovery
+    // this function is missing many validity checks that other functions include because 
+    // it is meant to be used on potentially invalid inodes
+    pub(crate) unsafe fn get_recovery_inode(sbi: &SbInfo, ino: InodeNum) -> Result<Self> {
+        // we assume here that all inodes are regular inodes to make things easier.
+        // this should be safe because we will not be reading these inodes and the 
+        // deallocation process is the same for all inode types
+        let pi = unsafe { 
+            sbi.get_inode_by_ino_mut(ino)?
+        };
+        Ok(InodeWrapper{
+            state: PhantomData,
+            op: PhantomData, 
+            inode_type: PhantomData,
+            vfs_inode: None,
+            ino,
+            inode: pi,
+        })
+    }
+
+    pub(crate) fn recovery_dealloc(self) -> InodeWrapper<'a, Dirty, Complete, RegInode> {
+        unsafe { dealloc_pm_inode(self.inode)};
+        InodeWrapper{
+            state: PhantomData,
+            op: PhantomData, 
+            inode_type: PhantomData,
+            vfs_inode: None,
+            ino: self.ino,
+            inode: self.inode,
+        }
+    }
+}
+
+unsafe fn dealloc_pm_inode(inode: &mut HayleyFsInode) {
+    inode.inode_type = InodeType::NONE;
+    inode.mode = 0;
+    inode.uid = 0;
+    inode.gid = 0;
+    inode.ctime.tv_sec = 0;
+    inode.ctime.tv_nsec = 0;
+    inode.atime.tv_sec = 0;
+    inode.atime.tv_nsec = 0;
+    inode.mtime.tv_sec = 0;
+    inode.mtime.tv_nsec = 0;
+    inode.blocks = 0;
+    inode.size = 0;
+    inode.ino = 0;
 }
 
 impl<'a, Op: DeleteDir> InodeWrapper<'a, Clean, Op, DirInode> {

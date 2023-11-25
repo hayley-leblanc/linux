@@ -407,7 +407,6 @@ impl TryFrom<&PageDescriptor> for &DirPageHeader {
 #[derive(Debug)]
 struct DirPage<'a> {
     dentries: &'a mut [HayleyFsDentry],
-    // dentries: &'a mut [HayleyFsDentry; DENTRIES_PER_PAGE],
 }
 
 impl DirPage<'_> {
@@ -415,7 +414,6 @@ impl DirPage<'_> {
         let mut dentry_vec = Vec::new();
         for d in self.dentries.iter() {
             let ino = d.get_ino();
-            // if ino != 0 {
             if !d.is_free() {
                 let name = d.get_name();
                 let virt_addr = d as *const HayleyFsDentry as *const ffi::c_void;
@@ -1314,6 +1312,32 @@ impl<'a, Op> StaticDataPageWrapper<'a, InFlight, Op> {
     /// macros to fence all objects in a vector.
     #[allow(dead_code)]
     pub(crate) unsafe fn fence_unsafe(self) -> StaticDataPageWrapper<'a, Clean, Op> {
+        StaticDataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            page_no: self.page_no,
+            page: self.page,
+        }
+    }
+}
+
+impl<'a> StaticDataPageWrapper<'a, Clean, Recovery> {
+    // SAFETY: this function is only safe to call on orphaned pages during recovery.
+    // this function is missing validity checks because it needs to be useable with invalid
+    // inodes after a crash
+    pub(crate) unsafe fn get_recovery_page(sbi: &'a SbInfo, page_no: PageNum) -> Result<Self> {
+        // use the unchecked variant because the pages may be invalid
+        let ph = unsafe { unchecked_new_page_no_to_data_header(sbi, page_no)? };
+        Ok(StaticDataPageWrapper {
+            state: PhantomData,
+            op: PhantomData,
+            page_no: page_no,
+            page: ph,
+        })
+    }
+
+    pub(crate) fn recovery_dealloc(self, sbi: &SbInfo) -> StaticDataPageWrapper<'a, Dirty, Free> {
+        unsafe { self.page.dealloc(sbi) };
         StaticDataPageWrapper {
             state: PhantomData,
             op: PhantomData,
