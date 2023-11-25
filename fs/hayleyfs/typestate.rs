@@ -40,6 +40,7 @@ pub(crate) struct Renamed {}
 pub(crate) struct UnmapPages {}
 pub(crate) struct Msynced {} // TODO: is this necessary?
 pub(crate) struct Recovery {}
+pub(crate) struct TooManyLinks {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}

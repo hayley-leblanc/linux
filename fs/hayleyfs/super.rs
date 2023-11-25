@@ -403,7 +403,9 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut orphaned_pages: RBTree<PageNum, ()> = RBTree::new();
     let mut orphaned_dentries: Vec<DentryInfo> = Vec::new(); // this is unlikely to get large enough to cause problems
 
-    // TODO: decrement link counts that are too high
+    // these are used to determine if we have link count leaks
+    let mut real_link_counts: RBTree<InodeNum, u16> = RBTree::new();
+    let mut persistent_link_counts: RBTree<InodeNum, u16> = RBTree::new();
 
     // keeps track of maximum inode/page number in use to recreate the allocator
     let mut max_inode = 0;
@@ -429,13 +431,17 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let inode_table = sbi.get_inode_table()?;
     for inode in inode_table {
         if !inode.is_free() && inode.get_ino() != 0 {
-            alloc_inode_list.push_back(Box::try_new(LinkedInode::new(inode.get_ino()))?);
+            let ino = inode.get_ino();
+            alloc_inode_list.push_back(Box::try_new(LinkedInode::new(ino))?);
+            persistent_link_counts.try_insert(ino, inode.get_link_count())?;
             // if this inode is not orphaned, we'll remove it during our scan later
-            orphaned_inodes.try_insert(inode.get_ino(), ())?;
+            orphaned_inodes.try_insert(ino, ())?;
             sbi.inc_inodes_in_use();
             num_alloc_inodes += 1;
         }
     }
+    // root is always live so make sure it is not counted as an orphan
+    orphaned_inodes.remove(&1);
 
     // 3. scan the page descriptor table to determine which pages are in use
     let page_desc_table = sbi.get_page_desc_table()?;
@@ -484,10 +490,18 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     }
 
     // 4. scan the directory entries in live pages to determine which inodes are live
+    // TODO: does this handle hard links correctly?
     let mut current_live_inode = live_inode_list.pop_front();
     while current_live_inode.is_some() {
         if let Some(current_live_inode) = current_live_inode {
             let live_inode = current_live_inode.get_ino();
+
+            if let Some(lc) = real_link_counts.get_mut(&live_inode) {
+                *lc += 1;
+            } else {
+                real_link_counts.try_insert(live_inode, 1)?;
+            }
+
             if live_inode > max_inode {
                 max_inode = live_inode;
             }
@@ -536,6 +550,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     }
 
     free_orphans(sbi, orphaned_inodes, orphaned_pages, orphaned_dentries)?;
+    fix_link_counts(sbi, persistent_link_counts, real_link_counts)?;
 
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
         alloc_page_list,
@@ -609,6 +624,27 @@ fn free_orphans(
         let _dentry = dentry.recovery_dealloc().flush().fence();
     }
 
+    Ok(())
+}
+
+fn fix_link_counts(
+    sbi: &SbInfo,
+    persistent_link_counts: RBTree<InodeNum, u16>,
+    real_link_counts: RBTree<InodeNum, u16>,
+) -> Result<()> {
+    // TODO: can we do this faster than iterating over all of the inodes?
+    // we will again assume that all inodes are regular inodes since it
+    // doesn't actually matter what type they are here
+    for (ino, persistent_lc) in persistent_link_counts.iter() {
+        if let Some(real_lc) = real_link_counts.get(ino) {
+            if persistent_lc != real_lc {
+                let pi = unsafe { InodeWrapper::get_too_many_links_inode(sbi, *ino, *real_lc)? };
+                let _pi = pi.recovery_dec_link(*real_lc).flush().fence();
+            }
+        } else {
+            return Err(EINVAL);
+        }
+    }
     Ok(())
 }
 

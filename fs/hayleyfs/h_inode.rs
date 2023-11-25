@@ -752,6 +752,44 @@ impl<'a> InodeWrapper<'a, Clean, Recovery, RegInode> {
     }
 }
 
+impl<'a> InodeWrapper<'a, Clean, TooManyLinks, RegInode> {
+    // SAFETY: this function is only safe to call on live inodes who have a link count that is too high
+    pub(crate) unsafe fn get_too_many_links_inode(sbi: &SbInfo, ino: InodeNum, real_lc: u16) -> Result<Self> {
+        let pi = unsafe { 
+            sbi.get_inode_by_ino_mut(ino)?
+        };
+        if !pi.is_initialized() {
+            pr_info!("ERROR: inode {:?} is invalid\n", ino);
+            return Err(EINVAL);
+        }
+        if pi.get_link_count() <= real_lc {
+            pr_info!("ERROR: inode {:?} has a too low link count (real {:?}, persistent {:?})\n", ino, real_lc, pi.get_link_count());
+            return Err(EINVAL);
+        }
+        Ok(InodeWrapper{
+            state: PhantomData,
+            op: PhantomData, 
+            inode_type: PhantomData,
+            vfs_inode: None,
+            ino: ino,
+            inode: pi,
+        })
+    }
+
+    pub(crate) fn recovery_dec_link(self, real_lc: u16) -> InodeWrapper<'a, Dirty, DecLink, RegInode> {
+        self.inode.link_count = real_lc;
+        InodeWrapper{
+            state: PhantomData,
+            op: PhantomData, 
+            inode_type: PhantomData,
+            vfs_inode: None,
+            ino: self.ino,
+            inode: self.inode,
+        }
+    }
+
+}
+
 unsafe fn dealloc_pm_inode(inode: &mut HayleyFsInode) {
     inode.inode_type = InodeType::NONE;
     inode.mode = 0;
