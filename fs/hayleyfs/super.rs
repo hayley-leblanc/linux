@@ -170,7 +170,12 @@ impl fs::Type for HayleyFs {
         Ok(sb)
     }
 
-    fn put_super(_sb: &fs::SuperBlock<Self>) {
+    fn put_super(sb: &fs::SuperBlock<Self>) {
+        let sbi = unsafe { &mut *(sb.s_fs_info() as *mut SbInfo) };
+        let persistent_sb = sbi.get_super_block_mut().unwrap();
+        // TODO: safe wrapper around super block
+        persistent_sb.set_clean_unmount(true);
+        hayleyfs_flush_buffer(persistent_sb, SB_SIZE.try_into().unwrap(), true);
         pr_info!("PUT SUPERBLOCK\n");
     }
 
@@ -424,6 +429,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         );
         return Err(EINVAL);
     }
+    let recovering = !sb.get_clean_unmount();
+    pr_info!("Recovering: {:?}\n", recovering);
 
     // 2. scan the inode table to determine which inodes are allocated
     // TODO: this scan will change significantly if the inode table is ever
@@ -434,14 +441,18 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             let ino = inode.get_ino();
             alloc_inode_list.push_back(Box::try_new(LinkedInode::new(ino))?);
             persistent_link_counts.try_insert(ino, inode.get_link_count())?;
-            // if this inode is not orphaned, we'll remove it during our scan later
-            orphaned_inodes.try_insert(ino, ())?;
+            if recovering {
+                // if this inode is not orphaned, we'll remove it during our scan later
+                orphaned_inodes.try_insert(ino, ())?;
+            }
             sbi.inc_inodes_in_use();
             num_alloc_inodes += 1;
         }
     }
-    // root is always live so make sure it is not counted as an orphan
-    orphaned_inodes.remove(&1);
+    if recovering {
+        // root is always live so make sure it is not counted as an orphan
+        orphaned_inodes.remove(&1);
+    }
 
     // 3. scan the page descriptor table to determine which pages are in use
     let page_desc_table = sbi.get_page_desc_table()?;
@@ -483,8 +494,10 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             alloc_page_list.push_back(Box::try_new(LinkedPage::new(
                 index + sbi.get_data_pages_start_page(),
             ))?);
-            // if this page is not orphaned we'll remove it from the set later
-            orphaned_pages.try_insert(index + sbi.get_data_pages_start_page(), ())?;
+            if recovering {
+                // if this page is not orphaned we'll remove it from the set later
+                orphaned_pages.try_insert(index + sbi.get_data_pages_start_page(), ())?;
+            }
             num_alloc_pages += 1;
         }
     }
@@ -514,7 +527,9 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             if let Some(pages) = owned_dir_pages {
                 for page in pages {
                     // page is live - remove it from the orphan set
-                    orphaned_pages.remove(page);
+                    if recovering {
+                        orphaned_pages.remove(page);
+                    }
                     let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
                     let allocated_dentries = dir_page_wrapper.get_alloc_dentry_info(sbi)?;
                     // add live dentries to the index
@@ -527,9 +542,13 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                             sbi.ino_dentry_tree.insert(live_inode, dentry)?;
                             live_inode_list
                                 .push_back(Box::try_new(LinkedInode::new(dentry.get_ino()))?);
-                            orphaned_inodes.remove(&dentry.get_ino());
+                            if recovering {
+                                orphaned_inodes.remove(&dentry.get_ino());
+                            }
                         } else {
-                            orphaned_dentries.try_push(dentry)?;
+                            if recovering {
+                                orphaned_dentries.try_push(dentry)?;
+                            }
                         }
                     }
                     let page_info = DirPageInfo::new(dir_page_wrapper.get_page_no());
@@ -548,9 +567,10 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         }
         current_live_inode = live_inode_list.pop_front()
     }
-
-    free_orphans(sbi, orphaned_inodes, orphaned_pages, orphaned_dentries)?;
-    fix_link_counts(sbi, persistent_link_counts, real_link_counts)?;
+    if recovering {
+        free_orphans(sbi, orphaned_inodes, orphaned_pages, orphaned_dentries)?;
+        fix_link_counts(sbi, persistent_link_counts, real_link_counts)?;
+    }
 
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
         alloc_page_list,
@@ -569,6 +589,10 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         ROOT_INO + 1,
         sbi.num_inodes,
     )?);
+    // reborrow the super block to appease the borrow checker
+    let sb = sbi.get_super_block_mut().unwrap();
+    sb.set_clean_unmount(false);
+    hayleyfs_flush_buffer(sb, SB_SIZE.try_into()?, true);
     Ok(())
 }
 
@@ -638,8 +662,15 @@ fn fix_link_counts(
     for (ino, persistent_lc) in persistent_link_counts.iter() {
         if let Some(real_lc) = real_link_counts.get(ino) {
             if persistent_lc != real_lc {
-                let pi = unsafe { InodeWrapper::get_too_many_links_inode(sbi, *ino, *real_lc)? };
-                let _pi = pi.recovery_dec_link(*real_lc).flush().fence();
+                // one of the root inode's links is its parent, which we can't see
+                // so real_lc is allowed to be persistent_lc - 1
+                if *ino == ROOT_INO && *real_lc == persistent_lc - 1 {
+                    continue;
+                } else {
+                    let pi =
+                        unsafe { InodeWrapper::get_too_many_links_inode(sbi, *ino, *real_lc)? };
+                    let _pi = pi.recovery_dec_link(*real_lc).flush().fence();
+                }
             }
         } else {
             return Err(EINVAL);

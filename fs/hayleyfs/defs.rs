@@ -70,6 +70,7 @@ pub(crate) struct HayleyFsSuperBlock {
     magic: i64,
     block_size: u64,
     size: i64,
+    clean_unmount: bool,
     // TODO: mount and write timestamps
     // TODO: make sure remounted file systems use the page size specified in the superblock
 }
@@ -84,11 +85,20 @@ impl HayleyFsSuperBlock {
         super_block.size = size;
         super_block.magic = SUPER_MAGIC;
         super_block.block_size = HAYLEYFS_PAGESIZE;
+        super_block.clean_unmount = false;
         super_block
     }
 
     pub(crate) fn get_size(&self) -> i64 {
         self.size
+    }
+
+    pub(crate) fn set_clean_unmount(&mut self, clean_unmount: bool) {
+        self.clean_unmount = clean_unmount;
+    }
+
+    pub(crate) fn get_clean_unmount(&self) -> bool {
+        self.clean_unmount
     }
 }
 
@@ -270,7 +280,7 @@ impl SbInfo {
     }
 
     pub(crate) fn get_super_block(&mut self) -> Result<&HayleyFsSuperBlock> {
-        let super_block = unsafe { &mut *(self.virt_addr as *mut HayleyFsSuperBlock) };
+        let super_block = unsafe { &*(self.virt_addr as *mut HayleyFsSuperBlock) };
         // assume for now that if the magic is fine, the rest of the super block is fine
         if super_block.magic != SUPER_MAGIC {
             pr_err!(
@@ -289,6 +299,28 @@ impl SbInfo {
             return Err(EINVAL);
         }
         self.blocksize = super_block.block_size;
+        Ok(super_block)
+    }
+
+    pub(crate) fn get_super_block_mut(&self) -> Result<&mut HayleyFsSuperBlock> {
+        let super_block = unsafe { &mut *(self.virt_addr as *mut HayleyFsSuperBlock) };
+        // assume for now that if the magic is fine, the rest of the super block is fine
+        if super_block.magic != SUPER_MAGIC {
+            pr_err!(
+                "Magic should be {:?} but found {:?}\n",
+                SUPER_MAGIC,
+                super_block.magic
+            );
+            return Err(EINVAL);
+        }
+        if super_block.size != self.size {
+            pr_err!(
+                "Device size should be {:?} but found {:?}\n",
+                self.size,
+                super_block.size
+            );
+            return Err(EINVAL);
+        }
         Ok(super_block)
     }
 
