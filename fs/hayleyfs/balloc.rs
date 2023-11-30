@@ -160,6 +160,14 @@ impl PageAllocator for Option<PerCpuPageAllocator> {
                 rb_tree.try_insert(current.try_into()?, ())?;
             }
         }
+        // if there is only one cpu, we may not have inserted the free list earlier
+        if cpus == 1 && free_lists.len() == 0 {
+            let free_list = PageFreeList {
+                free_pages: pages_per_cpu,
+                list: rb_tree,
+            };
+            free_lists.try_push(Arc::try_new(Mutex::new(free_list))?)?;
+        }
 
         Ok(Some(PerCpuPageAllocator {
             free_lists,

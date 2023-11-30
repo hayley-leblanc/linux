@@ -436,14 +436,13 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     // TODO: this scan will change significantly if the inode table is ever
     // not a single contiguous array
     let inode_table = sbi.get_inode_table()?;
-    for inode in inode_table {
-        if !inode.is_free() && inode.get_ino() != 0 {
-            let ino = inode.get_ino();
-            alloc_inode_list.push_back(Box::try_new(LinkedInode::new(ino))?);
-            persistent_link_counts.try_insert(ino, inode.get_link_count())?;
+    for (i, inode) in inode_table.iter().enumerate() {
+        if !inode.is_free() && i != 0 {
+            alloc_inode_list.push_back(Box::try_new(LinkedInode::new(i.try_into()?))?);
+            persistent_link_counts.try_insert(i.try_into()?, inode.get_link_count())?;
             if recovering {
                 // if this inode is not orphaned, we'll remove it during our scan later
-                orphaned_inodes.try_insert(ino, ())?;
+                orphaned_inodes.try_insert(i.try_into()?, ())?;
             }
             sbi.inc_inodes_in_use();
             num_alloc_inodes += 1;
@@ -568,7 +567,13 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         current_live_inode = live_inode_list.pop_front()
     }
     if recovering {
-        free_orphans(sbi, orphaned_inodes, orphaned_pages, orphaned_dentries)?;
+        free_orphans(
+            sbi,
+            orphaned_inodes,
+            orphaned_pages,
+            orphaned_dentries,
+            &mut persistent_link_counts,
+        )?;
         fix_link_counts(sbi, persistent_link_counts, real_link_counts)?;
     }
 
@@ -618,6 +623,7 @@ fn free_orphans(
     orphaned_inodes: RBTree<InodeNum, ()>,
     orphaned_pages: RBTree<PageNum, ()>,
     orphaned_dentries: Vec<DentryInfo>,
+    persistent_link_counts: &mut RBTree<InodeNum, u16>,
 ) -> Result<()> {
     // for each orphaned object, follow its regular deallocation process
     // TODO: reconcile what you do here with Nathan's recovery typestates
@@ -629,7 +635,10 @@ fn free_orphans(
     // we don't have any indexed information about this inode, so
     // we just want to persistently deallocate it - skip the other parts
     // that occur in unlink/rmdir to deal with pages
+    // we also remove persistent link counts for orphaned inodes so that we don't
+    // consider them during the link count fixup step
     for (iter, _) in orphaned_inodes.iter() {
+        persistent_link_counts.remove(iter);
         let pi = unsafe { InodeWrapper::get_recovery_inode(sbi, *iter)? };
         let _pi = pi.recovery_dealloc().flush().fence();
     }
