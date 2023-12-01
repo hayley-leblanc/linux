@@ -491,9 +491,6 @@ pub(crate) fn hayleyfs_readdir(
     move_dir_inode_tree_to_map(sbi, &parent_inode_info)?;
 
     let dentries = parent_inode_info.get_all_dentries()?;
-    for dentry in &dentries {
-        pr_info!("{:?}\n", dentry);
-    }
     let num_dentries: i64 = dentries.len().try_into()?;
     unsafe {
         if (*ctx).pos >= num_dentries {
