@@ -149,6 +149,11 @@ impl inode::Operations for InodeOps {
         new_dentry: &fs::DEntry,
         flags: u32,
     ) -> Result<()> {
+        if flags != 0 {
+            pr_info!("ERROR: rename flags not supported\n");
+            return Err(ENOTSUPP);
+        }
+
         let sb = old_dir.i_sb();
         let fs_info_raw = unsafe { (*sb).s_fs_info };
         // TODO: it's probably not safe to just grab s_fs_info and
