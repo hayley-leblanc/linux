@@ -157,10 +157,6 @@ impl HayleyFsInode {
         Ok(root_ino)
     }
 
-    pub(crate) fn get_ino(&self) -> InodeNum {
-        self.ino
-    }
-
     pub(crate) fn get_link_count(&self) -> u16 {
         self.link_count
     }

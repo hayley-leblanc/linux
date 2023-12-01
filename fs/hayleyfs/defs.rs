@@ -97,6 +97,7 @@ impl HayleyFsSuperBlock {
         self.clean_unmount = clean_unmount;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_clean_unmount(&self) -> bool {
         self.clean_unmount
     }
