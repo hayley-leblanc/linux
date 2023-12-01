@@ -2005,6 +2005,7 @@ impl DataPageListWrapper<Clean, Writeable> {
         let mut page = page_list.current();
         while page.is_some() {
             if let Some(page) = page {
+                
                 if bytes_written >= write_size {
                     break;
                 }
@@ -2025,7 +2026,6 @@ impl DataPageListWrapper<Clean, Writeable> {
                     };
                     let bytes_to_write =
                         unsafe { write_to_page(reader, ptr, offset_within_page, bytes_to_write)? };
-
                     bytes_written += bytes_to_write;
                     page_offset += HAYLEYFS_PAGESIZE;
                     len -= bytes_to_write;
