@@ -14,7 +14,7 @@ use kernel::{
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct DentryInfo {
     ino: InodeNum,
-    virt_addr: *const ffi::c_void,
+    virt_addr: Option<*const ffi::c_void>,
     name: [u8; MAX_FILENAME_LEN],
 }
 
@@ -22,7 +22,7 @@ pub(crate) struct DentryInfo {
 impl DentryInfo {
     pub(crate) fn new(
         ino: InodeNum,
-        virt_addr: *const ffi::c_void,
+        virt_addr: Option<*const ffi::c_void>,
         name: [u8; MAX_FILENAME_LEN],
     ) -> Self {
         Self {
@@ -36,7 +36,7 @@ impl DentryInfo {
         self.ino
     }
 
-    pub(crate) fn get_virt_addr(&self) -> *const ffi::c_void {
+    pub(crate) fn get_virt_addr(&self) -> Option<*const ffi::c_void> {
         self.virt_addr
     }
 
@@ -289,7 +289,7 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
 
 /// maps dir inodes to info about their pages
 pub(crate) trait InoDirPageMap {
-    fn new(ino: InodeNum) -> Result<Self>
+    fn new(ino: InodeNum, dentries: RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>) -> Result<Self>
     where
         Self: Sized;
     fn insert<'a, State: Initialized>(&self, page: &DirPageWrapper<'a, Clean, State>)
@@ -309,11 +309,11 @@ pub(crate) struct HayleyFsDirInodeInfo {
 }
 
 impl HayleyFsDirInodeInfo {
-    pub(crate) fn new(ino: InodeNum) -> Result<Self> {
+    pub(crate) fn new(ino: InodeNum, dentries: RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>) -> Result<Self> {
         Ok(Self {
             ino,
             pages: Arc::try_new(Mutex::new(RBTree::new()))?,
-            dentries: Arc::try_new(Mutex::new(RBTree::new()))?,
+            dentries: Arc::try_new(Mutex::new(dentries))?,
         })
     }
 
@@ -335,8 +335,8 @@ impl HayleyFsDirInodeInfo {
 }
 
 impl InoDirPageMap for HayleyFsDirInodeInfo {
-    fn new(ino: InodeNum) -> Result<Self> {
-        Self::new(ino)
+    fn new(ino: InodeNum, dentries: RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>) -> Result<Self> {
+        Self::new(ino, dentries)
     }
 
     fn insert<'a, State: Initialized>(

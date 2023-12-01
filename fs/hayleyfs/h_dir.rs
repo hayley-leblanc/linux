@@ -72,7 +72,7 @@ impl<'a, State, Op> DentryWrapper<'a, State, Op> {
     pub(crate) fn get_dentry_info(&self) -> DentryInfo {
         DentryInfo::new(
             self.dentry.ino,
-            self.dentry as *const _ as *const ffi::c_void,
+            Some(self.dentry as *const _ as *const ffi::c_void),
             self.dentry.name,
         )
     }
@@ -214,34 +214,57 @@ impl<'a> DentryWrapper<'a, Clean, Start> {
     pub(crate) fn get_init_dentry(info: DentryInfo) -> Result<Self> {
         // use the virtual address in the DentryInfo to look up the
         // persistent dentry
-        let dentry: &mut HayleyFsDentry =
-            unsafe { &mut *(info.get_virt_addr() as *mut HayleyFsDentry) };
+        match info.get_virt_addr() {
+            Some(virt_addr) => {
+                let dentry: &mut HayleyFsDentry =
+                    unsafe { &mut *(virt_addr as *mut HayleyFsDentry) };
 
-        // return an error if the dentry is not initialized
-        if dentry.ino == 0 {
-            pr_info!("ERROR: dentry is invalid\n");
-            return Err(EPERM);
-        };
-        Ok(Self {
-            state: PhantomData,
-            op: PhantomData,
-            dentry,
-        })
+                // return an error if the dentry is not initialized
+                if dentry.ino == 0 {
+                    pr_info!("ERROR: dentry is invalid\n");
+                    return Err(EPERM);
+                };
+                Ok(Self {
+                    state: PhantomData,
+                    op: PhantomData,
+                    dentry,
+                })
+            }
+            None => {
+                pr_info!("ERROR: dentry does not have a virt addr\n");
+                Err(EPERM)
+            }
+        }
     }
 }
 
 impl<'a> DentryWrapper<'a, Clean, Recovery> {
     // SAFETY: this function is only safe to call on orphaned directory entries during recovery.
     // it is missing validity checks because it needs to be used on invalid dentries
-    pub(crate) unsafe fn get_recovery_dentry(dentry: &DentryInfo) -> Result<Self> {
-        let dentry: &mut HayleyFsDentry =
-            unsafe { &mut *(dentry.get_virt_addr() as *mut HayleyFsDentry) };
-        Ok(Self {
-            state: PhantomData,
-            op: PhantomData,
-            dentry,
-        })
+    pub(crate) unsafe fn get_recovery_dentry(info: &DentryInfo) -> Result<Self> {
+        match info.get_virt_addr() {
+            Some(virt_addr) => {
+                let dentry: &mut HayleyFsDentry =
+                    unsafe { &mut *(virt_addr as *mut HayleyFsDentry) };
+
+                // return an error if the dentry is not initialized
+                if dentry.ino == 0 {
+                    pr_info!("ERROR: dentry is invalid\n");
+                    return Err(EPERM);
+                };
+                Ok(Self {
+                    state: PhantomData,
+                    op: PhantomData,
+                    dentry,
+                })
+            }
+            None => {
+                pr_info!("ERROR: dentry does not have a virt addr\n");
+                Err(EPERM)
+            }
+        }
     }
+    
 
     pub(crate) fn recovery_dealloc(self) -> DentryWrapper<'a, Dirty, Free> {
         self.dentry.ino = 0;
@@ -396,7 +419,7 @@ impl<'a> DentryWrapper<'a, Clean, Complete> {
     pub(crate) fn index(&self, parent_inode_info: &HayleyFsDirInodeInfo) -> Result<()> {
         let dentry_info = DentryInfo::new(
             self.dentry.ino,
-            self.dentry as *const _ as *const ffi::c_void,
+            Some(self.dentry as *const _ as *const ffi::c_void),
             self.dentry.name,
         );
         parent_inode_info.insert_dentry(dentry_info)
@@ -468,6 +491,9 @@ pub(crate) fn hayleyfs_readdir(
     move_dir_inode_tree_to_map(sbi, &parent_inode_info)?;
 
     let dentries = parent_inode_info.get_all_dentries()?;
+    for dentry in &dentries {
+        pr_info!("{:?}\n", dentry);
+    }
     let num_dentries: i64 = dentries.len().try_into()?;
     unsafe {
         if (*ctx).pos >= num_dentries {
@@ -485,6 +511,7 @@ pub(crate) fn hayleyfs_readdir(
             }
         };
         let name = dentry.get_name_as_cstr();
+        pr_info!("name: {:?}\n", name);
         let file_type = match sbi.check_inode_type_by_inode_num(dentry.get_ino())? {
             InodeType::REG => bindings::DT_REG,
             InodeType::DIR => bindings::DT_DIR,

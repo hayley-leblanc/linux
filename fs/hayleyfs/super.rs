@@ -332,7 +332,8 @@ impl fs::Type for HayleyFs {
 
     // TODO: safety
     fn init_private(inode: *mut bindings::inode) -> Result<()> {
-        let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ROOT_INO))?;
+        let dentries = new_dentry_tree(ROOT_INO, ROOT_INO)?;
+        let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ROOT_INO, dentries))?;
         unsafe { (*inode).i_private = inode_info.into_foreign() as *mut _ };
         Ok(())
     }

@@ -44,7 +44,7 @@ impl inode::Operations for InodeOps {
         let result = parent_inode_info.lookup_dentry(dentry.d_name())?;
         if let Some(dentry_info) = result {
             // the dentry exists in the specified directory
-            Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino())?))
+            Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino(), parent_inode_info.get_ino())?))
         } else {
             // the dentry does not exist in this directory
             Ok(None)
@@ -67,7 +67,7 @@ impl inode::Operations for InodeOps {
 
         let (_new_dentry, new_inode) = hayleyfs_create(sbi, dir, dentry, umode, excl)?;
 
-        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode, None)?;
+        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode, None, dir.i_ino())?;
         unsafe { insert_vfs_inode(vfs_inode, dentry)? };
         Ok(0)
     }
@@ -120,7 +120,7 @@ impl inode::Operations for InodeOps {
 
         dir.inc_nlink();
 
-        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode, None)?;
+        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode, None, dir.i_ino())?;
         unsafe { insert_vfs_inode(vfs_inode, dentry)? };
         Ok(0)
     }
@@ -216,6 +216,7 @@ impl inode::Operations for InodeOps {
                 &new_inode,
                 mode,
                 Some(pi_info),
+                dir.i_ino()
             )?;
             new_inode.set_vfs_inode(vfs_inode)?;
             // let pi_info = new_inode.get_inode_info()?;
@@ -267,6 +268,7 @@ pub(crate) fn hayleyfs_iget(
     sb: *mut bindings::super_block,
     sbi: &SbInfo,
     ino: InodeNum,
+    parent_ino: InodeNum,
 ) -> Result<*mut bindings::inode> {
     init_timing!(inode_exists);
     start_timing!(inode_exists);
@@ -346,15 +348,17 @@ pub(crate) fn hayleyfs_iget(
                 let inode_info = if let Some(dentries) = dentries {
                     Box::try_new(HayleyFsDirInodeInfo::new_from_tree(ino, pages, dentries))?
                 } else {
+                    let dentries = new_dentry_tree(ino, parent_ino)?;
                     Box::try_new(HayleyFsDirInodeInfo::new_from_tree(
                         ino,
                         pages,
-                        RBTree::new(),
+                        dentries,
                     ))?
                 };
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             } else {
-                let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ino))?;
+                let dentries = new_dentry_tree(ino, parent_ino)?;
+                let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ino, dentries))?;
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             }
             end_timing!(InitDirInode, init_dir_inode);
@@ -398,6 +402,7 @@ fn new_vfs_inode<'a, Type>(
     new_inode: &InodeWrapper<'a, Clean, Complete, Type>,
     umode: bindings::umode_t,
     inode_info: Option<Box<HayleyFsRegInodeInfo>>,
+    parent_ino: InodeNum,
 ) -> Result<*mut bindings::inode> {
     init_timing!(full_vfs_inode);
     start_timing!(full_vfs_inode);
@@ -435,7 +440,9 @@ fn new_vfs_inode<'a, Type>(
             start_timing!(init_dir_vfs_inode);
             vfs_inode.i_mode = umode | bindings::S_IFDIR as u16;
             // initialize the DRAM info and save it in the private pointer
-            let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ino))?;
+
+            let dentries = new_dentry_tree(ino, parent_ino)?;
+            let inode_info = Box::try_new(HayleyFsDirInodeInfo::new(ino, dentries))?;
             vfs_inode.i_private = inode_info.into_foreign() as *mut _;
             unsafe {
                 vfs_inode.i_op = inode::OperationsVtable::<InodeOps>::build();
@@ -490,6 +497,20 @@ fn new_vfs_inode<'a, Type>(
     }
     end_timing!(FullVfsInode, full_vfs_inode);
     Ok(vfs_inode)
+}
+
+pub(crate) fn new_dentry_tree(ino: InodeNum, parent_ino: InodeNum) -> Result<RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>>{
+    let mut dentries = RBTree::new();
+    // set up the . and .. dentries
+    let dot: &CStr = CStr::from_bytes_with_nul(".\0".as_bytes())?;
+    let dotdot = CStr::from_bytes_with_nul("..\0".as_bytes())?;
+    let mut dot_array = [0; MAX_FILENAME_LEN];
+    let mut dotdot_array= [0; MAX_FILENAME_LEN];
+    dot_array[..dot.len()].copy_from_slice(dot.as_bytes());
+    dotdot_array [..dotdot.len()].copy_from_slice(dotdot.as_bytes());
+    dentries.try_insert(dot_array, DentryInfo::new(ino, None, dot_array))?;
+    dentries.try_insert(dotdot_array, DentryInfo::new(parent_ino, None, dotdot_array))?;
+    Ok(dentries)
 }
 
 unsafe fn insert_vfs_inode(vfs_inode: *mut bindings::inode, dentry: &fs::DEntry) -> Result<()> {
