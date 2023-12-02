@@ -1849,7 +1849,6 @@ fn hayleyfs_symlink<'a>(
     // the reader. This is safe because 1) a UserSlicePtrReader does not provide any methods
     // that mutate the buffer, 2) we immediately convert the UserSlicePtr into a UserSlicePtrReader,
     // and 3) the UserSlicePtr constructor does not mutate the buffer.
-    pr_info!("creating symlink from {:?} to {:?}\n", dentry.d_name(), name);
     let mut name_reader =
         unsafe { UserSlicePtr::new(symname as *mut core::ffi::c_void, name.len()).reader() };
     let name_len: u64 = name_reader.len().try_into()?;
