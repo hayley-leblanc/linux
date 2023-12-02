@@ -430,8 +430,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         );
         return Err(EINVAL);
     }
-    // let recovering = !sb.get_clean_unmount();
-    let recovering = true;
+    let recovering = !sb.get_clean_unmount();
+    // let recovering = true;
     pr_info!("Recovering: {:?}\n", recovering);
 
     // 2. scan the inode table to determine which inodes are allocated
