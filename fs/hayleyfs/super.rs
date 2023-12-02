@@ -430,8 +430,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
         );
         return Err(EINVAL);
     }
-    let recovering = !sb.get_clean_unmount();
-    // let recovering = true;
+    // let recovering = !sb.get_clean_unmount();
+    let recovering = true;
     pr_info!("Recovering: {:?}\n", recovering);
 
     // 2. scan the inode table to determine which inodes are allocated
@@ -535,6 +535,12 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                     let allocated_dentries = dir_page_wrapper.get_alloc_dentry_info(sbi)?;
                     // add live dentries to the index
                     for dentry in allocated_dentries {
+                        // count child directories towards link count
+                        if dentry.is_dir() {
+                            if let Some(lc) = real_link_counts.get_mut(&live_inode) {
+                                *lc += 1;
+                            }
+                        }
                         // if the dentry is live (i.e. has an inode number), add its inode
                         // to the live inode list. otherwise, add it to the list of dentries
                         // to free. note that we do not have to worry about dentries in

@@ -425,7 +425,7 @@ impl DirPage<'_> {
             if !d.is_free() {
                 let name = d.get_name();
                 let virt_addr = d as *const HayleyFsDentry as *const ffi::c_void;
-                dentry_vec.try_push(DentryInfo::new(ino, Some(virt_addr), name))?;
+                dentry_vec.try_push(DentryInfo::new(ino, Some(virt_addr), name, d.is_dir()))?;
             }
         }
         Ok(dentry_vec)

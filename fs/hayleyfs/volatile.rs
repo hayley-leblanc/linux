@@ -16,6 +16,7 @@ pub(crate) struct DentryInfo {
     ino: InodeNum,
     virt_addr: Option<*const ffi::c_void>,
     name: [u8; MAX_FILENAME_LEN],
+    is_dir: bool,
 }
 
 #[allow(dead_code)]
@@ -24,11 +25,13 @@ impl DentryInfo {
         ino: InodeNum,
         virt_addr: Option<*const ffi::c_void>,
         name: [u8; MAX_FILENAME_LEN],
+        is_dir: bool
     ) -> Self {
         Self {
             ino,
             virt_addr,
             name,
+            is_dir,
         }
     }
 
@@ -46,6 +49,10 @@ impl DentryInfo {
 
     pub(crate) fn get_name_as_cstr(&self) -> &CStr {
         unsafe { CStr::from_char_ptr(self.get_name().as_ptr() as *const core::ffi::c_char) }
+    }
+
+    pub(crate) fn is_dir(&self) -> bool {
+        self.is_dir
     }
 }
 

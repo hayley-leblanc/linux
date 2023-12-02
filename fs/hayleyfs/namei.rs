@@ -508,8 +508,8 @@ pub(crate) fn new_dentry_tree(ino: InodeNum, parent_ino: InodeNum) -> Result<RBT
     let mut dotdot_array= [0; MAX_FILENAME_LEN];
     dot_array[..dot.len()].copy_from_slice(dot.as_bytes());
     dotdot_array [..dotdot.len()].copy_from_slice(dotdot.as_bytes());
-    dentries.try_insert(dot_array, DentryInfo::new(ino, None, dot_array))?;
-    dentries.try_insert(dotdot_array, DentryInfo::new(parent_ino, None, dotdot_array))?;
+    dentries.try_insert(dot_array, DentryInfo::new(ino, None, dot_array, true))?;
+    dentries.try_insert(dotdot_array, DentryInfo::new(parent_ino, None, dotdot_array, true))?;
     Ok(dentries)
 }
 
@@ -548,7 +548,7 @@ fn hayleyfs_create<'a>(
         .flush()
         .fence();
     let pd = get_free_dentry(sbi, &parent_inode)?;
-    let pd = pd.set_name(dentry.d_name())?.flush().fence();
+    let pd = pd.set_name(dentry.d_name(), false)?.flush().fence();
     let (dentry, inode) = init_dentry_with_new_reg_inode(sbi, dir, pd, umode)?;
     let parent_inode_info = parent_inode.get_inode_info()?;
     dentry.index(&parent_inode_info)?;
@@ -580,7 +580,7 @@ fn hayleyfs_link<'a>(
     let target_inode = target_inode.inc_link_count()?.flush().fence();
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let pd = get_free_dentry(sbi, &parent_inode)?;
-    let pd = pd.set_name(dentry.d_name())?.flush().fence();
+    let pd = pd.set_name(dentry.d_name(), false)?.flush().fence();
 
     let (pd, target_inode) = pd.set_file_ino(target_inode);
     let pd = pd.flush().fence();
@@ -610,7 +610,7 @@ fn hayleyfs_mkdir<'a>(
     // let parent_inode_info = parent_inode.get_inode_info()?;
     let parent_inode = parent_inode.inc_link_count()?.flush().fence();
     let pd = get_free_dentry(sbi, &parent_inode)?;
-    let pd = pd.set_name(dentry.d_name())?.flush().fence();
+    let pd = pd.set_name(dentry.d_name(), true)?.flush().fence();
     let (dentry, parent, inode) = init_dentry_with_new_dir_inode(sbi, dir, pd, parent_inode, mode)?;
     let parent_inode_info = parent.get_inode_info()?;
     dentry.index(&parent_inode_info)?;
@@ -908,13 +908,13 @@ fn reg_inode_rename<'a>(
             let pi = pi.update_ctime(old_inode.get_ctime()).flush().fence();
             let (src_dentry, dst_dentry) = if old_dir.get_ino() == new_dir.get_ino() {
                 let dst_dentry = get_free_dentry(sbi, &old_dir)?;
-                let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
+                let dst_dentry = dst_dentry.set_name(new_name, false)?.flush().fence();
                 let (src_dentry, dst_dentry) =
                     rename_new_dentry_file_inode(sbi, dst_dentry, old_dentry_info, &pi, &old_dir)?;
                 rename_new_file_inode_single_dir(sbi, src_dentry, dst_dentry, old_dir, &old_name)?
             } else {
                 let dst_dentry = get_free_dentry(sbi, &new_dir)?;
-                let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
+                let dst_dentry = dst_dentry.set_name(new_name, false)?.flush().fence();
                 let (src_dentry, dst_dentry) =
                     rename_new_dentry_file_inode(sbi, dst_dentry, old_dentry_info, &pi, &new_dir)?;
                 rename_new_file_inode_crossdir(
@@ -986,7 +986,7 @@ fn dir_inode_rename<'a>(
                 old_inode.update_ctime();
                 let pi = pi.update_ctime(old_inode.get_ctime()).flush().fence();
                 let dst_dentry = get_free_dentry(sbi, &old_dir)?;
-                let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
+                let dst_dentry = dst_dentry.set_name(new_name, true)?.flush().fence();
                 let (src_dentry, dst_dentry) = rename_new_dentry_dir_inode_single_dir(
                     sbi,
                     dst_dentry,
@@ -1028,7 +1028,7 @@ fn dir_inode_rename<'a>(
                 old_inode.update_ctime();
                 let pi = pi.update_ctime(old_inode.get_ctime()).flush().fence();
                 let dst_dentry = get_free_dentry(sbi, &new_dir)?;
-                let dst_dentry = dst_dentry.set_name(new_name)?.flush().fence();
+                let dst_dentry = dst_dentry.set_name(new_name, true)?.flush().fence();
                 let (src_dentry, dst_dentry, new_dir) = rename_new_dentry_dir_inode_crossdir(
                     sbi,
                     dst_dentry,
@@ -1818,7 +1818,7 @@ fn hayleyfs_symlink<'a>(
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let pd = get_free_dentry(sbi, &parent_inode)?;
     let name = unsafe { CStr::from_char_ptr(symname) };
-    let pd = pd.set_name(dentry.d_name())?.flush().fence();
+    let pd = pd.set_name(dentry.d_name(), false)?.flush().fence();
 
     // obtain and allocate an inode for the symlink
     let pi = sbi.alloc_ino()?;

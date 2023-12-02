@@ -11,6 +11,7 @@ use kernel::{bindings, dir, file, fs};
 #[repr(C)]
 #[derive(Debug)]
 pub(crate) struct HayleyFsDentry {
+    is_dir: u16,
     ino: InodeNum,
     name: [u8; MAX_FILENAME_LEN],
     rename_ptr: u64,
@@ -25,6 +26,10 @@ impl HayleyFsDentry {
     pub(crate) fn is_rename_ptr_null(&self) -> bool {
         // self.rename_ptr.is_null()
         self.rename_ptr == 0
+    }
+
+    pub(crate) fn is_dir(&self) -> bool {
+        self.is_dir == 1
     }
 
     pub(crate) fn has_name(&self) -> bool {
@@ -74,6 +79,7 @@ impl<'a, State, Op> DentryWrapper<'a, State, Op> {
             self.dentry.ino,
             Some(self.dentry as *const _ as *const ffi::c_void),
             self.dentry.name,
+            self.dentry.is_dir()
         )
     }
 
@@ -101,7 +107,7 @@ impl<'a> DentryWrapper<'a, Clean, Free> {
 
     /// CStr are guaranteed to have a `NUL` byte at the end, so we don't have to check
     /// for that.
-    pub(crate) fn set_name(self, name: &CStr) -> Result<DentryWrapper<'a, Dirty, Alloc>> {
+    pub(crate) fn set_name(self, name: &CStr, is_dir: bool) -> Result<DentryWrapper<'a, Dirty, Alloc>> {
         if name.len() >= MAX_FILENAME_LEN {
             return Err(ENAMETOOLONG);
         }
@@ -113,6 +119,7 @@ impl<'a> DentryWrapper<'a, Clean, Free> {
         };
         let name = name.as_bytes_with_nul();
         self.dentry.name[..num_bytes].clone_from_slice(&name[..num_bytes]);
+        self.dentry.is_dir = if is_dir { 1 } else { 0 };
 
         Ok(DentryWrapper {
             state: PhantomData,
@@ -270,6 +277,7 @@ impl<'a> DentryWrapper<'a, Clean, Recovery> {
         self.dentry.ino = 0;
         self.dentry.name.iter_mut().for_each(|c| *c = 0);
         self.dentry.rename_ptr = 0;
+        self.dentry.is_dir = 0;
 
         DentryWrapper {
             state: PhantomData,
@@ -404,6 +412,7 @@ impl<'a> DentryWrapper<'a, Clean, ClearIno> {
             );
         }
         self.dentry.name.iter_mut().for_each(|c| *c = 0);
+        self.dentry.is_dir = 0;
 
         DentryWrapper {
             state: PhantomData,
@@ -421,6 +430,7 @@ impl<'a> DentryWrapper<'a, Clean, Complete> {
             self.dentry.ino,
             Some(self.dentry as *const _ as *const ffi::c_void),
             self.dentry.name,
+            self.dentry.is_dir()
         );
         parent_inode_info.insert_dentry(dentry_info)
     }
