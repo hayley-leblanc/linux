@@ -471,12 +471,11 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
         )
     }
 
-    
-    pub(crate) fn inc_size_iterator(
+    pub(crate) fn inc_size_iterator<S: WrittenTo>(
         self, 
         bytes_written: u64,
         current_offset: u64,
-        _page_list: &DataPageListWrapper<Clean, Written>,
+        _page_list: &DataPageListWrapper<Clean, S>,
     ) -> (u64, InodeWrapper<'a, Clean, IncSize, Type>) {
         let total_size = bytes_written + current_offset;
         // also update the inode's ctime and mtime. the time update may be reordered with the size change
@@ -1006,11 +1005,6 @@ impl<'a, State, Op, Type> InodeWrapper<'a, State, Op, Type> {
 
     pub(crate) fn update_ctime(self, timestamp: bindings::timespec64) -> InodeWrapper<'a, Dirty, Op, Type>{
         self.inode.ctime = timestamp;
-        self.inode.atime = timestamp;
-        Self::new(self)
-    }
-
-    pub(crate) fn update_atime(self, timestamp: bindings::timespec64) -> InodeWrapper<'a, Dirty, Op, Type>{
         self.inode.atime = timestamp;
         Self::new(self)
     }

@@ -20,12 +20,12 @@ impl symlink::Operations for SymlinkOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        hayleyfs_symlink(sbi, dentry, inode)
+        hayleyfs_get_link(sbi, dentry, inode)
     }
 }
 
 // TODO: ideally this would return a CString or nicer owned type
-fn hayleyfs_symlink<'a>(
+fn hayleyfs_get_link<'a>(
     sbi: &'a SbInfo,
     _dentry: &fs::DEntry,
     inode: &mut fs::INode,
@@ -33,8 +33,6 @@ fn hayleyfs_symlink<'a>(
     // TODO: update timestamps
 
     let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
-    inode.update_atime();
-    let pi = pi.update_atime(inode.get_atime()).flush().fence();
     let pi_info = pi.get_inode_info()?;
     let size: u64 = inode.i_size_read().try_into()?;
 
@@ -44,7 +42,9 @@ fn hayleyfs_symlink<'a>(
         let page_wrapper = DataPageWrapper::from_page_no(sbi, page)?;
         let link = page_wrapper.read_from_page_raw(sbi, 0, size);
         match link {
-            Ok(link) => Ok(link.as_ptr() as *const ffi::c_char),
+            Ok(link) => {
+                Ok(link.as_ptr() as *const ffi::c_char)
+            }
             Err(e) => Err(e),
         }
     } else {

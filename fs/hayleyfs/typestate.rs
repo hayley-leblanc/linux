@@ -86,3 +86,11 @@ impl DeleteDir for Start {}
 pub(crate) trait PagesExist {}
 impl PagesExist for Start {}
 impl PagesExist for Writeable {}
+
+pub(crate) trait CanWrite {}
+impl CanWrite for Writeable {}
+impl CanWrite for Zeroed {}
+
+pub(crate) trait WrittenTo {}
+impl WrittenTo for Written {}
+impl WrittenTo for Zeroed {}

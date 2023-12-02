@@ -508,7 +508,6 @@ pub(crate) fn hayleyfs_readdir(
             }
         };
         let name = dentry.get_name_as_cstr();
-        pr_info!("name: {:?}\n", name);
         let file_type = match sbi.check_inode_type_by_inode_num(dentry.get_ino())? {
             InodeType::REG => bindings::DT_REG,
             InodeType::DIR => bindings::DT_DIR,

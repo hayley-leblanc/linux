@@ -1838,6 +1838,10 @@ fn hayleyfs_symlink<'a>(
     };
 
     let pages = pages.set_backpointers(sbi, pi_info.get_ino())?.fence();
+    // we have to zero the page so that we can properly read a null-terminated
+    // string later when looking up the symlink
+    let (_, pages) = pages.zero_pages(sbi, HAYLEYFS_PAGESIZE, 0)?;
+    let pages = pages.fence();
 
     // need to set file size also which will require writing to the page I think
 
@@ -1845,6 +1849,7 @@ fn hayleyfs_symlink<'a>(
     // the reader. This is safe because 1) a UserSlicePtrReader does not provide any methods
     // that mutate the buffer, 2) we immediately convert the UserSlicePtr into a UserSlicePtrReader,
     // and 3) the UserSlicePtr constructor does not mutate the buffer.
+    pr_info!("creating symlink from {:?} to {:?}\n", dentry.d_name(), name);
     let mut name_reader =
         unsafe { UserSlicePtr::new(symname as *mut core::ffi::c_void, name.len()).reader() };
     let name_len: u64 = name_reader.len().try_into()?;

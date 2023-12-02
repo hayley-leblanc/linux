@@ -193,7 +193,7 @@ pub(crate) trait InoDataPageMap {
         page: &StaticDataPageWrapper<'a, Clean, State>,
     ) -> Result<()>;
     fn insert_page_iterator(&self, offset: u64, page_no: PageNum) -> Result<()>;
-    fn insert_pages(&self, page_list: DataPageListWrapper<Clean, Written>) -> Result<()>;
+    fn insert_pages<S: WrittenTo>(&self, page_list: DataPageListWrapper<Clean, S>) -> Result<()>;
     fn find(&self, offset: u64) -> Option<PageNum>;
     fn get_all_pages(&self) -> Result<RBTree<u64, PageNum>>;
     fn remove_pages(&self, page_list: &DataPageListWrapper<Clean, Free>) -> Result<()>;
@@ -233,7 +233,7 @@ impl InoDataPageMap for HayleyFsRegInodeInfo {
         Ok(())
     }
 
-    fn insert_pages(&self, page_list: DataPageListWrapper<Clean, Written>) -> Result<()> {
+    fn insert_pages<S: WrittenTo>(&self, page_list: DataPageListWrapper<Clean, S>) -> Result<()> {
         let pages = Arc::clone(&self.pages);
         let mut pages = pages.lock();
         let mut cursor = page_list.get_page_list_cursor();
