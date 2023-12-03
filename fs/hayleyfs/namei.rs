@@ -44,7 +44,12 @@ impl inode::Operations for InodeOps {
         let result = parent_inode_info.lookup_dentry(dentry.d_name())?;
         if let Some(dentry_info) = result {
             // the dentry exists in the specified directory
-            Ok(Some(hayleyfs_iget(sb, sbi, dentry_info.get_ino(), parent_inode_info.get_ino())?))
+            Ok(Some(hayleyfs_iget(
+                sb,
+                sbi,
+                dentry_info.get_ino(),
+                parent_inode_info.get_ino(),
+            )?))
         } else {
             // the dentry does not exist in this directory
             Ok(None)
@@ -67,7 +72,17 @@ impl inode::Operations for InodeOps {
 
         let (_new_dentry, new_inode) = hayleyfs_create(sbi, dir, dentry, umode, excl)?;
 
-        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode, None, dir.i_ino())?;
+        let vfs_inode = new_vfs_inode(
+            sb,
+            sbi,
+            mnt_idmap,
+            dir,
+            dentry,
+            &new_inode,
+            umode,
+            None,
+            dir.i_ino(),
+        )?;
         unsafe { insert_vfs_inode(vfs_inode, dentry)? };
         Ok(0)
     }
@@ -120,7 +135,17 @@ impl inode::Operations for InodeOps {
 
         dir.inc_nlink();
 
-        let vfs_inode = new_vfs_inode(sb, sbi, mnt_idmap, dir, dentry, &new_inode, umode, None, dir.i_ino())?;
+        let vfs_inode = new_vfs_inode(
+            sb,
+            sbi,
+            mnt_idmap,
+            dir,
+            dentry,
+            &new_inode,
+            umode,
+            None,
+            dir.i_ino(),
+        )?;
         unsafe { insert_vfs_inode(vfs_inode, dentry)? };
         Ok(0)
     }
@@ -216,7 +241,7 @@ impl inode::Operations for InodeOps {
                 &new_inode,
                 mode,
                 Some(pi_info),
-                dir.i_ino()
+                dir.i_ino(),
             )?;
             new_inode.set_vfs_inode(vfs_inode)?;
             // let pi_info = new_inode.get_inode_info()?;
@@ -349,11 +374,7 @@ pub(crate) fn hayleyfs_iget(
                     Box::try_new(HayleyFsDirInodeInfo::new_from_tree(ino, pages, dentries))?
                 } else {
                     let dentries = new_dentry_tree(ino, parent_ino)?;
-                    Box::try_new(HayleyFsDirInodeInfo::new_from_tree(
-                        ino,
-                        pages,
-                        dentries,
-                    ))?
+                    Box::try_new(HayleyFsDirInodeInfo::new_from_tree(ino, pages, dentries))?
                 };
                 (*inode).i_private = inode_info.into_foreign() as *mut _;
             } else {
@@ -499,17 +520,23 @@ fn new_vfs_inode<'a, Type>(
     Ok(vfs_inode)
 }
 
-pub(crate) fn new_dentry_tree(ino: InodeNum, parent_ino: InodeNum) -> Result<RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>>{
+pub(crate) fn new_dentry_tree(
+    ino: InodeNum,
+    parent_ino: InodeNum,
+) -> Result<RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>> {
     let mut dentries = RBTree::new();
     // set up the . and .. dentries
     let dot: &CStr = CStr::from_bytes_with_nul(".\0".as_bytes())?;
     let dotdot = CStr::from_bytes_with_nul("..\0".as_bytes())?;
     let mut dot_array = [0; MAX_FILENAME_LEN];
-    let mut dotdot_array= [0; MAX_FILENAME_LEN];
+    let mut dotdot_array = [0; MAX_FILENAME_LEN];
     dot_array[..dot.len()].copy_from_slice(dot.as_bytes());
-    dotdot_array [..dotdot.len()].copy_from_slice(dotdot.as_bytes());
+    dotdot_array[..dotdot.len()].copy_from_slice(dotdot.as_bytes());
     dentries.try_insert(dot_array, DentryInfo::new(ino, None, dot_array, true))?;
-    dentries.try_insert(dotdot_array, DentryInfo::new(parent_ino, None, dotdot_array, true))?;
+    dentries.try_insert(
+        dotdot_array,
+        DentryInfo::new(parent_ino, None, dotdot_array, true),
+    )?;
     Ok(dentries)
 }
 
@@ -572,7 +599,6 @@ fn hayleyfs_link<'a>(
     // first, obtain the inode that's getting the link from old_dentry
     // TODO: move unsafe cast to the wrapper
     let inode: &mut fs::INode = unsafe { &mut *old_dentry.d_inode().cast() };
-    // pr_info!("link\n");
     let target_inode = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     inode.update_ctime();
     let target_inode = target_inode.update_ctime(inode.get_atime()).flush().fence();
@@ -871,7 +897,6 @@ fn reg_inode_rename<'a>(
     match new_dentry_info {
         Some(new_dentry_info) => {
             // overwriting a dentry
-            // pr_info!("rename 1\n");
             let new_pi = sbi.get_init_reg_inode_by_vfs_inode(new_inode.get_inner())?;
             new_inode.update_ctime();
             let new_pi = new_pi.update_ctime(new_inode.get_ctime()).flush().fence();
@@ -902,7 +927,6 @@ fn reg_inode_rename<'a>(
         }
         None => {
             // creating a new dentry
-            // pr_info!("rename 2\n");
             let pi = sbi.get_init_reg_inode_by_vfs_inode(old_inode.get_inner())?;
             old_inode.update_ctime();
             let pi = pi.update_ctime(old_inode.get_ctime()).flush().fence();
@@ -1814,10 +1838,14 @@ fn hayleyfs_symlink<'a>(
     DataPageListWrapper<Clean, Written>,
     Box<HayleyFsRegInodeInfo>,
 )> {
+    let name = unsafe { CStr::from_char_ptr(symname) };
+    if name.len() >= MAX_FILENAME_LEN {
+        return Err(ENAMETOOLONG);
+    }
+
     // obtain and allocate a new persistent dentry
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let pd = get_free_dentry(sbi, &parent_inode)?;
-    let name = unsafe { CStr::from_char_ptr(symname) };
     let pd = pd.set_name(dentry.d_name(), false)?.flush().fence();
 
     // obtain and allocate an inode for the symlink

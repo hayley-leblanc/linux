@@ -79,7 +79,7 @@ impl<'a, State, Op> DentryWrapper<'a, State, Op> {
             self.dentry.ino,
             Some(self.dentry as *const _ as *const ffi::c_void),
             self.dentry.name,
-            self.dentry.is_dir()
+            self.dentry.is_dir(),
         )
     }
 
@@ -107,7 +107,11 @@ impl<'a> DentryWrapper<'a, Clean, Free> {
 
     /// CStr are guaranteed to have a `NUL` byte at the end, so we don't have to check
     /// for that.
-    pub(crate) fn set_name(self, name: &CStr, is_dir: bool) -> Result<DentryWrapper<'a, Dirty, Alloc>> {
+    pub(crate) fn set_name(
+        self,
+        name: &CStr,
+        is_dir: bool,
+    ) -> Result<DentryWrapper<'a, Dirty, Alloc>> {
         if name.len() >= MAX_FILENAME_LEN {
             return Err(ENAMETOOLONG);
         }
@@ -271,7 +275,6 @@ impl<'a> DentryWrapper<'a, Clean, Recovery> {
             }
         }
     }
-    
 
     pub(crate) fn recovery_dealloc(self) -> DentryWrapper<'a, Dirty, Free> {
         self.dentry.ino = 0;
@@ -430,7 +433,7 @@ impl<'a> DentryWrapper<'a, Clean, Complete> {
             self.dentry.ino,
             Some(self.dentry as *const _ as *const ffi::c_void),
             self.dentry.name,
-            self.dentry.is_dir()
+            self.dentry.is_dir(),
         );
         parent_inode_info.insert_dentry(dentry_info)
     }

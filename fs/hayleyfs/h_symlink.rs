@@ -35,16 +35,13 @@ fn hayleyfs_get_link<'a>(
     let pi = sbi.get_init_reg_inode_by_vfs_inode(inode.get_inner())?;
     let pi_info = pi.get_inode_info()?;
     let size: u64 = inode.i_size_read().try_into()?;
-
     // look up the page containing the symlink path
     let page = pi_info.find(0);
     if let Some(page) = page {
         let page_wrapper = DataPageWrapper::from_page_no(sbi, page)?;
         let link = page_wrapper.read_from_page_raw(sbi, 0, size);
         match link {
-            Ok(link) => {
-                Ok(link.as_ptr() as *const ffi::c_char)
-            }
+            Ok(link) => Ok(link.as_ptr() as *const ffi::c_char),
             Err(e) => Err(e),
         }
     } else {
