@@ -526,9 +526,13 @@ impl InoDentryMap for HayleyFsDirInodeInfo {
     fn has_dentries(&self) -> bool {
         let dentries = Arc::clone(&self.dentries);
         let dentries = dentries.lock();
-        let mut keys = dentries.keys().peekable();
-
-        keys.peek().is_some()
+        for d in dentries.keys() {
+            let name = unsafe { CStr::from_char_ptr(d.as_ptr() as *const core::ffi::c_char).to_str().unwrap() };
+            if name != "." && name != ".." {
+                return true;
+            }
+        }
+        false
     }
 
     fn debug_print_dentries(&self) {
