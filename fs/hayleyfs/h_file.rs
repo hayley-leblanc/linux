@@ -348,7 +348,7 @@ fn iterator_write<'a>(
     count: u64,
     offset: u64,
 ) -> Result<(DataPageListWrapper<Clean, Written>, u64)> {
-    // TODO: if we have to allocate some pages we don't write to, they should 
+    // TODO: if we have to allocate some pages we don't write to, they should
     // probably get zeroed out
     let (alloc_count, alloc_offset) = if offset > pi.get_size() {
         (count + offset - pi.get_size(), pi.get_size())
@@ -361,7 +361,8 @@ fn iterator_write<'a>(
         Err(page_list) => {
             let pages_to_write = get_num_pages_in_region(alloc_count, alloc_offset);
             let pages_left = pages_to_write - page_list.len();
-            let allocation_offset = page_offset(alloc_offset)? + page_list.len() * HAYLEYFS_PAGESIZE;
+            let allocation_offset =
+                page_offset(alloc_offset)? + page_list.len() * HAYLEYFS_PAGESIZE;
             let page_list = page_list
                 .allocate_pages(sbi, &pi_info, pages_left.try_into()?, allocation_offset)?
                 .fence();

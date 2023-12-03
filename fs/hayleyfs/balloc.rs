@@ -2040,7 +2040,6 @@ impl<S: CanWrite> DataPageListWrapper<Clean, S> {
         let mut page = page_list.current();
         while page.is_some() {
             if let Some(page) = page {
-                
                 if bytes_written >= write_size {
                     break;
                 }

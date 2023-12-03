@@ -96,16 +96,13 @@ impl inode::Operations for InodeOps {
         // get a mutable reference to one of the dram indexes
         let sbi = unsafe { &mut *(fs_info_raw as *mut SbInfo) };
 
-        let result = hayleyfs_link(sbi, old_dentry, dir, dentry);
-
         unsafe { bindings::ihold(inode) };
+
+        let result = hayleyfs_link(sbi, old_dentry, dir, dentry);
 
         if result.is_ok() {
             // TODO: safe wrappers
             unsafe {
-                let ctime = bindings::current_time(inode);
-                (*inode).i_ctime = ctime;
-                bindings::inc_nlink(inode);
                 bindings::d_instantiate(dentry.get_inner(), old_dentry.d_inode());
             }
         }
@@ -175,7 +172,6 @@ impl inode::Operations for InodeOps {
         flags: u32,
     ) -> Result<()> {
         if flags != 0 {
-            pr_info!("ERROR: rename flags not supported\n");
             return Err(ENOTSUPP);
         }
 
@@ -604,6 +600,14 @@ fn hayleyfs_link<'a>(
     let target_inode = target_inode.update_ctime(inode.get_atime()).flush().fence();
 
     let target_inode = target_inode.inc_link_count()?.flush().fence();
+    // TODO: this should really go in the caller, but if another part of this function fails
+    // then the vfs and persistent inodes will have link counts that are out of sync.
+    // should have some kind of rollback mechanism in case of failure.
+    unsafe {
+        let ctime = bindings::current_time(inode.get_inner());
+        (*inode.get_inner()).i_ctime = ctime;
+        bindings::inc_nlink(inode.get_inner());
+    }
     let parent_inode = sbi.get_init_dir_inode_by_vfs_inode(dir.get_inner())?;
     let pd = get_free_dentry(sbi, &parent_inode)?;
     let pd = pd.set_name(dentry.d_name(), false)?.flush().fence();
@@ -1700,6 +1704,7 @@ fn hayleyfs_unlink<'a>(
         .flush()
         .fence();
     let parent_inode_info = parent_inode.get_inode_info()?;
+    pr_info!("unlinking inode {:?}\n", inode.i_ino());
 
     // use volatile index to find the persistent dentry
     let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name())?;
