@@ -1704,7 +1704,6 @@ fn hayleyfs_unlink<'a>(
         .flush()
         .fence();
     let parent_inode_info = parent_inode.get_inode_info()?;
-    pr_info!("unlinking inode {:?}\n", inode.i_ino());
 
     // use volatile index to find the persistent dentry
     let dentry_info = parent_inode_info.lookup_dentry(dentry.d_name())?;
