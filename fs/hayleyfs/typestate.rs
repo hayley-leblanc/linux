@@ -60,6 +60,10 @@ pub(crate) trait AddLink {}
 impl AddLink for Alloc {}
 impl AddLink for IncLink {}
 
+pub(crate) trait RenameSource {}
+impl RenameSource for ClearIno {} // Normal renaming
+impl RenameSource for Recovering {}  // Recovery renaming
+
 // undescriptive name because this is used in multiple unrelated places
 // 1. setting a rename pointer
 // 2. setting a data page backpointer

@@ -11,6 +11,7 @@ use kernel::prelude::*;
 use kernel::{bindings, c_str, fs, linked_list::List, rbtree::RBTree, types::ForeignOwnable};
 use namei::*;
 use pm::*;
+use typestate::*;
 use volatile::*;
 
 mod balloc;
@@ -395,37 +396,78 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
     }
 }
 
-fn recover_all_renames(
-    sbi: &SbInfo,
-    init_dir_pages: &RBTree<InodeNum, Vec<PageNum>> 
-    ) -> Result<()> {
-    let mut src_to_dst = RBTree::new();
-    let mut renames_in_progress = Vec::new();
+pub(crate) fn recover_rename<'a>(
+    sbi: &SbInfo, 
+    d: DentryWrapper<'a, Clean, Recovering>,
+    ) -> Result<()> { 
+    //NB: We are at steps 1-5 of Figure 3.
 
-    let inode_table = sbi.get_inode_table()?;
+    if let Some(src) = d.rename_ptr(sbi)? {
+        //NB: We are at steps 2 or 3 of Figure 3.
+        // dst: has typestate InitRenamePointer
+        //some d.rename_pointer => // d is a dst
+        let dst: DentryWrapper<'a, Clean, InitRenamePointer> = d.into_init_rename(sbi)?;
 
-    
-    for desc in inode_table.iter().filter(|i| i.get_type() == InodeType::DIR) {
-        if let Some(pages) = init_dir_pages.get(&desc.get_ino()) {
-            for page in pages {
-                let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, *page)?;
+        if dst.get_dentry_info().get_ino() != src.get_ino() {
+            // NB: We are at step 2 or at step 4 of Figure 3.
+            // Either rolling back step 2 or rolling ahead from step 4
+            // requires unsetting the dst's rename pointer, leaving src 
+            // untouched for subsequent cleanup.
 
-                for dinfo in dir_page_wrapper.get_alloc_dentry_info(sbi)? {
-                    let mut dst = DentryWrapper::get_recovering_dentry(dinfo)?;
-                    if let Some(src) = dst.rename_ptr(sbi) {
-                        let dst_ptr = dst.get_dentry() as *mut HayleyFsDentry;
-                        let src_inode = src.get_ino();
+            // d.rename_pointer.inode != d.inode 
+            //   => d.typestate' = RecoverClearSetRptr
 
-                        src_to_dst.try_insert(src_inode, dst_ptr)?;
-                        renames_in_progress.try_push(dst)?;
-                    }
-                }
-            }
+            //          make_dirty[d]
+            //          no d.rename_ptr'
+
+            // src: has typestate Recovering
+            let src = DentryWrapper::src_to_recovering(&dst, src)?;
+            dst.clear_rename_pointer(&src).flush().fence();
+        } else {
+            // NB: We are at step 3 of Figure 3.
+            // src: has typestate Renamed
+            let src = DentryWrapper::src_to_renamed(&dst, src)?;
+
+            // Step 4: src -> ClearIno
+            let src = src.clear_ino().flush().fence();
+
+            // Step 5: dst -> ClearRenamePointer
+            dst.clear_rename_pointer(&src).flush().fence();
+
+            // Step 6: src -> Dealloc
+            src.dealloc_dentry().flush().fence();
         }
-    }
 
-    for dentry in renames_in_progress {
-        dentry.recover_rename(sbi, &src_to_dst)?;
+        //We are either at step 1 or step 5 of Figure 3 - the rename has either been rolled
+        //back or has completed.
+    }
+    // If d's rename pointer is not set, either it is a src in which
+    // its inode has already been zeroed out (step 5); or, it is an
+    // entry not participating in a rename during crash.  Ignore.
+
+    Ok(())
+}
+
+fn recover_all_renames(sbi: &SbInfo) -> Result<()> {
+    let begin: usize = sbi.get_data_pages_start_page().try_into()?;
+
+    let pages = sbi.get_page_desc_table()?;
+    for (i, desc) in pages
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.get_page_type() == PageType::DIR) {
+        let desc: &DirPageHeader = desc.try_into()?;
+        if !desc.is_initialized() {
+            continue;
+        }
+      
+        let page = i + begin;
+        let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, page.try_into()?)?;
+
+        for dinfo in dir_page_wrapper.get_alloc_dentry_info(sbi)? {
+            let dst = DentryWrapper::from_dinfo(dinfo)?;
+            recover_rename(sbi, dst)?;
+        }
     }
 
 
@@ -540,6 +582,9 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             num_alloc_pages += 1;
         }
     }
+    if recovering {
+        recover_all_renames(sbi)?;
+    }
 
     // 4. scan the directory entries in live pages to determine which inodes are live
     // TODO: does this handle hard links correctly?
@@ -621,7 +666,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             &mut persistent_link_counts,
         )?;
         fix_link_counts(sbi, persistent_link_counts, real_link_counts)?;
-        recover_all_renames(sbi, &init_dir_pages)?;
     }
 
     sbi.page_allocator = Option::<PerCpuPageAllocator>::new_from_alloc_vec(
