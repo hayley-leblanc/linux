@@ -12,8 +12,8 @@ use kernel::{bindings, dir, file, fs};
 #[derive(Debug)]
 pub(crate) struct HayleyFsDentry {
     is_dir: u16,
-    ino: InodeNum,
     name: [u8; MAX_FILENAME_LEN],
+    ino: InodeNum,
     rename_ptr: u64,
 }
 
