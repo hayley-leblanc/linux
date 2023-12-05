@@ -759,6 +759,11 @@ impl PmDevice for SbInfo {
         self.page_desc_table_size = page_desc_table_size;
         self.page_desc_table_pages = page_desc_table_pages;
 
+        self.blocks_in_use.store(
+            inode_table_pages + page_desc_table_pages + 1,
+            Ordering::SeqCst,
+        );
+
         Ok(())
     }
 }
