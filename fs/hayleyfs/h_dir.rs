@@ -340,12 +340,6 @@ impl<'a> DentryWrapper<'a, Clean, Recovery> {
             Some(virt_addr) => {
                 let dentry: &mut HayleyFsDentry =
                     unsafe { &mut *(virt_addr as *mut HayleyFsDentry) };
-
-                // return an error if the dentry is not initialized
-                if dentry.ino == 0 {
-                    pr_info!("ERROR: dentry is invalid\n");
-                    return Err(EPERM);
-                };
                 Ok(Self {
                     state: PhantomData,
                     op: PhantomData,
@@ -411,6 +405,7 @@ impl<'a> DentryWrapper<'a, Clean, SetRenamePointer> {
     }
 
     // TODO: this one should be required in a crossdir setting
+    #[allow(dead_code)]
     pub(crate) fn init_rename_pointer_dir_crossdir(
         self,
         src_dentry: DentryWrapper<'a, Clean, Renaming>,
