@@ -397,9 +397,9 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
 }
 
 pub(crate) fn recover_rename<'a>(
-    sbi: &SbInfo, 
+    sbi: &SbInfo,
     d: DentryWrapper<'a, Clean, Recovering>,
-    ) -> Result<()> { 
+) -> Result<()> {
     //NB: We are at steps 1-5 of Figure 3.
 
     if let Some(src) = d.rename_ptr(sbi)? {
@@ -411,10 +411,10 @@ pub(crate) fn recover_rename<'a>(
         if dst.get_dentry_info().get_ino() != src.get_ino() {
             // NB: We are at step 2 or at step 4 of Figure 3.
             // Either rolling back step 2 or rolling ahead from step 4
-            // requires unsetting the dst's rename pointer, leaving src 
+            // requires unsetting the dst's rename pointer, leaving src
             // untouched for subsequent cleanup.
 
-            // d.rename_pointer.inode != d.inode 
+            // d.rename_pointer.inode != d.inode
             //   => d.typestate' = RecoverClearSetRptr
 
             //          make_dirty[d]
@@ -455,12 +455,13 @@ fn recover_all_renames(sbi: &SbInfo) -> Result<()> {
     for (i, desc) in pages
         .iter()
         .enumerate()
-        .filter(|(_, p)| p.get_page_type() == PageType::DIR) {
+        .filter(|(_, p)| p.get_page_type() == PageType::DIR)
+    {
         let desc: &DirPageHeader = desc.try_into()?;
         if !desc.is_initialized() {
             continue;
         }
-      
+
         let page = i + begin;
         let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, page.try_into()?)?;
 
@@ -470,10 +471,8 @@ fn recover_all_renames(sbi: &SbInfo) -> Result<()> {
         }
     }
 
-
     Ok(())
 }
-
 
 fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut alloc_inode_list: List<Box<LinkedInode>> = List::new();

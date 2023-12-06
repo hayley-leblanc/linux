@@ -111,7 +111,7 @@ impl<'a> DentryWrapper<'a, Clean, Recovering> {
         if self.dentry.rename_ptr == 0 {
             Ok(None)
         } else {
-            let base = sbi.get_virt_addr() as * const u8;
+            let base = sbi.get_virt_addr() as *const u8;
             let off: isize = self.dentry.rename_ptr.try_into().unwrap();
 
             let pg_sz: isize = HAYLEYFS_PAGESIZE.try_into().unwrap();
@@ -127,14 +127,15 @@ impl<'a> DentryWrapper<'a, Clean, Recovering> {
         }
     }
 
-
-    pub(crate) fn into_init_rename(self, sbi: &SbInfo) 
-        -> Result<DentryWrapper<'a, Clean, InitRenamePointer>> {
+    pub(crate) fn into_init_rename(
+        self,
+        sbi: &SbInfo,
+    ) -> Result<DentryWrapper<'a, Clean, InitRenamePointer>> {
         if let Some(_) = self.rename_ptr(sbi)? {
             let dst: DentryWrapper<'a, Clean, InitRenamePointer> = DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: self.dentry
+                dentry: self.dentry,
             };
             Ok(dst)
         } else {
@@ -145,29 +146,29 @@ impl<'a> DentryWrapper<'a, Clean, Recovering> {
     // Step 2 of rename recovery, given a dst
     pub(crate) fn src_to_recovering(
         dst: &DentryWrapper<'a, Clean, InitRenamePointer>,
-        src: &'a mut HayleyFsDentry) -> Result<DentryWrapper<'a, Clean, Recovering>> {
-
-        if dst.get_dentry_info().get_ino() == src.get_ino() {
+        src: &'a mut HayleyFsDentry,
+    ) -> Result<DentryWrapper<'a, Clean, Recovering>> {
+        if dst.get_dentry_info().get_ino() != src.get_ino() {
             Ok(DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: src
+                dentry: src,
             })
         } else {
             pr_info!("recover_src failed: no virt_addr");
             Err(EINVAL)
         }
     }
-        
+
     pub(crate) fn src_to_renamed(
         dst: &DentryWrapper<'a, Clean, InitRenamePointer>,
-        src: &'a mut HayleyFsDentry) -> Result<DentryWrapper<'a, Clean, Renamed>> {
-
+        src: &'a mut HayleyFsDentry,
+    ) -> Result<DentryWrapper<'a, Clean, Renamed>> {
         if dst.get_dentry_info().get_ino() == src.get_ino() {
             Ok(DentryWrapper {
                 state: PhantomData,
                 op: PhantomData,
-                dentry: src
+                dentry: src,
             })
         } else {
             pr_info!("recover_src failed: no virt_addr");
@@ -304,7 +305,6 @@ impl<'a, Op> DentryWrapper<'a, Clean, Op> {
 }
 
 impl<'a> DentryWrapper<'a, Clean, Start> {
-
     pub(crate) fn get_init_dentry(info: DentryInfo) -> Result<Self> {
         // use the virtual address in the DentryInfo to look up the
         // persistent dentry
