@@ -41,6 +41,7 @@ pub(crate) struct UnmapPages {}
 pub(crate) struct Msynced {} // TODO: is this necessary?
 pub(crate) struct Recovery {}
 pub(crate) struct TooManyLinks {}
+pub(crate) struct Recovering {}
 
 /// Traits to allow a transition from multiple legal typestates
 pub(crate) trait Initialized {}
@@ -59,6 +60,10 @@ pub(crate) trait AddLink {}
 impl AddLink for Alloc {}
 impl AddLink for IncLink {}
 
+pub(crate) trait RenameSource {}
+impl RenameSource for ClearIno {} // Normal renaming
+impl RenameSource for Recovering {}  // Recovery renaming
+
 // undescriptive name because this is used in multiple unrelated places
 // 1. setting a rename pointer
 // 2. setting a data page backpointer
@@ -69,6 +74,7 @@ impl StartOrAlloc for Alloc {}
 pub(crate) trait DeletableDentry {}
 impl DeletableDentry for Start {}
 impl DeletableDentry for Renamed {}
+impl DeletableDentry for Recovering {}
 
 pub(crate) trait CanDeletePages {}
 impl CanDeletePages for ClearIno {}

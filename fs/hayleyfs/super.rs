@@ -11,6 +11,7 @@ use kernel::prelude::*;
 use kernel::{bindings, c_str, fs, linked_list::List, rbtree::RBTree, types::ForeignOwnable};
 use namei::*;
 use pm::*;
+use typestate::*;
 use volatile::*;
 
 mod balloc;
@@ -395,6 +396,85 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
     }
 }
 
+pub(crate) fn recover_rename<'a>(
+    sbi: &SbInfo, 
+    d: DentryWrapper<'a, Clean, Recovering>,
+    ) -> Result<()> { 
+    //NB: We are at steps 1-5 of Figure 3.
+
+    if let Some(src) = d.rename_ptr(sbi)? {
+        //NB: We are at steps 2 or 3 of Figure 3.
+        // dst: has typestate InitRenamePointer
+        //some d.rename_pointer => // d is a dst
+        let dst: DentryWrapper<'a, Clean, InitRenamePointer> = d.into_init_rename(sbi)?;
+
+        if dst.get_dentry_info().get_ino() != src.get_ino() {
+            // NB: We are at step 2 or at step 4 of Figure 3.
+            // Either rolling back step 2 or rolling ahead from step 4
+            // requires unsetting the dst's rename pointer, leaving src 
+            // untouched for subsequent cleanup.
+
+            // d.rename_pointer.inode != d.inode 
+            //   => d.typestate' = RecoverClearSetRptr
+
+            //          make_dirty[d]
+            //          no d.rename_ptr'
+
+            // src: has typestate Recovering
+            let src = DentryWrapper::src_to_recovering(&dst, src)?;
+            dst.clear_rename_pointer(&src).flush().fence();
+        } else {
+            // NB: We are at step 3 of Figure 3.
+            // src: has typestate Renamed
+            let src = DentryWrapper::src_to_renamed(&dst, src)?;
+
+            // Step 4: src -> ClearIno
+            let src = src.clear_ino().flush().fence();
+
+            // Step 5: dst -> ClearRenamePointer
+            dst.clear_rename_pointer(&src).flush().fence();
+
+            // Step 6: src -> Dealloc
+            src.dealloc_dentry().flush().fence();
+        }
+
+        //We are either at step 1 or step 5 of Figure 3 - the rename has either been rolled
+        //back or has completed.
+    }
+    // If d's rename pointer is not set, either it is a src in which
+    // its inode has already been zeroed out (step 5); or, it is an
+    // entry not participating in a rename during crash.  Ignore.
+
+    Ok(())
+}
+
+fn recover_all_renames(sbi: &SbInfo) -> Result<()> {
+    let begin: usize = sbi.get_data_pages_start_page().try_into()?;
+
+    let pages = sbi.get_page_desc_table()?;
+    for (i, desc) in pages
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.get_page_type() == PageType::DIR) {
+        let desc: &DirPageHeader = desc.try_into()?;
+        if !desc.is_initialized() {
+            continue;
+        }
+      
+        let page = i + begin;
+        let dir_page_wrapper = DirPageWrapper::from_page_no(sbi, page.try_into()?)?;
+
+        for dinfo in dir_page_wrapper.get_alloc_dentry_info(sbi)? {
+            let dst = DentryWrapper::from_dinfo(dinfo)?;
+            recover_rename(sbi, dst)?;
+        }
+    }
+
+
+    Ok(())
+}
+
+
 fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut alloc_inode_list: List<Box<LinkedInode>> = List::new();
     let mut num_alloc_inodes = 0;
@@ -501,6 +581,9 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             }
             num_alloc_pages += 1;
         }
+    }
+    if recovering {
+        recover_all_renames(sbi)?;
     }
 
     // 4. scan the directory entries in live pages to determine which inodes are live
