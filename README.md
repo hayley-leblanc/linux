@@ -72,6 +72,7 @@ TODO: add instructions for building on host and using direct boot.
         11. Set `CONFIG_HAYLEY_FS` to M
         12. Set `CONFIG_DEBUG_PREEMPTION` to N
         13. Set `CONFIG_LOCALVERSION_AUTO` to N
+        14. Set `CONFIG_TRANSPARENT_HUGEPAGE` to Y
     4. Optional: if you want to use rust-analyzer for development, run `make rust-analyzer` to generate the necessary files. However, this does *not* enable Rust analyzer in the fs kernel module - TODO: figure out how to enable it there. Running this command may prompt you to set some config options interactively; just hit Enter to use the default on all of them.
 5. Build the kernel with `make LLVM=-14 -j <number of cores>`. `LLVM=1` is necessary to build Rust components.
     - Note: while building the kernel, it may prompt you to select some configuration options interactively.
