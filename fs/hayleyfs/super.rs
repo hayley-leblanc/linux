@@ -176,6 +176,7 @@ impl fs::Type for HayleyFs {
         let persistent_sb = sbi.get_super_block_mut().unwrap();
         // TODO: safe wrapper around super block
         persistent_sb.set_clean_unmount(true);
+        pr_info!("flush put super\n");
         hayleyfs_flush_buffer(persistent_sb, SB_SIZE.try_into().unwrap(), true);
         pr_info!("PUT SUPERBLOCK\n");
     }
@@ -250,7 +251,8 @@ impl fs::Type for HayleyFs {
         // TODO: DO THIS SAFELY WITH WRAPPERS
         // raw_pi.atime = unsafe { bindings::current_time(inode.get_inner()) };
         // unsafe { raw_pi.set_atime(bindings::current_time(inode.get_inner())) };
-        hayleyfs_flush_buffer(&raw_pi, core::mem::size_of::<HayleyFsInode>(), true);
+        pr_info!("flush dirty inode\n");
+        hayleyfs_flush_buffer(raw_pi, core::mem::size_of::<HayleyFsInode>(), true);
     }
 
     fn evict_inode(inode: &fs::INode) {
@@ -370,6 +372,7 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
         let pi = HayleyFsInode::init_root_inode(sbi, inode)?;
         let super_block = HayleyFsSuperBlock::init_super_block(sbi.get_virt_addr(), sbi.get_size());
 
+        pr_info!("flush init fs\n");
         hayleyfs_flush_buffer(pi, INODE_SIZE.try_into()?, false);
         hayleyfs_flush_buffer(super_block, SB_SIZE.try_into()?, true);
 
@@ -687,6 +690,7 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     // reborrow the super block to appease the borrow checker
     let sb = sbi.get_super_block_mut().unwrap();
     sb.set_clean_unmount(false);
+    pr_info!("flush remountfs\n");
     hayleyfs_flush_buffer(sb, SB_SIZE.try_into()?, true);
     Ok(())
 }
