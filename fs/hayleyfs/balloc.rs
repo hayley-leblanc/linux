@@ -831,7 +831,8 @@ impl<'a, Op: Initialized> DirPageWrapper<'a, Clean, Op> {
 impl<'a, Op> DirPageWrapper<'a, Dirty, Op> {
     pub(crate) fn flush(mut self) -> DirPageWrapper<'a, InFlight, Op> {
         match &self.page.page {
-            Some(page) => hayleyfs_flush_buffer(page, mem::size_of::<DirPageHeader>(), false),
+            // we need to dereference page to ensure that the correct pointer is passed to flush_buffer
+            Some(page) => hayleyfs_flush_buffer(*page, mem::size_of::<DirPageHeader>(), false),
             None => panic!("ERROR: Wrapper does not have a page"),
         };
         let page = self.take_and_make_drop_safe();
@@ -1625,7 +1626,7 @@ impl<'a> DataPageWrapper<'a, Clean, Alloc> {
 impl<'a, Op> DataPageWrapper<'a, Dirty, Op> {
     pub(crate) fn flush(mut self) -> DataPageWrapper<'a, InFlight, Op> {
         match &self.page.page {
-            Some(page) => hayleyfs_flush_buffer(page, mem::size_of::<DataPageHeader>(), false),
+            Some(page) => hayleyfs_flush_buffer(*page, mem::size_of::<DataPageHeader>(), false),
             None => panic!("ERROR: Wrapper does not have a page"),
         };
 
