@@ -597,7 +597,14 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
             if let Some(lc) = real_link_counts.get_mut(&live_inode) {
                 *lc += 1;
             } else {
-                real_link_counts.try_insert(live_inode, 1)?;
+                let live_ino_type = sbi.check_inode_type_by_inode_num(live_inode)?;
+                if live_ino_type == InodeType::DIR {
+                    // dirs always point to themselves, so the first dentry we find that
+                    // refers to a dir inode is actually its second link
+                    real_link_counts.try_insert(live_inode, 2)?;
+                } else {
+                    real_link_counts.try_insert(live_inode, 1)?;
+                }
             }
 
             if live_inode > max_inode {
