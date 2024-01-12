@@ -626,17 +626,17 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
                     let allocated_dentries = dir_page_wrapper.get_alloc_dentry_info(sbi)?;
                     // add live dentries to the index
                     for dentry in allocated_dentries {
-                        // count child directories towards link count
-                        if dentry.is_dir() {
-                            if let Some(lc) = real_link_counts.get_mut(&live_inode) {
-                                *lc += 1;
-                            }
-                        }
                         // if the dentry is live (i.e. has an inode number), add its inode
                         // to the live inode list. otherwise, add it to the list of dentries
                         // to free. note that we do not have to worry about dentries in
                         // unallocated pages because we'll zero them out before we reuse the page
                         if dentry.get_ino() != 0 {
+                            // count child directories towards link count
+                            if dentry.is_dir() {
+                                if let Some(lc) = real_link_counts.get_mut(&live_inode) {
+                                    *lc += 1;
+                                }
+                            }
                             sbi.ino_dentry_tree.insert(live_inode, dentry)?;
                             live_inode_list
                                 .push_back(Box::try_new(LinkedInode::new(dentry.get_ino()))?);
@@ -777,15 +777,8 @@ fn fix_link_counts(
     for (ino, persistent_lc) in persistent_link_counts.iter() {
         if let Some(real_lc) = real_link_counts.get(ino) {
             if persistent_lc != real_lc {
-                // one of the root inode's links is its parent, which we can't see
-                // so real_lc is allowed to be persistent_lc - 1
-                if *ino == ROOT_INO && *real_lc == persistent_lc - 1 {
-                    continue;
-                } else {
-                    let pi =
-                        unsafe { InodeWrapper::get_too_many_links_inode(sbi, *ino, *real_lc)? };
-                    let _pi = pi.recovery_dec_link(*real_lc).flush().fence();
-                }
+                let pi = unsafe { InodeWrapper::get_too_many_links_inode(sbi, *ino, *real_lc)? };
+                let _pi = pi.recovery_dec_link(*real_lc).flush().fence();
             }
         } else {
             return Err(EINVAL);
