@@ -366,7 +366,10 @@ pub(crate) fn hayleyfs_iget(
             // global tree and put them in this inode's i_private
             if let Some(pages) = pages {
                 let dentries = sbi.ino_dentry_tree.remove(ino);
-                let inode_info = if let Some(dentries) = dentries {
+                let inode_info = if let Some(mut dentries) = dentries {
+                    // we need to add the . and .. dentries to the list since they are not
+                    // stored durably
+                    add_dot_dentries(ino, parent_ino, &mut dentries)?;
                     Box::try_new(HayleyFsDirInodeInfo::new_from_tree(ino, pages, dentries))?
                 } else {
                     let dentries = new_dentry_tree(ino, parent_ino)?;
@@ -521,7 +524,15 @@ pub(crate) fn new_dentry_tree(
     parent_ino: InodeNum,
 ) -> Result<RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>> {
     let mut dentries = RBTree::new();
-    // set up the . and .. dentries
+    add_dot_dentries(ino, parent_ino, &mut dentries)?;
+    Ok(dentries)
+}
+
+pub(crate) fn add_dot_dentries(
+    ino: InodeNum,
+    parent_ino: InodeNum,
+    dentries: &mut RBTree<[u8; MAX_FILENAME_LEN], DentryInfo>,
+) -> Result<()> {
     let dot: &CStr = CStr::from_bytes_with_nul(".\0".as_bytes())?;
     let dotdot = CStr::from_bytes_with_nul("..\0".as_bytes())?;
     let mut dot_array = [0; MAX_FILENAME_LEN];
@@ -533,7 +544,7 @@ pub(crate) fn new_dentry_tree(
         dotdot_array,
         DentryInfo::new(parent_ino, None, dotdot_array, true),
     )?;
-    Ok(dentries)
+    Ok(())
 }
 
 unsafe fn insert_vfs_inode(vfs_inode: *mut bindings::inode, dentry: &fs::DEntry) -> Result<()> {
