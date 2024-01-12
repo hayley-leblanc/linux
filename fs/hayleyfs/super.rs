@@ -176,7 +176,6 @@ impl fs::Type for HayleyFs {
         let persistent_sb = sbi.get_super_block_mut().unwrap();
         // TODO: safe wrapper around super block
         persistent_sb.set_clean_unmount(true);
-        pr_info!("flush put super\n");
         hayleyfs_flush_buffer(persistent_sb, SB_SIZE.try_into().unwrap(), true);
         pr_info!("PUT SUPERBLOCK\n");
     }
@@ -251,7 +250,6 @@ impl fs::Type for HayleyFs {
         // TODO: DO THIS SAFELY WITH WRAPPERS
         // raw_pi.atime = unsafe { bindings::current_time(inode.get_inner()) };
         // unsafe { raw_pi.set_atime(bindings::current_time(inode.get_inner())) };
-        pr_info!("flush dirty inode\n");
         hayleyfs_flush_buffer(raw_pi, core::mem::size_of::<HayleyFsInode>(), true);
     }
 
@@ -372,7 +370,6 @@ unsafe fn init_fs<T: fs::Type + ?Sized>(
         let pi = HayleyFsInode::init_root_inode(sbi, inode)?;
         let super_block = HayleyFsSuperBlock::init_super_block(sbi.get_virt_addr(), sbi.get_size());
 
-        pr_info!("flush init fs\n");
         hayleyfs_flush_buffer(pi, INODE_SIZE.try_into()?, false);
         hayleyfs_flush_buffer(super_block, SB_SIZE.try_into()?, true);
 
@@ -500,6 +497,8 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     let mut max_page = sbi.get_data_pages_start_page();
 
     live_inode_list.push_back(Box::try_new(LinkedInode::new(1))?);
+
+    pr_info!("remount fs\n");
 
     // 1. check the super block to make sure it is a valid fs and to fill in sbi
     let sbi_size = sbi.get_size();
@@ -690,7 +689,6 @@ fn remount_fs(sbi: &mut SbInfo) -> Result<()> {
     // reborrow the super block to appease the borrow checker
     let sb = sbi.get_super_block_mut().unwrap();
     sb.set_clean_unmount(false);
-    pr_info!("flush remountfs\n");
     hayleyfs_flush_buffer(sb, SB_SIZE.try_into()?, true);
     Ok(())
 }
@@ -741,8 +739,15 @@ fn free_orphans(
     // we use static data page wrappers here since the DataPageListWrapper
     // abstraction doesn't really make sense here
     for (iter, _) in orphaned_pages.iter() {
-        let page = unsafe { StaticDataPageWrapper::get_recovery_page(sbi, *iter)? };
-        let _page = page.recovery_dealloc(sbi).flush().fence();
+        // note: it is important to check for data pages FIRST because if a page doesn't have a type,
+        // its offset field could still be set, so we need to make sure it is freed
+        if let Ok(page) = unsafe { DataPageListWrapper::get_recovery_page(sbi, *iter) } {
+            let _page = page.recovery_dealloc(sbi)?.fence();
+        } else if let Ok(page) = unsafe { DirPageListWrapper::get_recovery_page(sbi, *iter) } {
+            let _page = page.recovery_dealloc(sbi)?.fence();
+        } else {
+            return Err(EINVAL);
+        }
     }
 
     // 3. dentries

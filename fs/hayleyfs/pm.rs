@@ -12,7 +12,6 @@ pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 #[allow(dead_code)]
 #[inline(never)]
 pub(crate) extern "C" fn hayleyfs_flush_buffer<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
-    pr_info!("flush_buffer size {:x} to {:p}\n", len, ptr);
     unsafe {
         bindings::flush_buffer(ptr as *const c_void, len.try_into().unwrap(), fence);
     }
@@ -54,7 +53,6 @@ pub(crate) extern "C" fn hayleyfs_flush_buffer<T: ?Sized>(ptr: *const T, len: us
 #[allow(dead_code)]
 #[inline(never)]
 pub(crate) fn sfence() {
-    pr_info!("sfence\n");
     unsafe {
         // asm!("sfence");
         bindings::sfence();
@@ -72,8 +70,6 @@ pub(crate) unsafe fn memcpy_nt<T: ?Sized>(
     let src = src as *const c_void as *mut c_void;
     let dst = dst as *mut c_void;
     let size: u64 = size.try_into()?;
-
-    pr_info!("memcpy_nt size {:x} to {:p}\n", size, dst);
 
     let ret = unsafe { bindings::copy_from_user_inatomic_nocache(src, dst, size) };
 
@@ -111,7 +107,6 @@ pub(crate) unsafe fn flush_edge_cachelines(ptr: *mut c_void, size: u64) -> Resul
 /// active pointer to the specified region of memory.
 #[inline(never)]
 pub(crate) unsafe fn memset_nt(dst: *mut c_void, dword: u32, size: usize, fence: bool) {
-    pr_info!("memset_nt size {:x} to {:p}\n", size, dst);
     unsafe {
         bindings::memset_nt(dst, dword, size);
     }
