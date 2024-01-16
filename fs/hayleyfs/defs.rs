@@ -10,7 +10,7 @@ use kernel::bindings;
 use kernel::prelude::*;
 
 // TODO: different magic value
-pub(crate) const SUPER_MAGIC: i64 = 0xabcdef;
+pub(crate) const SUPER_MAGIC: i64 = 0xfedcba;
 
 /// Reserved inodes
 pub(crate) const ROOT_INO: InodeNum = 1;

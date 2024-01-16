@@ -62,17 +62,27 @@ int rust_helper_clk_prepare_enable(struct clk *clk)
 EXPORT_SYMBOL_GPL(rust_helper_clk_prepare_enable);
 
 unsigned long rust_helper_copy_from_user(void *to, const void __user *from,
-					 unsigned long n)
+					 unsigned n)
 {
 	return copy_from_user(to, from, n);
 }
 EXPORT_SYMBOL_GPL(rust_helper_copy_from_user);
 
+noinline void rust_helper_memcpy_hook(void *dst, unsigned n) {
+	// no op
+	printk(KERN_ALERT "hook %p %lu\n", dst, n);
+}
+EXPORT_SYMBOL_GPL(rust_helper_memcpy_hook);
+
 unsigned long
 rust_helper_copy_from_user_inatomic_nocache(void *to, const void __user *from,
-					    unsigned long n)
+					    unsigned n)
 {
-	return __copy_from_user_inatomic_nocache(to, from, n);
+	unsigned long ret = __copy_from_user_inatomic_nocache(to, from, n);
+	// printk(KERN_ALERT "nt copy %p\n", to);
+	rust_helper_memcpy_hook(to, n);
+	// printk(KERN_ALERT "called hook\n");
+	return ret;
 }
 EXPORT_SYMBOL_GPL(rust_helper_copy_from_user_inatomic_nocache);
 

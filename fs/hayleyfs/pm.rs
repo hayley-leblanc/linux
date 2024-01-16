@@ -69,7 +69,7 @@ pub(crate) unsafe fn memcpy_nt<T: ?Sized>(
 ) -> Result<u64> {
     let src = src as *const c_void as *mut c_void;
     let dst = dst as *mut c_void;
-    let size: u64 = size.try_into()?;
+    let size: u32 = size.try_into()?;
 
     let ret = unsafe { bindings::copy_from_user_inatomic_nocache(src, dst, size) };
 
