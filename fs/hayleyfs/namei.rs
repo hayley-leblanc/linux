@@ -726,6 +726,7 @@ fn hayleyfs_rmdir<'a>(
 
             unsafe {
                 bindings::clear_nlink(inode);
+                bindings::drop_nlink(dir.get_inner());
             }
             Ok((pi, parent_inode, pd))
         }
