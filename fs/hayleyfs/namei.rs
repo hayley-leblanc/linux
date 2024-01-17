@@ -1448,7 +1448,7 @@ fn rename_overwrite_deallocation_file_inode_crossdir<'a>(
     sbi: &SbInfo,
     src_dentry: DentryWrapper<'a, Clean, ClearIno>,
     dst_dentry: DentryWrapper<'a, Clean, Complete>,
-    _new_pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
+    new_pi: InodeWrapper<'a, Clean, DecLink, RegInode>,
     old_dir: InodeWrapper<'a, Clean, Start, DirInode>,
     new_dir: InodeWrapper<'a, Clean, Start, DirInode>,
     old_name: &[u8; MAX_FILENAME_LEN],
@@ -1475,6 +1475,10 @@ fn rename_overwrite_deallocation_file_inode_crossdir<'a>(
         old_name,
     )?;
     // finish deallocating the new inode and its pages
+
+    unsafe {
+        bindings::drop_nlink(new_pi.get_vfs_inode()?);
+    }
 
     Ok((src_dentry, dst_dentry))
 }

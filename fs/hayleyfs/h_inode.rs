@@ -392,9 +392,6 @@ impl<'a, Type> InodeWrapper<'a, Clean, Start, Type> {
             // also update the inode's ctime. the time update may be reordered with the link change 
             // we make no guarantees about ordering of these two updates
             if let Some(vfs_inode) = self.vfs_inode {
-                unsafe {
-                    bindings::drop_nlink(vfs_inode);
-                }
                 self.inode.ctime = unsafe { bindings::current_time(vfs_inode)};
             } else {
                 pr_info!("ERROR: no vfs inode for inode {:?} in dec_link_count\n", self.ino);
