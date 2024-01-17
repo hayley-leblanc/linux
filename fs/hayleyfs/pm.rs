@@ -1,6 +1,6 @@
 use crate::defs::*;
-// use core::{arch::asm, ffi::c_void};
 use core::ffi::c_void;
+// use core::{arch::asm, ffi::c_void};
 use kernel::bindings;
 use kernel::prelude::*;
 
@@ -12,10 +12,12 @@ pub(crate) const CACHELINE_BYTE_SHIFT: usize = 6;
 #[allow(dead_code)]
 #[inline(never)]
 pub(crate) extern "C" fn hayleyfs_flush_buffer<T: ?Sized>(ptr: *const T, len: usize, fence: bool) {
+    // #[cfg(CONFIG_HAYLEYFS_DEBUG)]
     unsafe {
         bindings::flush_buffer(ptr as *const c_void, len.try_into().unwrap(), fence);
     }
-    // #[cfg(not(feature = "no_persist"))]
+    // // #[cfg(not(feature = "no_persist"))]
+    // #[cfg(not(CONFIG_HAYLEYFS_DEBUG))]
     // {
     //     let ptr = ptr as *const u8 as *mut u8;
     //     let mut start = ptr as usize;

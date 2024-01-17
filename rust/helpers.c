@@ -68,19 +68,23 @@ unsigned long rust_helper_copy_from_user(void *to, const void __user *from,
 }
 EXPORT_SYMBOL_GPL(rust_helper_copy_from_user);
 
+#ifdef CONFIG_HAYLEY_FS_DEBUG
 noinline void rust_helper_memcpy_hook(void *dst, unsigned n) {
-	// this function should be a no op but gets optimized out if it doesn't include anything
-	// TODO: chipmunk kernel config to remove this function when not debugging
+	// this function is optimized out if it doesn't actually do anything
+	// TODO: faster/smaller op that will still keep the function in
 	printk(KERN_ALERT "hook %p %lu\n", dst, n);
 }
 EXPORT_SYMBOL_GPL(rust_helper_memcpy_hook);
+#endif
 
 unsigned long
 rust_helper_copy_from_user_inatomic_nocache(void *to, const void __user *from,
 					    unsigned n)
 {
 	unsigned long ret = __copy_from_user_inatomic_nocache(to, from, n);
+#ifdef CONFIG_HAYLEY_FS_DEBUG
 	rust_helper_memcpy_hook(to, n);
+#endif
 	return ret;
 }
 EXPORT_SYMBOL_GPL(rust_helper_copy_from_user_inatomic_nocache);
