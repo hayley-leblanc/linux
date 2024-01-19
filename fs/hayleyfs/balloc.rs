@@ -2111,8 +2111,39 @@ impl<S: CanWrite> DataPageListWrapper<Clean, S> {
                 let page_no = page.get_page_no();
 
                 // skip over pages at the head of the list that we are not writing to
-                // this should pretty much never happen so it won't hurt us performance-wise
+                // this only happens if we are writing to an offset beyond the current end of the 
+                // file and have allocated pages to cover the gap; in this case, we should zero 
+                // these pages to make sure we are not accidentally exposing old data
+                // TODO: a more efficient implementation would be to not allocate these pages 
+                // at all and instead have a (volatile?) representation of zeroed pages
                 if get_offset_of_page_no(sbi, page_no)? < page_offset {
+                    // TODO: this code is identical to some code in zero_pages -- refactor
+                    // TODO: safe wrapper
+                    let ptr = unsafe { page_no_to_page(sbi, page_no)? };
+                    let bytes_to_write = if len < HAYLEYFS_PAGESIZE - offset_within_page {
+                        len
+                    } else {
+                        HAYLEYFS_PAGESIZE - offset_within_page
+                    };
+                    // let bytes_to_write =
+                    //     unsafe { write_to_page(reader, ptr, offset_within_page, bytes_to_write)? };
+                    pr_info!("zeroing {:?} bytes\n", bytes_to_write);
+                    unsafe {
+                        memset_nt(
+                            (ptr as *mut u8).offset(offset_within_page.try_into()?)
+                                as *mut ffi::c_void,
+                            0,
+                            bytes_to_write.try_into()?,
+                            false,
+                        );
+                    }
+                    
+                    // these variables don't count pages that need to be zeroed
+                    // so we do not update them here to make sure they remain correct
+                    // bytes_written += bytes_to_write;
+                    // page_offset += HAYLEYFS_PAGESIZE;
+                    // len -= bytes_to_write;
+                    // offset_within_page = 0;
                     page_list.move_next();
                 } else {
                     // TODO: safe wrapper
